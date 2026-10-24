@@ -1,0 +1,28 @@
+{
+  "name": "alt-qbo",
+  "version": "0.1.0",
+  "description": "Alt-QBO accounting platform: ledger core, tenancy, audit log, jurisdiction rule packs, payroll calculation",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "migrate": "tsx src/db/migrate.ts",
+    "demo": "tsx scripts/demo.ts"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "decimal.js": "^10.6.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  }
+}

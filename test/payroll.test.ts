@@ -1,0 +1,207 @@
+import { describe, expect, it } from "vitest";
+import { withTenant } from "../src/db/pool.js";
+import { LedgerError } from "../src/core/errors.js";
+import { accountBalance, trialBalance } from "../src/core/reports.js";
+import { verifyAuditChain } from "../src/core/audit.js";
+import { allRulePacks, JurisdictionError, resolveRules, rulePackHash } from "../src/rules/index.js";
+import { usFederal2026 } from "../src/rules/us-federal-2026.js";
+import { usCalifornia2026 } from "../src/rules/us-ca-2026.js";
+import { federalSchedule } from "../src/payroll/federal.js";
+import { splitCaliforniaWeek } from "../src/payroll/hours.js";
+import { calculatePaycheck, type EmployeePayInput } from "../src/payroll/gross-to-net.js";
+import { approveAndPostPayRun, calculatePayRun, payRunJournalLines } from "../src/payroll/pay-run.js";
+import { approver, bookkeeper, pool, setupCaliforniaBusiness } from "./helpers.js";
+
+const CA = { country: "US", region: "CA" };
+const rules = resolveRules(CA, "2026-06-15");
+
+const salaried: EmployeePayInput = {
+  employeeId: "emp-1",
+  name: "Maya Chen",
+  payFrequency: "biweekly",
+  salaryPerPeriod: "3000.00",
+  overtimeExempt: true,
+  w4: { filingStatus: "single_or_mfs", step2Checked: false },
+  de4: { filingStatus: "single", regularAllowances: 1 },
+  deductions: [
+    { kind: "traditional401k", amount: "150.00", description: "401(k)" },
+    { kind: "section125", amount: "100.00", description: "Medical premium" },
+  ],
+};
+
+const tax = (p: ReturnType<typeof calculatePaycheck>, code: string) =>
+  p.taxes.find((t) => t.code === code)?.amountMinor ?? 0n;
+
+describe("rule packs", () => {
+  it("are frozen, hashed and effective-dated", () => {
+    expect(Object.isFrozen(usFederal2026.payroll.socialSecurity)).toBe(true);
+    expect(() => {
+      (usFederal2026.payroll.socialSecurity as { wageBase: string }).wageBase = "1";
+    }).toThrow();
+    expect(rules.provenance).toEqual([
+      `us-federal@2026.1#${rulePackHash(usFederal2026).slice(0, 12)}`,
+      `us-ca@2026.1#${rulePackHash(usCalifornia2026).slice(0, 12)}`,
+    ]);
+    expect(() => resolveRules(CA, "2027-01-01")).toThrow(JurisdictionError);
+    expect(() => resolveRules(CA, "2026-06-15", { requireReleased: true })).toThrow(/draft/);
+    for (const p of allRulePacks()) {
+      expect(p.sources.length).toBeGreaterThan(0);
+      expect(p.status).toBe("draft");
+    }
+  });
+
+  it("derives the Pub 15-T 2026 MFJ schedules exactly as published", () => {
+    const fit = usFederal2026.payroll.incomeTax;
+    const asRows = (s: ReturnType<typeof federalSchedule>) => s.map((r) => [Number(r.over), Number(r.base), Number(r.rate)]);
+    // IRS Publication 15-T (2026), Worksheet 1A annual tables, Married Filing Jointly.
+    expect(asRows(federalSchedule(fit, "mfj", false))).toEqual([
+      [0, 0, 0], [19300, 0, 0.1], [44100, 2480, 0.12], [120100, 11600, 0.22], [230700, 35932, 0.24],
+      [422850, 82048, 0.32], [531750, 116896, 0.35], [788000, 206583.5, 0.37],
+    ]);
+    expect(asRows(federalSchedule(fit, "mfj", true))).toEqual([
+      [0, 0, 0], [16100, 0, 0.1], [28500, 1240, 0.12], [66500, 5800, 0.22], [121800, 17966, 0.24],
+      [217875, 41024, 0.32], [272325, 58448, 0.35], [400450, 103291.75, 0.37],
+    ]);
+  });
+});
+
+describe("California workweek hours", () => {
+  const wh = usCalifornia2026.wageHour;
+  it("pays daily overtime past 8 hours and double time past 12", () => {
+    expect(splitCaliforniaWeek([13, 0, 0, 0, 0, 0, 0], wh)).toEqual({ regular: "8", overtime: "4", doubleTime: "1" });
+    expect(splitCaliforniaWeek([10, 10, 8, 8, 8, 0, 0], wh)).toEqual({ regular: "40", overtime: "4", doubleTime: "0" });
+  });
+  it("applies weekly overtime past 40 regular hours and the seventh-day rule", () => {
+    expect(splitCaliforniaWeek([9, 9, 9, 9, 9, 4, 13], wh)).toEqual({ regular: "40", overtime: "17", doubleTime: "5" });
+    expect(splitCaliforniaWeek([8, 8, 8, 8, 8, 8, 0], wh)).toEqual({ regular: "40", overtime: "8", doubleTime: "0" });
+  });
+});
+
+describe("gross-to-net", () => {
+  it("computes a biweekly California salaried paycheck to the cent", () => {
+    const p = calculatePaycheck(salaried, rules);
+    expect(p.grossMinor).toBe(300000n);
+    // FIT: (2,750 x 26 - 8,600) = 62,900 annual; 5,800 + 22% x 5,000 = 6,900; / 26 = 265.38
+    expect(tax(p, "FIT")).toBe(26538n);
+    expect(tax(p, "SS_EE")).toBe(17980n); // 2,900 x 6.2%
+    expect(tax(p, "MEDICARE_EE")).toBe(4205n); // 2,900 x 1.45%
+    // CA PIT: 71,500 - 5,706 = 65,794; 2,186.15 + 8.8% x 8,252 = 2,912.33; - 168.30; / 26 = 105.54
+    expect(tax(p, "CA_PIT")).toBe(10554n);
+    expect(tax(p, "CA_SDI")).toBe(3770n); // 2,900 x 1.3%
+    expect(p.employeeTaxMinor).toBe(63047n);
+    expect(p.netPayMinor).toBe(211953n);
+    // Employer: SS 179.80, Medicare 42.05, FUTA 17.40, UI 3.4% 98.60, ETT 2.90
+    expect([tax(p, "SS_ER"), tax(p, "MEDICARE_ER"), tax(p, "FUTA"), tax(p, "CA_UI"), tax(p, "CA_ETT")])
+      .toEqual([17980n, 4205n, 1740n, 9860n, 290n]);
+    expect(p.employerTaxMinor).toBe(34075n);
+    expect(p.blockers).toEqual([]);
+  });
+
+  it("stops Social Security, FUTA, UI and ETT at their wage bases and starts Additional Medicare over $200k", () => {
+    const p = calculatePaycheck(
+      { ...salaried, ytd: { socialSecurityWages: 18300000n, medicareWages: 19900000n, futaWages: 700000n, caUiWages: 600000n } },
+      rules,
+      { caUiRate: "0.062" },
+    );
+    expect(tax(p, "SS_EE")).toBe(9300n); // 1,500 left under the $184,500 base
+    expect(tax(p, "ADDL_MEDICARE_EE")).toBe(1710n); // 0.9% x 1,900 over $200,000
+    expect(tax(p, "FUTA")).toBe(0n);
+    expect(tax(p, "CA_UI")).toBe(6200n); // assigned 6.2% x 1,000 left under $7,000
+    expect(tax(p, "CA_ETT")).toBe(100n);
+    expect(tax(p, "CA_SDI")).toBe(3770n); // no SDI wage limit
+  });
+
+  it("pays hourly overtime and accrues sick leave", () => {
+    const hours = splitCaliforniaWeek([10, 10, 8, 8, 8, 0, 0], usCalifornia2026.wageHour);
+    const p = calculatePaycheck(
+      {
+        employeeId: "emp-2", name: "Luis Ortega", payFrequency: "weekly", hourlyRate: "25.00",
+        regularHours: hours.regular, overtimeHours: hours.overtime, doubleTimeHours: hours.doubleTime,
+        w4: { filingStatus: "mfj", step2Checked: false }, de4: { filingStatus: "married", regularAllowances: 2 },
+        sickLeave: { balanceHours: "10" },
+      },
+      rules,
+    );
+    expect(p.earnings.map((e) => [e.code, e.amountMinor])).toEqual([["REGULAR", 100000n], ["OVERTIME", 15000n]]);
+    expect(p.grossMinor).toBe(115000n);
+    expect(p.sickLeave).toEqual({ accruedHours: "1.4667", balanceHours: "11.4667" });
+  });
+
+  it("withholds no California PIT under the low-income exemption", () => {
+    const p = calculatePaycheck({ ...salaried, payFrequency: "monthly", salaryPerPeriod: "1500.00", overtimeExempt: false, deductions: [] }, rules);
+    expect(tax(p, "CA_PIT")).toBe(0n);
+  });
+
+  it("blocks pay below the California minimum wage and exempt status below the salary floor", () => {
+    const low = calculatePaycheck({ ...salaried, salaryPerPeriod: undefined, hourlyRate: "15.00", regularHours: "40", overtimeExempt: false }, rules);
+    expect(low.blockers[0]).toMatch(/below the California minimum wage of 16.90/);
+    const exempt = calculatePaycheck({ ...salaried, salaryPerPeriod: "2500.00" }, rules);
+    expect(exempt.blockers[0]).toMatch(/below the California exempt minimum of 70304/);
+  });
+});
+
+describe("pay runs", () => {
+  const runInput = {
+    payRunId: "pr-2026-06-15",
+    kind: "regular" as const,
+    periodStart: "2026-06-01",
+    periodEnd: "2026-06-14",
+    payDate: "2026-06-19",
+    place: CA,
+    employees: [salaried],
+    live: false,
+  };
+
+  it("refuses live runs on draft rule packs", () => {
+    expect(() => calculatePayRun({ ...runInput, live: true })).toThrow(/draft/);
+  });
+
+  it("produces a balanced journal with a liability per tax", () => {
+    const run = calculatePayRun(runInput);
+    const lines = payRunJournalLines(run);
+    const dr = lines.reduce((s, l) => s + ((l.debit as bigint | undefined) ?? 0n), 0n);
+    const cr = lines.reduce((s, l) => s + ((l.credit as bigint | undefined) ?? 0n), 0n);
+    expect(dr).toBe(cr);
+    expect(dr).toBe(300000n + 34075n);
+  });
+
+  it("needs a second user to approve, then posts once to the ledger and audit log", async () => {
+    const { org, entity } = await setupCaliforniaBusiness();
+    const run = calculatePayRun(runInput);
+    await expect(
+      withTenant(pool, org.id, (tx) =>
+        approveAndPostPayRun(tx, { orgId: org.id, entityId: entity.id, run, preparedBy: bookkeeper, approvedBy: bookkeeper }),
+      ),
+    ).rejects.toSatisfy((e: unknown) => e instanceof LedgerError && e.code === "FORBIDDEN");
+
+    const entry = await withTenant(pool, org.id, (tx) =>
+      approveAndPostPayRun(tx, { orgId: org.id, entityId: entity.id, run, preparedBy: bookkeeper, approvedBy: approver }),
+    );
+    expect(entry.sourceType).toBe("pay_run");
+    const balances = await withTenant(pool, org.id, async (tx) => ({
+      wages: await accountBalance(tx, entity.id, "wages_expense", "2026-06-30"),
+      net: await accountBalance(tx, entity.id, "net_pay_clearing", "2026-06-30"),
+      fica: await accountBalance(tx, entity.id, "fica_payable", "2026-06-30"),
+      pit: await accountBalance(tx, entity.id, "ca_pit_payable", "2026-06-30"),
+      k401: await accountBalance(tx, entity.id, "retirement_401k_payable", "2026-06-30"),
+    }));
+    expect(balances).toEqual({ wages: 300000n, net: -211953n, fica: -(17980n + 4205n) * 2n, pit: -10554n, k401: -15000n });
+
+    // Approving the same run again does not double-post.
+    const again = await withTenant(pool, org.id, (tx) =>
+      approveAndPostPayRun(tx, { orgId: org.id, entityId: entity.id, run, preparedBy: bookkeeper, approvedBy: approver }),
+    );
+    expect(again.id).toBe(entry.id);
+    expect(again.replayed).toBe(true);
+    const tb = await withTenant(pool, org.id, (tx) => trialBalance(tx, entity.id, "2026-12-31"));
+    expect(tb.totalDebitMinor).toBe(334075n);
+
+    const { rows } = await withTenant(pool, org.id, (tx) =>
+      tx.query("SELECT after FROM audit_events WHERE org_id = $1 AND action = 'pay_run.approved'", [org.id]),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].after.totals.netPayMinor).toBe("211953");
+    expect(rows[0].after.rulePacks).toEqual(run.rulePacks);
+    expect((await withTenant(pool, org.id, (tx) => verifyAuditChain(tx, org.id))).ok).toBe(true);
+  });
+});
