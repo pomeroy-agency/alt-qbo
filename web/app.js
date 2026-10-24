@@ -1,0 +1,685 @@
+// Alt-QBO web client. Plain ES modules, no build step.
+
+const app = document.getElementById("app");
+const state = { me: null, orgId: null, org: null, entity: null, cache: {} };
+
+// ------------------------------------------------------------------ helpers
+
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+/** Formats minor units (string or number of cents) as dollars. */
+function usd(minor, { blankZero = false } = {}) {
+  const n = BigInt(minor ?? 0);
+  if (blankZero && n === 0n) return "";
+  const neg = n < 0n;
+  const abs = neg ? -n : n;
+  const dollars = (abs / 100n).toLocaleString("en-US");
+  const cents = String(abs % 100n).padStart(2, "0");
+  return `${neg ? "(" : ""}$${dollars}.${cents}${neg ? ")" : ""}`;
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    method: opts.method ?? (opts.body ? "POST" : "GET"),
+    headers: opts.body ? { "content-type": "application/json" } : {},
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    credentials: "same-origin",
+  });
+  if (opts.raw) return res;
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !path.startsWith("/api/auth")) {
+    state.me = null;
+    location.hash = "#/login";
+    throw new Error(data.error ?? "please sign in");
+  }
+  if (!res.ok) throw new Error(data.error ?? `request failed (${res.status})`);
+  return data;
+}
+
+const orgPath = (p = "") => `/api/orgs/${state.orgId}${p}`;
+const entPath = (p = "") => orgPath(`/entities/${state.entity.entity.id}${p}`);
+
+function formData(form) {
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const STATUS_PILL = { open: "pill", soft_closed: "pill warn", locked: "pill grey", prepared: "pill warn", posted: "pill", voided: "pill grey" };
+const STATUS_LABEL = { open: "Open", soft_closed: "Soft-closed", locked: "Locked", prepared: "Awaiting approval", posted: "Posted", voided: "Voided" };
+const ENTITY_TYPES = {
+  llc_single: "Single-member LLC", sole_prop: "Sole proprietorship", llc_partnership: "Multi-member LLC",
+  llc_s_corp: "LLC taxed as S corp", s_corp: "S corporation", c_corp: "C corporation", partnership: "Partnership",
+};
+const RETURN_LABEL = { sch_c: "Schedule C", f1065: "Form 1065", f1120s: "Form 1120-S", f1120: "Form 1120" };
+const TAX_LABEL = {
+  FIT: "Federal income tax", SS_EE: "Social Security", MEDICARE_EE: "Medicare", ADDL_MEDICARE_EE: "Additional Medicare",
+  CA_PIT: "CA income tax", CA_SDI: "CA SDI", SS_ER: "Social Security (employer)", MEDICARE_ER: "Medicare (employer)",
+  FUTA: "FUTA", CA_UI: "CA UI", CA_ETT: "CA ETT",
+};
+
+// ------------------------------------------------------------------ layout
+
+function topbar() {
+  const orgs = state.me?.orgs ?? [];
+  return `
+    <header class="topbar">
+      <a class="brand" href="#/"><img src="/favicon.svg" alt="">Alt-QBO</a>
+      ${orgs.length > 1 ? `<select data-action="switch-org" aria-label="Organisation">${orgs.map((o) => `<option value="${o.id}" ${o.id === state.orgId ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : `<span>${esc(state.org?.org?.name ?? "")}</span>`}
+      <span class="spacer"></span>
+      <span class="who">${esc(state.me?.user?.name)} · ${esc(state.org?.role ?? "")}</span>
+      <button class="secondary" data-action="logout">Sign out</button>
+    </header>
+    <div class="banner">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</div>`;
+}
+
+const ENTITY_TABS = [
+  ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
+  ["accounts", "Chart of accounts"], ["connections", "Connections"],
+];
+
+function shell(active, content) {
+  const e = state.entity?.entity;
+  const nav = e ? `
+    <div class="label">${esc(e.legalName)}</div>
+    ${ENTITY_TABS.map(([k, l]) => `<a href="#/e/${e.id}/${k}" class="${active === k ? "on" : ""}">${l}</a>`).join("")}` : "";
+  return `${topbar()}
+    <div class="wrap shell">
+      <nav class="side">
+        <a href="#/" class="${active === "home" ? "on" : ""}">Businesses</a>
+        <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
+        <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
+        ${nav}
+      </nav>
+      <main>${content}</main>
+    </div>`;
+}
+
+// ------------------------------------------------------------------ auth
+
+function authView(mode, error = "") {
+  const signup = mode === "signup";
+  app.innerHTML = `
+    <div class="wrap auth">
+      <div class="panel">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>Alt-QBO</h1></div>
+        <p class="muted">${signup ? "Create your account and your first organisation." : "Sign in to your books."}</p>
+        ${error ? `<div class="alert bad">${esc(error)}</div>` : ""}
+        <form data-form="${mode}">
+          ${signup ? `<label>Your name<input name="name" required autocomplete="name"></label>` : ""}
+          <label>Email<input name="email" type="email" required autocomplete="email"></label>
+          <label>Password<input name="password" type="password" required minlength="${signup ? 10 : 1}" autocomplete="${signup ? "new-password" : "current-password"}"></label>
+          ${signup ? `
+            <label>Business or firm name<input name="orgName" required></label>
+            <label>Invite code<input name="inviteCode" autocomplete="off"></label>` : ""}
+          <button type="submit">${signup ? "Create account" : "Sign in"}</button>
+        </form>
+        <p style="margin-top:14px">${signup ? `Already have an account? <a href="#/login">Sign in</a>` : `New here? <a href="#/signup">Create an account</a>`}</p>
+      </div>
+    </div>`;
+}
+
+// ------------------------------------------------------------------ views
+
+async function homeView() {
+  state.entity = null;
+  const ents = state.org.entities;
+  const canAdd = ["owner", "admin"].includes(state.org.role);
+  app.innerHTML = shell("home", `
+    <div class="head"><div><h1>Businesses</h1><p class="muted">Each legal entity keeps its own books, periods and tax settings.</p></div></div>
+    <div class="cards">
+      ${ents.map((e) => `
+        <a class="card" href="#/e/${e.id}/journal">
+          <strong>${esc(e.legal_name)}</strong><br>
+          <span class="muted">${esc(ENTITY_TYPES[e.entity_type] ?? e.entity_type)} · ${esc(e.region)}, US</span><br>
+          <span class="pill">${esc(e.framework.replace("_", " "))}</span> <span class="pill grey">${esc(RETURN_LABEL[e.tax_return_type] ?? e.tax_return_type)}</span>
+        </a>`).join("") || `<p class="muted">No businesses yet.</p>`}
+    </div>
+    ${canAdd ? `
+    <div class="panel" style="margin-top:20px">
+      <h2>Add a business</h2>
+      <p class="muted">The principal place of business sets the accounting framework, currency, chart of accounts and tax rules. California is the only state live so far.</p>
+      <form data-form="entity" class="grid">
+        <label>Legal name<input name="legalName" required placeholder="Sunset Design Studio LLC"></label>
+        <label>Entity type<select name="entityType">${Object.entries(ENTITY_TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
+        <label>Principal place of business<select name="region"><option value="CA">California, United States</option><option value="TX">Texas (not launched yet)</option></select></label>
+        <label>First fiscal year<select name="firstFiscalYear"><option>2026</option></select></label>
+        <label>EIN (optional)<input name="ein" placeholder="12-3456789"></label>
+        <label>&nbsp;<button type="submit">Create business</button></label>
+      </form>
+    </div>` : ""}`);
+}
+
+async function loadEntity(id) {
+  if (state.entity?.entity?.id !== id || !state.entity.fresh) {
+    state.entity = await api(orgPath(`/entities/${id}`));
+    state.entity.fresh = true;
+  }
+  return state.entity;
+}
+
+function accountOptions(selected = "") {
+  return state.entity.accounts.filter((a) => a.is_active)
+    .map((a) => `<option value="${a.code}" ${a.code === selected ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("");
+}
+
+function lineRow(i, l = {}) {
+  return `<tr data-line="${i}">
+    <td><select name="account" aria-label="Account">${accountOptions(l.account)}</select></td>
+    <td><input name="description" aria-label="Description" value="${esc(l.description ?? "")}"></td>
+    <td><input name="debit" class="mono" inputmode="decimal" aria-label="Debit" placeholder="0.00" value="${esc(l.debit ?? "")}"></td>
+    <td><input name="credit" class="mono" inputmode="decimal" aria-label="Credit" placeholder="0.00" value="${esc(l.credit ?? "")}"></td>
+    <td><button type="button" class="link" data-action="remove-line" aria-label="Remove line">✕</button></td>
+  </tr>`;
+}
+
+async function journalView(id) {
+  await loadEntity(id);
+  const { entries } = await api(entPath("/journal"));
+  const acct = Object.fromEntries(state.entity.accounts.map((a) => [a.code, a.name]));
+  app.innerHTML = shell("journal", `
+    <div class="head"><div><h1>Journal</h1><p class="muted">Posted entries can't be edited. To correct one, reverse it and post a new entry.</p></div></div>
+    <div class="panel">
+      <h2>New entry</h2>
+      <form data-form="journal">
+        <div class="row" style="margin-bottom:12px">
+          <label>Date<input type="date" name="date" value="${today() < "2026-01-01" ? "2026-01-01" : today() > "2026-12-31" ? "2026-12-31" : today()}" min="2026-01-01" max="2026-12-31" required></label>
+          <label>Type<select name="sourceType">
+            <option value="journal_voucher">Journal entry</option><option value="invoice">Invoice</option>
+            <option value="bill">Bill</option><option value="payment">Payment</option><option value="opening_balance">Opening balance</option>
+          </select></label>
+          <label style="flex:1;min-width:220px">Memo<input name="memo" placeholder="What is this entry for?"></label>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th style="width:32%">Account</th><th>Description</th><th class="num" style="width:14%">Debit</th><th class="num" style="width:14%">Credit</th><th></th></tr></thead>
+          <tbody id="lines">${lineRow(0, { account: "1100" })}${lineRow(1, { account: "4000" })}</tbody>
+          <tfoot><tr><td><button type="button" class="link" data-action="add-line">+ Add line</button></td><td class="muted" id="diff"></td><td class="num" id="dr">$0.00</td><td class="num" id="cr">$0.00</td><td></td></tr></tfoot>
+        </table></div>
+        <div class="row" style="margin-top:12px"><button type="submit" id="post-btn" disabled>Post entry</button></div>
+      </form>
+    </div>
+    <div class="panel">
+      <h2>Posted entries</h2>
+      ${entries.length ? entries.map((e) => {
+        const total = e.lines.reduce((s, l) => s + BigInt(l.debitMinor), 0n);
+        return `<div class="entry">
+          <div class="meta">
+            <strong class="mono">#${e.entryNumber}</strong><span>${e.date}</span>
+            <span class="pill grey">${esc(e.sourceType.replace("_", " "))}</span>
+            <span style="flex:1">${esc(e.memo)}</span>
+            <span class="mono">${usd(total)}</span>
+            ${e.isReversed ? `<span class="pill bad">Reversed</span>` : e.sourceType !== "reversal" ? `<button class="link" data-action="show-reverse" data-id="${e.id}">Reverse</button>` : ""}
+          </div>
+          <table><tbody>${e.lines.map((l) => `<tr>
+            <td style="width:40%">${l.accountCode} · ${esc(acct[l.accountCode] ?? "")}</td><td class="muted">${esc(l.description)}</td>
+            <td class="num">${usd(l.debitMinor, { blankZero: true })}</td><td class="num">${usd(l.creditMinor, { blankZero: true })}</td></tr>`).join("")}</tbody></table>
+          <form data-form="reverse" data-id="${e.id}" class="row" hidden style="padding:8px 12px;border-top:1px solid var(--line)">
+            <label>Reversal date<input type="date" name="date" value="${e.date}" required></label>
+            <label style="flex:1">Reason<input name="reason" required placeholder="Why is this being reversed?"></label>
+            <button type="submit">Post reversal</button>
+          </form>
+          <div class="hash" style="padding:4px 12px 8px">Posted by ${esc(e.postedBy)}</div>
+        </div>`;
+      }).join("") : `<p class="muted">Nothing posted yet.</p>`}
+    </div>`);
+  updateTotals();
+}
+
+function readLines() {
+  return [...document.querySelectorAll("#lines tr")].map((tr) => ({
+    account: tr.querySelector("[name=account]").value,
+    description: tr.querySelector("[name=description]").value,
+    debit: tr.querySelector("[name=debit]").value.trim(),
+    credit: tr.querySelector("[name=credit]").value.trim(),
+  }));
+}
+
+function cents(v) {
+  if (!v) return 0n;
+  if (!/^\d+(\.\d{0,2})?$/.test(v)) return null;
+  const [d, c = ""] = v.split(".");
+  return BigInt(d) * 100n + BigInt((c + "00").slice(0, 2));
+}
+
+function updateTotals() {
+  const lines = readLines();
+  let dr = 0n, cr = 0n, bad = false;
+  for (const l of lines) {
+    const d = cents(l.debit), c = cents(l.credit);
+    if (d === null || c === null || (d > 0n && c > 0n)) bad = true;
+    dr += d ?? 0n; cr += c ?? 0n;
+  }
+  document.getElementById("dr").textContent = usd(dr);
+  document.getElementById("cr").textContent = usd(cr);
+  const diff = document.getElementById("diff");
+  const ok = !bad && dr > 0n && dr === cr && lines.length >= 2;
+  diff.textContent = bad ? "Each line needs a debit or a credit, as an amount like 125.00." : dr === cr ? (dr > 0n ? "Balanced" : "") : `Out of balance by ${usd(dr > cr ? dr - cr : cr - dr)}`;
+  diff.style.color = ok ? "var(--good-ink)" : "var(--bad-ink)";
+  document.getElementById("post-btn").disabled = !ok;
+}
+
+async function trialBalanceView(id, asOf = "2026-12-31") {
+  await loadEntity(id);
+  const tb = await api(entPath(`/trial-balance?asOf=${asOf}`));
+  const e = state.entity.entity;
+  app.innerHTML = shell("trial-balance", `
+    <div class="head">
+      <div><h1>Trial balance</h1><p class="muted">Straight from posted lines. Tax lines map each account to ${esc(RETURN_LABEL[e.taxReturnType])}.</p></div>
+      <form data-form="tb" class="row">
+        <label>As of<input type="date" name="asOf" value="${asOf}"></label>
+        <button type="submit" class="secondary">Update</button>
+        <button type="button" data-action="tax-export" data-asof="${asOf}">Export for tax software (CSV)</button>
+      </form>
+    </div>
+    <div class="panel table-wrap">
+      <table>
+        <thead><tr><th>Account</th><th>Name</th><th>Tax line</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead>
+        <tbody>${tb.rows.filter((r) => r.balanceMinor !== "0").map((r) => {
+          const b = BigInt(r.balanceMinor);
+          return `<tr><td class="mono">${r.code}</td><td>${esc(r.name)}</td><td class="mono muted">${esc(r.taxLine ?? "unmapped")}</td>
+            <td class="num">${b > 0n ? usd(b) : ""}</td><td class="num">${b < 0n ? usd(-b) : ""}</td></tr>`;
+        }).join("") || `<tr><td colspan="5" class="muted">No balances yet.</td></tr>`}</tbody>
+        <tfoot><tr><td colspan="3">Totals</td><td class="num">${usd(netSide(tb.rows, 1n))}</td><td class="num">${usd(netSide(tb.rows, -1n))}</td></tr></tfoot>
+      </table>
+    </div>`);
+}
+
+function netSide(rows, sign) {
+  return rows.reduce((s, r) => {
+    const b = BigInt(r.balanceMinor) * sign;
+    return b > 0n ? s + b : s;
+  }, 0n);
+}
+
+async function periodsView(id) {
+  await loadEntity(id);
+  const canClose = ["owner", "admin", "accountant"].includes(state.org.role);
+  const canReopen = ["owner", "accountant"].includes(state.org.role);
+  app.innerHTML = shell("periods", `
+    <div class="head"><div><h1>Periods</h1><p class="muted">Soft-close a month so only accountants can post adjustments, then lock it. Reopening needs a reason and is recorded in the audit log.</p></div></div>
+    <div class="panel table-wrap"><table>
+      <thead><tr><th>Month</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${state.entity.periods.map((p) => {
+        const month = new Date(p.start_date + "T00:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+        const acts = [];
+        if (canClose && p.status === "open") acts.push(`<button class="secondary" data-action="period" data-id="${p.id}" data-status="soft_closed">Soft-close</button>`);
+        if (canClose && p.status !== "locked") acts.push(`<button class="secondary" data-action="period" data-id="${p.id}" data-status="locked">Lock</button>`);
+        if (canReopen && p.status !== "open") acts.push(`<form class="row" data-form="reopen" data-id="${p.id}"><input name="reason" placeholder="Reason for reopening" required><button class="secondary" type="submit">Reopen</button></form>`);
+        return `<tr><td>${month}</td><td><span class="${STATUS_PILL[p.status]}">${STATUS_LABEL[p.status]}</span></td><td><div class="row">${acts.join("") || `<span class="muted">No actions for your role</span>`}</div></td></tr>`;
+      }).join("")}</tbody>
+    </table></div>`);
+}
+
+async function accountsView(id) {
+  await loadEntity(id);
+  app.innerHTML = shell("accounts", `
+    <div class="head"><div><h1>Chart of accounts</h1><p class="muted">Every account maps to a financial-statement line, a cash-flow class and a tax line.</p></div></div>
+    <div class="panel table-wrap"><table>
+      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Statement line</th><th>Cash flow</th><th>Tax line</th></tr></thead>
+      <tbody>${state.entity.accounts.map((a) => `<tr><td class="mono">${a.code}</td><td>${esc(a.name)}</td><td>${a.type}</td>
+        <td class="mono muted">${esc(a.statement_line)}</td><td>${a.cash_flow_class}</td><td class="mono">${esc(a.tax_line ?? "—")}</td></tr>`).join("")}</tbody>
+    </table></div>`);
+}
+
+async function connectionsView(id) {
+  await loadEntity(id);
+  const c = state.entity.connections;
+  const canAdd = ["owner", "admin"].includes(state.org.role);
+  app.innerHTML = shell("connections", `
+    <div class="head"><div><h1>Connections</h1><p class="muted">Banks, card issuers, payment processors, agencies and other businesses this entity deals with. Live bank feeds come with the banking module; for now this records the relationship.</p></div></div>
+    <div class="panel table-wrap"><table>
+      <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Added</th></tr></thead>
+      <tbody>${c.map((x) => `<tr><td>${esc(x.display_name)}</td><td>${x.kind.replace("_", " ")}</td><td><span class="pill grey">${x.status}</span></td><td>${x.created_at.slice(0, 10)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No connections yet.</td></tr>`}</tbody>
+    </table></div>
+    ${canAdd ? `<div class="panel"><h2>Add a connection</h2>
+      <form data-form="connection" class="row">
+        <label style="flex:1">Name<input name="displayName" required placeholder="First Coast Bank checking"></label>
+        <label>Type<select name="kind"><option value="bank">Bank</option><option value="card_issuer">Card issuer</option><option value="processor">Payment processor</option><option value="agency">Government agency</option><option value="business">Another business</option></select></label>
+        <button type="submit">Add</button>
+      </form></div>` : ""}`);
+}
+
+// --------------------------------------------------------------- payroll
+
+let employees = [];
+function blankEmployee(i) {
+  return { name: i === 0 ? "Maya Chen" : "", payType: "salary", payFrequency: "biweekly", salaryPerPeriod: i === 0 ? "3000.00" : "", hourlyRate: "", regularHours: "", overtimeHours: "", doubleTimeHours: "", useDaily: false, dailyHours: ["", "", "", "", "", "", ""], federalStatus: "single_or_mfs", step2Checked: false, caStatus: "single", caAllowances: "1", k401: "", section125: "", overtimeExempt: true };
+}
+
+function employeeCard(e, i) {
+  const sel = (name, opts, v) => `<select data-emp="${i}" data-field="${name}">${opts.map(([k, l]) => `<option value="${k}" ${k === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+  const inp = (name, v, ph = "", extra = "") => `<input data-emp="${i}" data-field="${name}" value="${esc(v)}" placeholder="${ph}" ${extra}>`;
+  return `<div class="emp">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px"><strong>Employee ${i + 1}</strong>${employees.length > 1 ? `<button class="link" data-action="remove-emp" data-i="${i}">Remove</button>` : ""}</div>
+    <div class="grid">
+      <label>Name${inp("name", e.name, "Full name")}</label>
+      <label>Pay frequency${sel("payFrequency", [["weekly", "Weekly"], ["biweekly", "Every two weeks"], ["semimonthly", "Twice a month"], ["monthly", "Monthly"]], e.payFrequency)}</label>
+      <label>Pay type${sel("payType", [["salary", "Salary"], ["hourly", "Hourly"]], e.payType)}</label>
+      ${e.payType === "salary" ? `
+        <label>Salary per period ($)${inp("salaryPerPeriod", e.salaryPerPeriod, "3000.00", 'inputmode="decimal"')}</label>
+        <label class="check"><input type="checkbox" data-emp="${i}" data-field="overtimeExempt" ${e.overtimeExempt ? "checked" : ""}> Exempt from overtime</label>` : `
+        <label>Hourly rate ($)${inp("hourlyRate", e.hourlyRate, "25.00", 'inputmode="decimal"')}</label>
+        <label class="check"><input type="checkbox" data-emp="${i}" data-field="useDaily" ${e.useDaily ? "checked" : ""}> Enter daily hours (CA overtime)</label>
+        ${e.useDaily ? "" : `
+        <label>Regular hours${inp("regularHours", e.regularHours, "80")}</label>
+        <label>Overtime hours${inp("overtimeHours", e.overtimeHours, "0")}</label>
+        <label>Double-time hours${inp("doubleTimeHours", e.doubleTimeHours, "0")}</label>`}`}
+      <label>Federal filing status (W-4)${sel("federalStatus", [["single_or_mfs", "Single or married filing separately"], ["mfj", "Married filing jointly"], ["hoh", "Head of household"]], e.federalStatus)}</label>
+      <label class="check"><input type="checkbox" data-emp="${i}" data-field="step2Checked" ${e.step2Checked ? "checked" : ""}> W-4 Step 2 box checked</label>
+      <label>California status (DE 4)${sel("caStatus", [["single", "Single or dual income married"], ["married", "Married (one income)"], ["hoh", "Head of household"]], e.caStatus)}</label>
+      <label>DE 4 allowances${inp("caAllowances", e.caAllowances, "1")}</label>
+      <label>401(k) per period ($)${inp("k401", e.k401, "0.00")}</label>
+      <label>Section 125 per period ($)${inp("section125", e.section125, "0.00")}</label>
+    </div>
+    ${e.payType === "hourly" && e.useDaily ? `<h3>Hours each day of the workweek</h3><div class="row">${e.dailyHours.map((h, d) => `<label>Day ${d + 1}<input style="width:70px" data-emp="${i}" data-field="daily" data-day="${d}" value="${esc(h)}" inputmode="decimal"></label>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+function payrollBody() {
+  return {
+    periodStart: document.querySelector("[name=periodStart]").value,
+    periodEnd: document.querySelector("[name=periodEnd]").value,
+    payDate: document.querySelector("[name=payDate]").value,
+    caUiRate: document.querySelector("[name=caUiRate]").value.trim() ? String(Number(document.querySelector("[name=caUiRate]").value) / 100) : "",
+    employees: employees.map((e) => ({
+      ...e,
+      salaryPerPeriod: e.payType === "salary" ? e.salaryPerPeriod : "",
+      hourlyRate: e.payType === "hourly" ? e.hourlyRate : "",
+      overtimeExempt: e.payType === "salary" && e.overtimeExempt,
+      dailyHours: e.payType === "hourly" && e.useDaily ? e.dailyHours : undefined,
+    })),
+  };
+}
+
+function runTable(run) {
+  const taxCodes = [...new Set(run.paychecks.flatMap((p) => p.taxes.map((t) => t.code)))];
+  const ee = taxCodes.filter((c) => !c.endsWith("_ER") && !["FUTA", "CA_UI", "CA_ETT"].includes(c));
+  const er = taxCodes.filter((c) => !ee.includes(c));
+  const amt = (p, c) => usd(p.taxes.find((t) => t.code === c)?.amountMinor ?? 0);
+  const issues = run.paychecks.flatMap((p) => [...p.blockers.map((b) => ["bad", `${p.name}: ${b}`]), ...p.warnings.map((w) => ["warn", `${p.name}: ${w}`])]);
+  return `
+    ${issues.map(([k, m]) => `<div class="alert ${k}">${k === "bad" ? "Must fix before approval: " : ""}${esc(m)}</div>`).join("")}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Employee</th><th class="num">Gross</th>${ee.map((c) => `<th class="num">${TAX_LABEL[c]}</th>`).join("")}<th class="num">Deductions</th><th class="num">Net pay</th></tr></thead>
+      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${e.code.toLowerCase().replace("_", " ")}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.sickLeave ? `<div class="hash">sick leave +${p.sickLeave.accruedHours}h, balance ${p.sickLeave.balanceHours}h</div>` : ""}</td>
+        <td class="num">${usd(p.grossMinor)}</td>${ee.map((c) => `<td class="num">${amt(p, c)}</td>`).join("")}
+        <td class="num">${usd(p.deductions.reduce((s, d) => s + BigInt(d.amountMinor), 0n))}</td><td class="num"><strong>${usd(p.netPayMinor)}</strong></td></tr>`).join("")}</tbody>
+    </table></div>
+    <h3>Employer taxes</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Employee</th>${er.map((c) => `<th class="num">${TAX_LABEL[c]}</th>`).join("")}<th class="num">Total</th></tr></thead>
+      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}</td>${er.map((c) => `<td class="num">${amt(p, c)}</td>`).join("")}<td class="num">${usd(p.employerTaxMinor)}</td></tr>`).join("")}</tbody>
+    </table></div>
+    <div class="row" style="margin-top:12px;gap:24px">
+      <div><div class="muted">Total gross</div><div class="stat">${usd(run.totals.grossMinor)}</div></div>
+      <div><div class="muted">Net pay to employees</div><div class="stat">${usd(run.totals.netPayMinor)}</div></div>
+      <div><div class="muted">Employee taxes withheld</div><div class="stat">${usd(run.totals.employeeTaxMinor)}</div></div>
+      <div><div class="muted">Employer taxes</div><div class="stat">${usd(run.totals.employerTaxMinor)}</div></div>
+    </div>
+    <p class="hash" style="margin-top:8px">Rules used: ${run.rulePacks.map(esc).join(", ")}</p>`;
+}
+
+async function payrollView(id, preview = null) {
+  await loadEntity(id);
+  if (!employees.length) employees = [blankEmployee(0)];
+  const { payRuns } = await api(entPath("/pay-runs"));
+  const me = `user:${state.me.user.email}`;
+  const canApprove = ["owner", "admin", "approver"].includes(state.org.role);
+  app.innerHTML = shell("payroll", `
+    <div class="head"><div><h1>Payroll</h1><p class="muted">Alt-QBO calculates pay, taxes and deductions and posts them to the books. You pay employees from your own bank and file and pay taxes with the IRS and EDD yourself.</p></div></div>
+    <div class="panel">
+      <h2>New pay run</h2>
+      <div class="row" style="margin-bottom:12px">
+        <label>Period start<input type="date" name="periodStart" value="2026-06-01"></label>
+        <label>Period end<input type="date" name="periodEnd" value="2026-06-14"></label>
+        <label>Pay date<input type="date" name="payDate" value="2026-06-19"></label>
+        <label>Your CA UI rate (%)<input name="caUiRate" placeholder="3.4 (new employer)" style="width:170px"></label>
+      </div>
+      <div id="emps">${employees.map(employeeCard).join("")}</div>
+      <div class="row">
+        <button class="secondary" data-action="add-emp">+ Add employee</button>
+        <button data-action="preview-run">Calculate</button>
+        <button data-action="save-run" ${preview && !preview.blockers.length ? "" : "disabled"}>Send for approval</button>
+      </div>
+      <div id="preview" style="margin-top:16px">${preview ? runTable(preview) : ""}</div>
+    </div>
+    <div class="panel">
+      <h2>Pay runs</h2>
+      <p class="muted">A pay run posts to the books only after someone other than its preparer approves it.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Created</th><th>Pay date</th><th>Employees</th><th class="num">Gross</th><th class="num">Net</th><th>Prepared by</th><th>Status</th><th></th></tr></thead>
+        <tbody>${payRuns.map((r) => `<tr>
+          <td>${r.created_at.slice(0, 10)}</td><td>${r.result.payDate}</td><td>${r.result.paychecks.length}</td>
+          <td class="num">${usd(r.result.totals.grossMinor)}</td><td class="num">${usd(r.result.totals.netPayMinor)}</td>
+          <td>${esc(r.prepared_by.replace("user:", ""))}</td>
+          <td><span class="${STATUS_PILL[r.status]}">${STATUS_LABEL[r.status]}</span>${r.approved_by ? `<div class="hash">by ${esc(r.approved_by.replace("user:", ""))}</div>` : ""}</td>
+          <td>${r.status === "prepared" && canApprove ? (r.prepared_by === me ? `<span class="muted">Needs another approver</span>` : `<button data-action="approve-run" data-id="${r.id}">Approve and post</button>`) : ""}</td>
+        </tr>`).join("") || `<tr><td colspan="8" class="muted">No pay runs yet.</td></tr>`}</tbody>
+      </table></div>
+    </div>`);
+}
+
+// ------------------------------------------------------------- org views
+
+async function teamView() {
+  const { members } = await api(orgPath("/members"));
+  const canAdd = ["owner", "admin"].includes(state.org.role);
+  app.innerHTML = shell("team", `
+    <div class="head"><div><h1>Team</h1><p class="muted">Roles control who can post, close periods and approve payroll.</p></div></div>
+    <div class="panel table-wrap"><table>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Added</th></tr></thead>
+      <tbody>${members.map((m) => `<tr><td>${esc(m.name)}</td><td>${esc(m.email)}</td><td>${m.role}</td><td>${m.created_at.slice(0, 10)}</td></tr>`).join("")}</tbody>
+    </table></div>
+    ${canAdd ? `<div class="panel"><h2>Add a team member</h2>
+      <p class="muted">Share the email and starting password with them directly. Payroll needs at least two people: one prepares, another approves.</p>
+      <form data-form="member" class="grid">
+        <label>Name<input name="name" required></label>
+        <label>Email<input name="email" type="email" required></label>
+        <label>Starting password<input name="password" type="text" minlength="10" required autocomplete="off"></label>
+        <label>Role<select name="role">
+          <option value="approver">Approver (approves payroll)</option><option value="bookkeeper">Bookkeeper (posts entries, prepares payroll)</option>
+          <option value="accountant">Accountant (closes periods, adjustments)</option><option value="admin">Admin</option><option value="read_only">Read-only</option>
+        </select></label>
+        <label>&nbsp;<button type="submit">Add member</button></label>
+      </form></div>` : ""}`);
+}
+
+async function auditView() {
+  const { events, verification } = await api(orgPath("/audit"));
+  app.innerHTML = shell("audit", `
+    <div class="head"><div><h1>Audit log</h1><p class="muted">Every change, in order. Each event is chained to the one before it with a SHA-256 hash, so any edit or deletion breaks the chain.</p></div></div>
+    ${verification.ok
+      ? `<div class="alert good">Chain verified: all ${verification.events} events are intact.</div>`
+      : `<div class="alert bad">Chain broken at event ${verification.brokenAt}: ${esc(verification.reason)}</div>`}
+    <div class="panel table-wrap"><table>
+      <thead><tr><th>#</th><th>When</th><th>Who</th><th>What</th><th>Hash</th></tr></thead>
+      <tbody>${events.map((e) => `<tr><td class="mono">${e.seq}</td><td>${new Date(e.occurred_at).toLocaleString()}</td><td>${esc(e.actor.replace("user:", ""))}</td>
+        <td>${esc(e.action)}${e.context?.reason ? `<div class="hash">reason: ${esc(e.context.reason)}</div>` : ""}</td><td class="hash">${e.hash.slice(0, 16)}…</td></tr>`).join("")}</tbody>
+    </table></div>`);
+}
+
+// ------------------------------------------------------------------ router
+
+async function route() {
+  const hash = location.hash || "#/";
+  const parts = hash.slice(2).split("/");
+  try {
+    if (parts[0] === "login" || parts[0] === "signup") return authView(parts[0]);
+    if (!state.me) {
+      try { state.me = await api("/api/me"); } catch { return authView("login"); }
+    }
+    if (!state.me.orgs.length) return authView("login", "Your account isn't part of any organisation yet.");
+    if (!state.orgId || !state.me.orgs.some((o) => o.id === state.orgId)) {
+      let saved = null;
+      try { saved = localStorage.getItem("altqbo_org"); } catch {}
+      state.orgId = state.me.orgs.some((o) => o.id === saved) ? saved : state.me.orgs[0].id;
+    }
+    if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
+    if (parts[0] === "e" && parts[1]) {
+      const view = { journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "journal"] ?? journalView;
+      return await view(parts[1]);
+    }
+    if (parts[0] === "team") return await teamView();
+    if (parts[0] === "audit") return await auditView();
+    return await homeView();
+  } catch (err) {
+    app.innerHTML = shell("", `<div class="alert bad">${esc(err.message)}</div><p><a href="#/">Back to businesses</a></p>`);
+  }
+}
+
+window.addEventListener("hashchange", route);
+
+// ------------------------------------------------------------------ events
+
+document.addEventListener("input", (ev) => {
+  const t = ev.target;
+  if (t.closest("#lines")) updateTotals();
+  if (t.dataset.emp !== undefined) {
+    const e = employees[Number(t.dataset.emp)];
+    if (t.dataset.field === "daily") e.dailyHours[Number(t.dataset.day)] = t.value;
+    else if (t.type === "checkbox") e[t.dataset.field] = t.checked;
+    else e[t.dataset.field] = t.value;
+    if (["payType", "useDaily"].includes(t.dataset.field)) document.getElementById("emps").innerHTML = employees.map(employeeCard).join("");
+    const save = document.querySelector("[data-action=save-run]");
+    if (save) save.disabled = true;
+  }
+});
+document.addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (t.dataset.action === "switch-org") {
+    state.orgId = t.value;
+    try { localStorage.setItem("altqbo_org", t.value); } catch {}
+    state.org = null;
+    location.hash = "#/";
+    route();
+  }
+});
+
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-action]");
+  if (!b || b.tagName === "SELECT") return;
+  const a = b.dataset.action;
+  try {
+    if (a === "logout") {
+      await api("/api/auth/logout", { body: {} });
+      state.me = null; state.org = null; state.orgId = null;
+      location.hash = "#/login";
+    } else if (a === "add-line") {
+      const tbody = document.getElementById("lines");
+      tbody.insertAdjacentHTML("beforeend", lineRow(tbody.children.length));
+      updateTotals();
+    } else if (a === "remove-line") {
+      if (document.querySelectorAll("#lines tr").length > 2) b.closest("tr").remove();
+      updateTotals();
+    } else if (a === "show-reverse") {
+      const f = document.querySelector(`form[data-form=reverse][data-id="${b.dataset.id}"]`);
+      f.hidden = !f.hidden;
+    } else if (a === "period") {
+      b.disabled = true;
+      await api(entPath(`/periods/${b.dataset.id}`), { body: { status: b.dataset.status } });
+      state.entity.fresh = false;
+      toast("Period updated");
+      await periodsView(state.entity.entity.id);
+    } else if (a === "tax-export") {
+      const res = await api(entPath(`/tax-export?asOf=${b.dataset.asof}`), { raw: true });
+      if (!res.ok) throw new Error((await res.json()).error);
+      const url = URL.createObjectURL(await res.blob());
+      const link = Object.assign(document.createElement("a"), { href: url, download: `trial-balance-tax-lines-${b.dataset.asof}.csv` });
+      link.click();
+      URL.revokeObjectURL(url);
+    } else if (a === "add-emp") {
+      employees.push(blankEmployee(employees.length));
+      document.getElementById("emps").innerHTML = employees.map(employeeCard).join("");
+    } else if (a === "remove-emp") {
+      employees.splice(Number(b.dataset.i), 1);
+      document.getElementById("emps").innerHTML = employees.map(employeeCard).join("");
+    } else if (a === "preview-run") {
+      b.disabled = true;
+      const run = await api(entPath("/pay-runs/preview"), { body: payrollBody() });
+      document.getElementById("preview").innerHTML = runTable(run);
+      document.querySelector("[data-action=save-run]").disabled = run.blockers.length > 0;
+      b.disabled = false;
+    } else if (a === "save-run") {
+      b.disabled = true;
+      await api(entPath("/pay-runs"), { body: payrollBody() });
+      toast("Pay run sent for approval");
+      await payrollView(state.entity.entity.id);
+    } else if (a === "approve-run") {
+      b.disabled = true;
+      await api(entPath(`/pay-runs/${b.dataset.id}/approve`), { body: {} });
+      toast("Pay run approved and posted to the journal");
+      await payrollView(state.entity.entity.id);
+    }
+  } catch (err) {
+    toast(err.message);
+    if (b.tagName === "BUTTON") b.disabled = false;
+  }
+});
+
+document.addEventListener("submit", async (ev) => {
+  const f = ev.target;
+  const kind = f.dataset.form;
+  if (!kind) return;
+  ev.preventDefault();
+  const btn = f.querySelector("button[type=submit]");
+  if (btn) btn.disabled = true;
+  try {
+    const d = formData(f);
+    if (kind === "login" || kind === "signup") {
+      try {
+        await api(`/api/auth/${kind}`, { body: d });
+      } catch (err) {
+        return authView(kind, err.message);
+      }
+      state.me = null; state.org = null; state.orgId = null;
+      location.hash = "#/";
+      await route();
+    } else if (kind === "entity") {
+      const e = await api(orgPath("/entities"), { body: { ...d, country: "US" } });
+      state.org.stale = true;
+      toast(`${e.legalName} created with ${RETURN_LABEL[e.taxReturnType]} tax lines`);
+      location.hash = `#/e/${e.id}/journal`;
+    } else if (kind === "journal") {
+      const lines = readLines().filter((l) => l.debit || l.credit);
+      const e = await api(entPath("/journal"), { body: { ...d, lines, idempotencyKey: crypto.randomUUID() } });
+      toast(`Entry #${e.entryNumber} posted`);
+      await journalView(state.entity.entity.id);
+    } else if (kind === "reverse") {
+      const e = await api(entPath(`/journal/${f.dataset.id}/reverse`), { body: d });
+      toast(`Reversal #${e.entryNumber} posted`);
+      await journalView(state.entity.entity.id);
+    } else if (kind === "tb") {
+      await trialBalanceView(state.entity.entity.id, d.asOf);
+    } else if (kind === "reopen") {
+      await api(entPath(`/periods/${f.dataset.id}`), { body: { status: "open", reason: d.reason } });
+      state.entity.fresh = false;
+      toast("Period reopened; the reason is in the audit log");
+      await periodsView(state.entity.entity.id);
+    } else if (kind === "connection") {
+      await api(entPath("/connections"), { body: d });
+      state.entity.fresh = false;
+      toast("Connection added");
+      await connectionsView(state.entity.entity.id);
+    } else if (kind === "member") {
+      await api(orgPath("/members"), { body: d });
+      toast(`${d.name} added as ${d.role}`);
+      await teamView();
+    }
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    if (btn && document.contains(btn)) btn.disabled = false;
+  }
+});
+
+route();

@@ -4,7 +4,7 @@ import path from "node:path";
 import type pg from "pg";
 import { createPool } from "./pool.js";
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("../../db/migrations/", import.meta.url));
+const MIGRATIONS_DIR = fileURLToPath(new URL("../../netlify/database/migrations/", import.meta.url));
 
 export async function migrate(pool: pg.Pool): Promise<string[]> {
   await pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (

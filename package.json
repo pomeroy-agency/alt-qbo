@@ -6,10 +6,13 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "migrate": "tsx src/db/migrate.ts",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "dev": "tsx scripts/dev-server.ts"
   },
   "license": "UNLICENSED",
   "dependencies": {
+    "@netlify/database": "^2.0.1",
+    "@netlify/functions": "^6.0.3",
     "decimal.js": "^10.6.0",
     "pg": "^8.23.1"
   },
