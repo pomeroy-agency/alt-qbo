@@ -5,7 +5,7 @@ This repository holds **Phase 0**: the core every module builds on.
 
 | Piece | Where | What it guarantees |
 |---|---|---|
-| Ledger core | `src/core/ledger.ts`, `db/migrations/001_core.sql` | Double entry, balanced per currency; posted entries never change (corrections are reversals); gapless entry numbers; idempotency keys so a replay never double-posts |
+| Ledger core | `src/core/ledger.ts`, `netlify/database/migrations/` | Double entry, balanced per currency; posted entries never change (corrections are reversals); gapless entry numbers; idempotency keys so a replay never double-posts |
 | Periods | same | Monthly periods per entity: open, soft-closed (accountants only), locked (nobody). Reopening needs an owner or accountant and a reason, and is flagged in the audit log |
 | Multi-tenancy | `src/core/tenancy.ts`, `src/db/pool.ts` | Organisations own entities; Postgres row-level security hides every other tenant's rows |
 | Audit log | `src/core/audit.ts` | Append-only, one SHA-256 hash chain per organisation, written in the same transaction as the change; `verifyAuditChain` detects edits and deletions |
