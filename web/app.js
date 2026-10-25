@@ -86,7 +86,7 @@ function topbar() {
 }
 
 const ENTITY_TABS = [
-  ["invoices", "Invoices"], ["bills", "Bills"], ["bank", "Bank"], ["contacts", "Customers and vendors"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
+  ["invoices", "Invoices"], ["bills", "Bills"], ["bank", "Bank"], ["reconcile", "Reconcile"], ["contacts", "Customers and vendors"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
   ["accounts", "Chart of accounts"], ["connections", "Connections"],
 ];
 
@@ -606,6 +606,86 @@ async function bankView(id) {
     </div>`);
 }
 
+// ---------------------------------------------------------- reconciliation
+
+const recon = { account: null, statementDate: "", statementBalance: "", data: null };
+
+async function reconcileView(id) {
+  await loadEntity(id);
+  const banks = state.entity.accounts.filter((a) => a.is_active && a.subtype === "bank");
+  if (!banks.some((a) => a.code === recon.account)) { recon.account = banks[0]?.code ?? null; recon.data = null; }
+  const q = `?account=${encodeURIComponent(recon.account ?? "")}${recon.statementDate ? `&statementDate=${recon.statementDate}` : ""}`;
+  const res = recon.account ? await api(entPath(`/reconciliations${q}`)) : { history: [] };
+  recon.data = recon.statementDate ? res : null;
+  const canWrite = !["read_only", "approver"].includes(state.org.role);
+  const last = res.history[0];
+  app.innerHTML = shell("reconcile", `
+    <div class="head"><div><h1>Reconcile</h1><p class="muted">Tick each item that appears on your bank statement. It completes only when the difference is zero, and reconciled items can't be cleared again.</p></div></div>
+    <div class="panel">
+      <form data-form="recon-start" class="row">
+        <label>Bank account<select name="account">${banks.map((a) => `<option value="${a.code}" ${a.code === recon.account ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>
+        <label>Statement ending date<input type="date" name="statementDate" value="${recon.statementDate}" required></label>
+        <label>Statement ending balance<input name="statementBalance" class="mono" inputmode="decimal" value="${esc(recon.statementBalance)}" placeholder="0.00" required style="width:160px"></label>
+        <button type="submit" class="secondary">Show items</button>
+      </form>
+      <p class="hash" style="margin-top:8px">${last ? `Last reconciled through ${last.statementDate} at ${usd(last.statementMinor)}.` : "Not reconciled yet; the first reconciliation starts from zero."}</p>
+    </div>
+    ${recon.data ? `<div class="panel">
+      <div class="row" style="gap:24px;margin-bottom:12px">
+        <div><div class="muted">Beginning balance</div><div class="stat">${usd(recon.data.beginningMinor)}</div></div>
+        <div><div class="muted">Cleared</div><div class="stat" id="rc-cleared">$0.00</div></div>
+        <div><div class="muted">Statement balance</div><div class="stat">${usd(statementMinor() ?? 0n)}</div></div>
+        <div><div class="muted">Difference</div><div class="stat" id="rc-diff">$0.00</div></div>
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <button class="link" data-action="rc-all">Tick all</button><button class="link" data-action="rc-none">Clear ticks</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th>Date</th><th>Entry</th><th>Memo</th><th class="num">Money in</th><th class="num">Money out</th></tr></thead>
+        <tbody id="rc-items">${recon.data.items.map((i) => {
+          const a = BigInt(i.amountMinor);
+          return `<tr><td><input type="checkbox" data-rc="${i.lineId}" data-amount="${i.amountMinor}" aria-label="Cleared"></td><td>${i.date}</td><td class="mono">#${i.entryNumber}</td>
+            <td>${esc(i.memo || i.description)}</td><td class="num">${a > 0n ? usd(a) : ""}</td><td class="num">${a < 0n ? usd(-a) : ""}</td></tr>`;
+        }).join("") || `<tr><td colspan="6" class="muted">No open items on or before this date.</td></tr>`}</tbody>
+      </table></div>
+      ${canWrite ? `<div class="row" style="margin-top:12px"><button id="rc-finish" data-action="rc-finish" disabled>Finish reconciliation</button></div>` : ""}
+    </div>` : ""}
+    <div class="panel">
+      <h2>Completed</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Statement date</th><th class="num">Beginning</th><th class="num">Cleared</th><th class="num">Ending</th><th>Items</th><th>By</th></tr></thead>
+        <tbody>${res.history.map((r) => `<tr><td>${r.statementDate}</td><td class="num">${usd(r.beginningMinor)}</td><td class="num">${usd(r.clearedMinor)}</td>
+          <td class="num">${usd(r.statementMinor)}</td><td>${r.lines}</td><td>${esc(r.completedBy.replace("user:", ""))}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">None yet.</td></tr>`}</tbody>
+      </table></div>
+    </div>`);
+  updateRecon();
+}
+
+function statementMinor() {
+  return statementMinorOf(recon.statementBalance);
+}
+
+function statementMinorOf(v) {
+  const raw = String(v ?? "").trim().replace(/,/g, "");
+  const neg = raw.startsWith("-");
+  const c = cents(raw.replace(/^-/, ""));
+  return c === null ? null : neg ? -c : c;
+}
+
+function updateRecon() {
+  if (!recon.data) return;
+  const ticked = [...document.querySelectorAll("[data-rc]:checked")];
+  const cleared = ticked.reduce((s, x) => s + BigInt(x.dataset.amount), 0n);
+  const stmt = statementMinor() ?? 0n;
+  const diff = stmt - (BigInt(recon.data.beginningMinor) + cleared);
+  document.getElementById("rc-cleared").textContent = usd(cleared);
+  const d = document.getElementById("rc-diff");
+  d.textContent = usd(diff);
+  d.style.color = diff === 0n ? "var(--good-ink)" : "var(--bad-ink)";
+  const btn = document.getElementById("rc-finish");
+  if (btn) btn.disabled = diff !== 0n || statementMinor() === null;
+}
+
 // --------------------------------------------------------------- payroll
 
 let employees = [];
@@ -783,7 +863,7 @@ async function route() {
     }
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
-      const view = { invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, bank: bankView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "journal"] ?? journalView;
+      const view = { invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "journal"] ?? journalView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
@@ -802,6 +882,7 @@ document.addEventListener("input", (ev) => {
   const t = ev.target;
   if (t.closest("#lines")) updateTotals();
   if (t.closest("form[data-form=document]")) updateDocTotals();
+  if (t.dataset.rc !== undefined) updateRecon();
   if (t.dataset.emp !== undefined) {
     const e = employees[Number(t.dataset.emp)];
     if (t.dataset.field === "daily") e.dailyHours[Number(t.dataset.day)] = t.value;
@@ -864,6 +945,16 @@ document.addEventListener("click", async (ev) => {
         const kind = location.hash.includes("/bills") ? "bills" : "invoices";
         document.getElementById(`detail-${b.dataset.id}`).innerHTML = docDetail(await api(entPath(`/${kind}/${b.dataset.id}`)));
       }
+    } else if (a === "rc-all" || a === "rc-none") {
+      document.querySelectorAll("[data-rc]").forEach((x) => { x.checked = a === "rc-all"; });
+      updateRecon();
+    } else if (a === "rc-finish") {
+      b.disabled = true;
+      const ids = [...document.querySelectorAll("[data-rc]:checked")].map((x) => x.dataset.rc);
+      await api(entPath("/reconciliations"), { body: { bankAccount: recon.account, statementDate: recon.statementDate, statementBalance: recon.statementBalance.trim(), clearedLineIds: ids } });
+      toast(`Reconciled through ${recon.statementDate}`);
+      recon.statementDate = ""; recon.statementBalance = "";
+      await reconcileView(state.entity.entity.id);
     } else if (a === "bank-status") {
       bankUi.status = b.dataset.status;
       await bankView(state.entity.entity.id);
@@ -990,6 +1081,10 @@ document.addEventListener("submit", async (ev) => {
       const doc = await api(entPath(`/${DOC[k].path}/${f.dataset.id}/void`), { body: d });
       toast(`${doc.number} voided; the reversal is in the journal`);
       await docsView(state.entity.entity.id, k);
+    } else if (kind === "recon-start") {
+      if (statementMinorOf(d.statementBalance) === null) throw new Error("Enter the statement balance as an amount like 12345.67");
+      Object.assign(recon, { account: d.account, statementDate: d.statementDate, statementBalance: d.statementBalance });
+      await reconcileView(state.entity.entity.id);
     } else if (kind === "bank-import") {
       const file = f.querySelector("[name=file]").files[0];
       const csv = file ? await file.text() : d.csv;
