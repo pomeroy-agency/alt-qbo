@@ -3,7 +3,7 @@ import { withTenant, type Tx } from "../src/db/pool.js";
 import { handleApi } from "../src/app/api.js";
 import { LedgerError } from "../src/core/errors.js";
 import { createContact, voidDocument } from "../src/core/documents.js";
-import { issueInvoice, type RateLookup } from "../src/core/sales-tax.js";
+import { issueInvoice, recordBill, setBusinessAddress, type RateLookup } from "../src/core/sales-tax.js";
 import { prepareSalesTaxReturn, returnPeriod, returnPeriods, salesTaxSettings, setSalesTaxSettings } from "../src/core/sales-tax-return.js";
 import { accountant, bookkeeper, owner, pool, setupCaliforniaBusiness } from "./helpers.js";
 
@@ -91,12 +91,12 @@ describe("the business's own sales tax", () => {
     expect(line("Sales to other retailers for resale")).toBe(30000n);
     expect(line("Nontaxable sales (services and other)")).toBe(20000n);
     expect(line("Total deductions")).toBe(50000n);
-    expect(line("Total taxable sales")).toBe(100000n);
+    expect(line("Total taxable sales and purchases")).toBe(100000n);
     // $1,000 at 7.25% state and local, plus 1.375% district in San Francisco.
-    expect(line("State and local tax on taxable sales")).toBe(7250n);
+    expect(line("State and local tax on the taxable total")).toBe(7250n);
     expect(line("District taxes (from Schedule A)")).toBe(1375n);
     expect(line("Total tax on this return")).toBe(8625n);
-    expect(line("Sales tax charged on invoices, for comparison")).toBe(8625n);
+    expect(line("Sales tax charged on invoices and use tax accrued on bills, for comparison")).toBe(8625n);
     expect(r.districts).toEqual([{ jurisdiction: "San Francisco, San Francisco County", rate: "0.08625", taxableMinor: 100000n, taxMinor: 8625n, districtTaxMinor: 1375n }]);
     expect(line("October prepayment, due 2026-11-24")).toBe(8625n);
     expect(line("November prepayment, due 2026-12-24")).toBe(0n);
@@ -132,6 +132,25 @@ describe("the business's own sales tax", () => {
     }));
     const m = await b.t((tx) => prepareSalesTaxReturn(tx, b.entity.id, "2026-Q4"));
     expect(m.warnings.some((w) => /rate set by hand/.test(w))).toBe(true);
+  });
+
+  it("adds purchases subject to use tax to the taxable total", async () => {
+    const b = await business();
+    await b.t((tx) => setBusinessAddress(tx, { ...b.base, address: SF, actor: owner }));
+    const saas = await b.t((tx) => createContact(tx, { ...b.base, kind: "vendor", name: "Out-of-State SaaS", accrueUseTax: true, actor: bookkeeper }));
+    await b.t((tx) => recordBill(tx, {
+      ...b.base, contactId: saas.id, issueDate: "2026-12-10", dueDate: "2027-01-09", idempotencyKey: "u1", actor: bookkeeper, lookup,
+      lines: [{ account: "6000", quantity: "1", unitPrice: "1200.00", taxCategory: "prewritten_software", servicePeriodStart: "2027-01-01", servicePeriodEnd: "2027-01-31" }],
+    }));
+    const r = await b.t((tx) => prepareSalesTaxReturn(tx, b.entity.id, "2026-Q4"));
+    const line = (label: string) => r.lines.find((l) => l.label === label)?.value;
+    expect(line("Purchases subject to use tax")).toBe(120000n);
+    expect(line("Total taxable sales and purchases")).toBe(120000n);
+    // $1,200 x 7.25% = $87.00, plus $1,200 x 1.375% = $16.50.
+    expect(line("State and local tax on the taxable total")).toBe(8700n);
+    expect(line("District taxes (from Schedule A)")).toBe(1650n);
+    expect(line("Sales tax charged on invoices and use tax accrued on bills, for comparison")).toBe(10350n);
+    expect(r.districts).toEqual([{ jurisdiction: "San Francisco, San Francisco County", rate: "0.08625", taxableMinor: 120000n, taxMinor: 10350n, districtTaxMinor: 1650n }]);
   });
 
   it("is served by the API", async () => {

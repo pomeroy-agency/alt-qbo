@@ -168,26 +168,38 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
   const pack = rulesFor(ent.region, period.to);
   const r = await salesTaxReport(tx, entityId, period.from, period.to);
 
-  const districts = r.byJurisdiction.map((j) => {
-    const rate = new D(j.ratePercent).div(100);
-    const districtRate = D.max(rate.minus(pack.statewideRate), 0);
+  // Taxable sales and purchases subject to use tax are taxed alike: 7.25% statewide, plus each place's district tax.
+  const places = new Map<string, { jurisdiction: string; rate: string; taxableMinor: bigint }>();
+  const add = (jurisdiction: string, ratePercent: string, amount: bigint) => {
+    const rate = new D(ratePercent).div(100).toFixed(5);
+    const k = `${jurisdiction}|${rate}`;
+    const row = places.get(k) ?? { jurisdiction, rate, taxableMinor: 0n };
+    row.taxableMinor += amount;
+    places.set(k, row);
+  };
+  for (const j of r.byJurisdiction) add(j.jurisdiction, j.ratePercent, j.taxableMinor);
+  for (const j of r.useTax.byJurisdiction) add(j.jurisdiction, j.ratePercent, j.purchasesMinor);
+  const districts = [...places.values()].map((d) => {
+    const districtRate = D.max(new D(d.rate).minus(pack.statewideRate), 0);
     return {
-      jurisdiction: j.jurisdiction, rate: rate.toFixed(5), taxableMinor: j.taxableMinor,
-      taxMinor: round(new D(j.taxableMinor.toString()).mul(rate)),
-      districtTaxMinor: round(new D(j.taxableMinor.toString()).mul(districtRate)),
+      ...d,
+      taxMinor: round(new D(d.taxableMinor.toString()).mul(d.rate)),
+      districtTaxMinor: round(new D(d.taxableMinor.toString()).mul(districtRate)),
     };
-  });
-  const state = round(new D(r.taxableMinor.toString()).mul(pack.statewideRate));
+  }).sort((a, b) => a.jurisdiction.localeCompare(b.jurisdiction));
+  const taxable = r.taxableMinor + r.useTax.purchasesMinor;
+  const state = round(new D(taxable.toString()).mul(pack.statewideRate));
   const districtTax = districts.reduce((s, d) => s + d.districtTaxMinor, 0n);
   const computed = state + districtTax;
+  const charged = r.taxMinor + r.useTax.taxMinor;
   const nontaxable = r.nontaxable.reduce((s, n) => s + n.amountMinor, 0n);
   const deductions = r.resaleMinor + r.interstateMinor + nontaxable + r.directPayMinor + r.outsideCaUseMinor;
 
   const warnings: string[] = [];
   if (!ent.seller_permit) warnings.push("Record your seller's permit number on this page's settings. It goes at the top of every return");
   if (!ent.sales_tax_filing) warnings.push("Record how often the CDTFA has you file (it's on your permit), so Alt-QBO shows the right periods and due dates");
-  if (r.taxMinor > computed) {
-    warnings.push(`Your invoices charged ${usdText(r.taxMinor - computed)} more tax than the return computes, from per-invoice rounding or a rate set by hand. Tax collected from customers is owed to the state even when it is more than the tax due, so pay the extra with this return (Rev. & Tax. Code §6901.5)`);
+  if (charged > computed) {
+    warnings.push(`Your invoices charged ${usdText(charged - computed)} more tax than the return computes, from per-invoice rounding or a rate set by hand. Tax collected from customers is owed to the state even when it is more than the tax due, so pay the extra with this return (Rev. & Tax. Code §6901.5)`);
   }
   if (districts.some((d) => d.jurisdiction.startsWith("Set by hand") || d.jurisdiction === "Entered by user")) {
     warnings.push("Some invoices had their rate set by hand. Check which district each belongs to before you fill in Schedule A");
@@ -204,7 +216,7 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
 
   const lines: ReturnLine[] = [
     money("Total sales", "Total (gross) sales", r.totalSalesMinor, "Invoice amounts before sales tax, for invoices dated in the period"),
-    money("Use tax", "Purchases subject to use tax", null, "Alt-QBO doesn't work this out yet. Enter what you bought for use in California from sellers who didn't charge California tax"),
+    money("Use tax", "Purchases subject to use tax", r.useTax.purchasesMinor, "Bills that accrued California use tax because the vendor didn't charge it"),
     money("Deduction", "Sales to other retailers for resale", r.resaleMinor, "Customers with a resale certificate on file"),
     money("Deduction", "Sales in interstate and foreign commerce", r.interstateMinor, "Delivered outside California, or software billed to an address outside it"),
     money("Deduction", "Nontaxable sales (services and other)", nontaxable, r.nontaxable.map((n) => `${n.label} ${usdText(n.amountMinor)}`).join("; ") || undefined),
@@ -213,12 +225,12 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
     money("Deduction", "Sales tax included in total sales", 0n, "Alt-QBO keeps the tax apart from the sale, so there is none to deduct"),
     money("Deduction", "Bad debt losses on taxable sales", null, "Alt-QBO doesn't track written-off invoices yet. Enter any you wrote off this period"),
     money("Total deductions", "Total deductions", deductions),
-    money("Taxable", "Total taxable sales", r.taxableMinor),
+    money("Taxable", "Total taxable sales and purchases", taxable),
     { line: "Rate", label: "State and local rate", value: `${new D(pack.statewideRate).mul(100).toString()}%`, kind: "text" },
-    money("State and local tax", "State and local tax on taxable sales", state),
+    money("State and local tax", "State and local tax on the taxable total", state),
     money("District tax", "District taxes (from Schedule A)", districtTax),
     money("Total tax", "Total tax on this return", computed),
-    money("Charged", "Sales tax charged on invoices, for comparison", r.taxMinor, "It should match the total tax, give or take rounding"),
+    money("Charged", "Sales tax charged on invoices and use tax accrued on bills, for comparison", charged, "It should match the total tax, give or take rounding"),
   ];
   for (const p of period.prepayments ?? []) {
     const m = await salesTaxReport(tx, entityId, p.from, p.to);

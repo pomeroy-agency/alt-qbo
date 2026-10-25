@@ -14,15 +14,17 @@ Alt-QBO has no subscription billing of its own. The plan is for the selling busi
 6. **Invoice with access dates.** Every subscription line carries the first and last day of access. The tax follows those dates, not the invoice date.
 7. **File and pay each period.** Open the period on the Sales tax page, read the warnings, and copy the figures into CDTFA online services by the due date shown. Then record the payment in the books by debiting Sales tax payable (2200) and crediting the bank, or match it on the Bank page.
 
-## For Greg's legal review
+## Decisions (2026-10-25)
 
-- **Tax-exclusive pricing and reimbursement.** The terms of service should say that prices exclude sales tax and that the customer pays California sales tax reimbursement where it applies. That way the Civil Code §1656.1 presumption works in Alt-QBO's favor. Invoices already show the tax as its own line.
-- **Accounting and HR firm channel.** A firm that buys seats and resells them to its clients can give a resale certificate (CDTFA-230), and then those sales aren't taxed. A firm that buys for its own use, or that only refers clients, can't. How the reseller agreements are written decides which case applies.
-- **Bundled services.** Setup, training or bookkeeping sold with the subscription should be priced and invoiced as separate lines, with the kind of sale "Professional or creative service". Whether a bundled single price is wholly taxable under the final Regulation 1600 is still open.
-- **Customers outside California.** Software billed to an address outside California carries no California tax, and Alt-QBO deducts it on the return. Other states tax SaaS under their own rules and economic-nexus thresholds, which is out of scope here.
-- **Large customers.** A customer buying over $5,000,000 of software a year from one seller reports the tax itself under a use tax direct payment permit. This is unlikely to come up for Alt-QBO, but the customer settings support it.
-- **Use tax on Alt-QBO's own purchases.** From 2027, SaaS the business buys for use in California from a seller that doesn't charge California tax owes use tax. That amount goes on the same return under "purchases subject to use tax". Alt-QBO doesn't compute this line yet.
-- **Unverified here.** ca.gov is blocked from the build environment, so these come from working knowledge and search extracts and need checking: the due-date and prepayment rules in `docs/rule-pack-review.md` (Sales and use tax return worksheet), and the final regulation text once the OAL approves it.
+The full reasoning, the draft Terms of Service and the partner firm addendum are in the [Terms of service and 2027 sales tax decisions](https://claude.ai/artifact/DrN5xh3U7RnPHrF2HKwxHa) doc.
+
+- **Seller:** a dedicated single-member LLC, formed now. Its name stays generic until the product is named.
+- **Pricing:** every price excludes tax. The Terms of Service (section 6) has the customer agree to pay California sales tax reimbursement (Civ. Code §1656.1). Invoices show the tax as its own line.
+- **Accounting and HR firms:** no resale. The client business is always the customer of record, billed and taxed at its own billing address. A firm may pay as the client's agent under the partner firm addendum. A firm's own seats are taxed at the firm's address. Partner pricing is a discount on the client's invoice or a referral fee, never a wholesale price.
+- **Services:** onboarding, conversion and training are separate optional lines (kind of sale "Professional or creative service"). There are no bundled prices.
+- **Basis and frequency:** reporting is on an accrual basis, at whatever frequency the CDTFA assigns (most likely quarterly).
+- **Use tax:** vendors that don't charge California tax are marked so their bills accrue use tax. That use tax flows into the worksheet's "purchases subject to use tax" line.
+- **Customers:** at launch, only California-based businesses.
 
 ## What the app does
 
