@@ -66,6 +66,18 @@ describe("deciding an invoice's sales tax", () => {
     await expectLedgerError(decide(sf.id, ["mystery"]), "INVALID");
   });
 
+  it("taxes ready-made software from 2027 (SB 122) but not custom digital work", async () => {
+    const b = await business();
+    const { lookup } = fakeLookup();
+    const sf = await b.contact("SF Client", { address: SF });
+    const decide = (date: string, categories: string[]) =>
+      b.t((tx) => decideSalesTax(tx, { entityId: b.entity.id, contactId: sf.id, date, categories, lookup }));
+    expect(await decide("2026-12-31", ["prewritten_software"])).toMatchObject({ source: "not_taxable", rules: "us-ca-sales-tax-2026@2026.1.0" });
+    expect(await decide("2027-01-01", ["prewritten_software", "digital_delivery"])).toMatchObject({
+      source: "lookup", rate: "0.08625", taxable: [true, false], rules: "us-ca-sales-tax-2027@2027.1.0",
+    });
+  });
+
   it("refuses to guess when the lookup fails or answers something impossible", async () => {
     const b = await business();
     const { lookup } = fakeLookup();

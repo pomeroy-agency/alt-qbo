@@ -66,6 +66,14 @@ Also to confirm:
 - **Rate lookup.** The rate comes from the CDTFA's tax rate API. It was spot-checked for four cities on 2026-10-25, and the live site returned 10.25% for Los Angeles City Hall the same day. Addresses on district boundaries still need checking.
 - **Design charges.** CDTFA annotations (430.0194, 100.0103, 100.0159, 100.0162, still in the 2026 law guide) say finished or sketched designs handed over in physical form are taxable, while preliminary art billed separately is not. Designs delivered only electronically are not tangible, which is why "professional or creative service" defaults to not taxable.
 
+### us-ca-sales-tax 2027.1 (same file, draft; rule watch 2026-10-25)
+
+| Change | 2027 value | Source | Check |
+|---|---|---|---|
+| Prewritten software, including SaaS and remote access | taxable from 2027-01-01 (new "Software or app access" choice; not taxable in the 2026 pack) | SB 122, signed June 29, 2026; CDTFA draft emergency regulations, Sept 2026 | ⚠️ from several law-firm and tax-firm summaries; read the statute and CDTFA's regulations to confirm |
+| Custom software, digital art, photos, audio, video, books delivered electronically | still not taxable | SB 122 exclusions | ⚠️ same |
+| Everything else | carried over from 2026 | | carried over; without a 2027 pack, invoices dated 2027 could not be issued |
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. Alt-QBO doesn't file them.
