@@ -7,6 +7,8 @@ import { trialBalance, taxLineExportCsv } from "../core/reports.js";
 import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, recordPayment, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
+import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
+import { toMajor } from "../core/money.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, calculatePayRun, type PayRunInput } from "../payroll/pay-run.js";
@@ -566,6 +568,91 @@ route("POST", "/api/orgs/:org/entities/:entity/reconciliations", async (req, p, 
     });
   });
   return json(out, 201);
+});
+
+// ----------------------------------------------------------------- reports
+
+function csvResponse(csv: string, filename: string): Response {
+  return new Response(csv, {
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename.replace(/[^\w.-]+/g, "-")}"`,
+      "cache-control": "no-store",
+    },
+  });
+}
+
+const serverToday = () => new Date().toISOString().slice(0, 10);
+
+route("GET", "/api/orgs/:org/entities/:entity/reports/profit-and-loss", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const from = date(q.get("from"), "from"), to = date(q.get("to"), "to");
+  const pl = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return profitAndLoss(tx, p.entity!, from, to);
+  });
+  return q.get("format") === "csv" ? csvResponse(profitAndLossCsv(pl), `profit-and-loss-${from}-to-${to}.csv`) : json(pl);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/reports/balance-sheet", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const asOf = date(q.get("asOf"), "asOf");
+  const bs = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return balanceSheet(tx, p.entity!, asOf);
+  });
+  return q.get("format") === "csv" ? csvResponse(balanceSheetCsv(bs), `balance-sheet-${asOf}.csv`) : json(bs);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/reports/general-ledger", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const from = date(q.get("from"), "from"), to = date(q.get("to"), "to");
+  const account = str(q.get("account") ?? "", "account", 40);
+  const gl = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return generalLedger(tx, p.entity!, account, from, to);
+  });
+  return q.get("format") === "csv" ? csvResponse(generalLedgerCsv(gl), `general-ledger-${gl.account.code}-${from}-to-${to}.csv`) : json(gl);
+});
+
+for (const kind of ["invoice", "bill"] as DocumentKind[]) {
+  route("GET", `/api/orgs/:org/entities/:entity/reports/${kind === "invoice" ? "receivables" : "payables"}-aging`, async (req, p, ctx) => {
+    const asOf = date(new URL(req.url).searchParams.get("asOf"), "asOf");
+    const ag = await tenant(ctx, async (tx) => {
+      await ensureEntity(tx, p.entity!);
+      return aging(tx, p.entity!, kind, asOf);
+    });
+    const cell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+    const lines = [`${kind === "invoice" ? "Receivables" : "Payables"} aging,as of ${asOf}`, "Number,Contact,Due date,Days past due,Bucket,Still due"];
+    for (const r of ag.rows) lines.push([r.number, cell(r.contactName), r.dueDate, String(r.daysPastDue), r.bucket, toMajor(r.dueMinor).toFixed(2)].join(","));
+    lines.push(`Total,,,,,${toMajor(ag.totalMinor).toFixed(2)}`);
+    return csvResponse(lines.join("\n") + "\n", `${kind === "invoice" ? "receivables" : "payables"}-aging-${asOf}.csv`);
+  });
+}
+
+route("GET", "/api/orgs/:org/entities/:entity/health", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ checks: await booksHealth(tx, p.entity!, serverToday()) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/settings", async (req, p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  const ein = str(b.ein, "EIN", 20);
+  if (!/^\d{2}-?\d{7}$/.test(ein)) throw new HttpError(400, "EIN must look like 12-3456789");
+  const formatted = `${ein.replace("-", "").slice(0, 2)}-${ein.replace("-", "").slice(2)}`;
+  await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const before = (await tx.query("SELECT ein FROM entities WHERE id = $1", [p.entity])).rows[0].ein;
+    await tx.query("UPDATE entities SET ein = $2 WHERE id = $1", [p.entity, formatted]);
+    await appendAudit(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.updated", objectType: "entity", objectId: p.entity!,
+      before: { ein: before }, after: { ein: formatted }, context: { role: ctx.role },
+    });
+  });
+  return json({ ok: true, ein: formatted });
 });
 
 // ----------------------------------------------------------------- payroll

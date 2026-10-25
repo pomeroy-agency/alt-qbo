@@ -200,3 +200,25 @@ describe("reconciliation API", () => {
     expect((await call(`${base}/reconciliations?account=1000`, { cookie: s.cookie })).data.history).toHaveLength(1);
   });
 });
+
+describe("reports API", () => {
+  it("returns statements as JSON and CSV, the health checklist, and saves the EIN", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    await call(`${base}/journal`, { cookie: s.cookie, body: { date: "2026-03-01", lines: [{ account: "1000", debit: "100.00" }, { account: "4000", credit: "100.00" }] } });
+    const pl = await call(`${base}/reports/profit-and-loss?from=2026-01-01&to=2026-12-31`, { cookie: s.cookie });
+    expect(pl.data.netIncomeMinor).toBe("10000");
+    const csv = await call(`${base}/reports/balance-sheet?asOf=2026-12-31&format=csv`, { cookie: s.cookie });
+    expect(csv.data).toContain("Total assets,,,100.00");
+    const gl = await call(`${base}/reports/general-ledger?account=1000&from=2026-01-01&to=2026-12-31`, { cookie: s.cookie });
+    expect(gl.data.closingMinor).toBe("10000");
+    expect((await call(`${base}/reports/receivables-aging?asOf=2026-12-31`, { cookie: s.cookie })).data).toContain("Total,,,,,0.00");
+    expect((await call(`${base}/reports/profit-and-loss?from=bad&to=2026-12-31`, { cookie: s.cookie })).status).toBe(400);
+    const h = await call(`${base}/health`, { cookie: s.cookie });
+    expect(h.data.checks.find((c: any) => c.key === "ein").ok).toBe(false);
+    expect((await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "12-34" } })).status).toBe(400);
+    expect((await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "123456789" } })).data.ein).toBe("12-3456789");
+    expect((await call(`${base}/health`, { cookie: s.cookie })).data.checks.find((c: any) => c.key === "ein").ok).toBe(true);
+  });
+});
