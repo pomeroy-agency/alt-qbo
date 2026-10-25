@@ -1045,6 +1045,18 @@ async function sendEmailLink(req: Request, pool: pg.Pool, opts: ApiOptions, emai
 
 async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response | null> {
   if (req.method === "GET" && path === "/api/auth/options") return json({ email: Boolean(opts.mailer) });
+  // Checks the sales tax rate lookup end to end with one fixed address
+  // (Los Angeles City Hall). Takes no input, so it can't be used to look up
+  // anything else; answers are cached like any other lookup.
+  if (req.method === "GET" && path === "/api/health/tax-lookup") {
+    if (!opts.taxRates) return json({ ok: false, error: "no rate lookup is set up" });
+    try {
+      const r = await opts.taxRates({ line1: "200 N Spring St", city: "Los Angeles", state: "CA", zip: "90012" });
+      return json({ ok: true, address: "200 N Spring St, Los Angeles, CA 90012", rate: r.rate, jurisdiction: r.jurisdiction });
+    } catch (err) {
+      return json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
   if (req.method === "POST" && (path === "/api/auth/email-link" || path === "/api/auth/reset")) {
     const b = await body(req);
     await sendEmailLink(req, pool, opts, normaliseEmail(b.email), path.endsWith("reset") ? "reset" : "sign_in");

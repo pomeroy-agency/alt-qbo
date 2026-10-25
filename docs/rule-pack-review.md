@@ -28,6 +28,26 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 | Sales tax | services non-taxable by default; $500k remote-seller threshold | **confirm** |
 | Franchise tax minimum | $800 | **confirm** |
 
+## us-ca-sales-tax 2026.1 (`src/rules/sales-tax/us-ca-2026.ts`)
+
+| Kind of sale | Taxable | Basis |
+|---|---|---|
+| Professional or creative service | no | Rev. & Tax. Code §6051; Reg. 1501 |
+| Delivered electronically | no | Reg. 1502(f)(1)(D) |
+| Repair or installation labor (billed apart from parts) | no | Reg. 1546 |
+| Shipping by carrier, separately stated | no | Reg. 1628(b) |
+| Physical goods | yes | §6051 |
+| Printed materials, including their design charges | yes | Regs. 1540, 1541 |
+| Making something for the customer | yes | Reg. 1526 |
+| Equipment rental | yes (usually) | Reg. 1660 |
+
+Also to confirm:
+- **Which address sets the rate.** The customer's address is used, or the business's own address if the customer has none. Confirm this default for service businesses that rarely ship (Regs. 1802/1823).
+- **Out of state.** A sale is exempt as interstate only when the customer's address is outside California (Reg. 1620).
+- **Resale.** A sale is exempt only when the customer's seller's permit is on file. The number is recorded but not checked with the CDTFA (Reg. 1668).
+- **Own-vehicle delivery.** Delivery in the seller's own vehicle can be taxable, so consider a separate kind of sale for it (Reg. 1628).
+- **Rate lookup.** The rate comes from the CDTFA's tax rate API. It was spot-checked for four cities on 2026-10-25. Addresses on district boundaries still need checking.
+
 ## Chart of accounts tax lines (`src/rules/coa/us-service.ts`)
 
 Tax-line codes for Schedule C, 1065, 1120S and 1120 are from working knowledge and need checking against the current forms and against each Intuit product's trial-balance import layout.

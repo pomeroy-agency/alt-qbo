@@ -216,3 +216,15 @@ describe("sales tax API", () => {
     expect((await call(`${base}/address`, { cookie, body: { address: { line1: "500 Howard St", city: "San Francisco", state: "CA", zip: "94105" } } })).status).toBe(200);
   });
 });
+
+describe("tax lookup health check", () => {
+  const get = (taxRates?: RateLookup) => handleApi(new Request("https://alt-qbo.test/api/health/tax-lookup"), pool, { taxRates }).then((r) => r.json());
+  it("looks up one fixed address and says whether it worked", async () => {
+    const seen: string[] = [];
+    expect(await get(async (a) => { seen.push(a.zip); return { rate: "0.10250", jurisdiction: "Los Angeles" }; }))
+      .toMatchObject({ ok: true, rate: "0.10250", jurisdiction: "Los Angeles" });
+    expect(seen).toEqual(["90012"]);
+    expect(await get(async () => { throw new Error("the CDTFA rate lookup answered 503"); })).toEqual({ ok: false, error: "the CDTFA rate lookup answered 503" });
+    expect(await get()).toMatchObject({ ok: false });
+  });
+});
