@@ -116,3 +116,42 @@ describe("API", () => {
     expect(audit.data.events.map((e: any) => e.action)).toContain("pay_run.approved");
   });
 });
+
+describe("invoices and bills API", () => {
+  it("adds a customer, issues an invoice, takes a payment, and shows aging", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    const cust = await call(`${base}/contacts`, { cookie: s.cookie, body: { kind: "customer", name: "Acme Corp" } });
+    expect(cust.status).toBe(201);
+    expect((await call(`${base}/contacts`, { cookie: s.cookie, body: { kind: "customer", name: "acme corp" } })).status).toBe(422);
+
+    const inv = await call(`${base}/invoices`, {
+      cookie: s.cookie,
+      body: { contactId: cust.data.id, issueDate: "2026-05-01", dueDate: "2026-05-31", taxRate: "7.25", idempotencyKey: "k1",
+        lines: [{ account: "4000", description: "Design", quantity: "2", unitPrice: "500.00", taxable: true }] },
+    });
+    expect(inv.status).toBe(201);
+    expect(inv.data).toMatchObject({ number: "INV-1001", subtotalMinor: "100000", taxMinor: "7250", totalMinor: "107250" });
+    expect((await call(`${base}/invoices`, { cookie: s.cookie, body: { contactId: "nope", issueDate: "2026-05-01", lines: [{ account: "4000", unitPrice: "1.00" }] } })).status).toBe(400);
+    expect((await call(`${base}/invoices`, { cookie: s.cookie, body: { contactId: cust.data.id, issueDate: "2026-05-01", taxRate: "abc", lines: [{ account: "4000", unitPrice: "1.00" }] } })).status).toBe(400);
+
+    const over = await call(`${base}/invoices/${inv.data.id}/payments`, { cookie: s.cookie, body: { date: "2026-05-10", amount: "2000.00" } });
+    expect(over.status).toBe(422);
+    expect(over.data.code).toBe("OVERPAID");
+    const pay = await call(`${base}/invoices/${inv.data.id}/payments`, { cookie: s.cookie, body: { date: "2026-05-10", amount: "72.50" } });
+    expect(pay.status).toBe(201);
+    expect(pay.data.dueMinor).toBe("100000");
+
+    // An invoice id is not a bill.
+    expect((await call(`${base}/bills/${inv.data.id}`, { cookie: s.cookie })).status).toBe(404);
+    const ag = await call(`${base}/invoices/aging?asOf=2026-06-15`, { cookie: s.cookie });
+    expect(ag.data.buckets.d1_30).toBe("100000");
+    const list = await call(`${base}/invoices?asOf=2026-06-15`, { cookie: s.cookie });
+    expect(list.data.documents[0]).toMatchObject({ status: "overdue", contactName: "Acme Corp" });
+
+    const audit = await call(`/api/orgs/${s.orgId}/audit`, { cookie: s.cookie });
+    expect(audit.data.verification.ok).toBe(true);
+    expect(audit.data.events.map((e: any) => e.action)).toEqual(expect.arrayContaining(["contact.created", "invoice.issued", "payment.recorded"]));
+  });
+});

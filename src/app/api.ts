@@ -4,6 +4,7 @@ import { appendAudit, verifyAuditChain } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type Actor, type LineInput, type PeriodStatus, type Role } from "../core/ledger.js";
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
+import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, recordPayment, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, calculatePayRun, type PayRunInput } from "../payroll/pay-run.js";
@@ -67,6 +68,12 @@ function str(v: unknown, field: string, max = 200): string {
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 function date(v: unknown, field: string): string {
   if (typeof v !== "string" || !DATE.test(v)) throw new HttpError(400, `${field} must be a date (YYYY-MM-DD)`);
+  return v;
+}
+
+const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+function uuid(v: unknown, message: string): string {
+  if (typeof v !== "string" || !UUID.test(v)) throw new HttpError(400, message);
   return v;
 }
 
@@ -326,6 +333,130 @@ route("POST", "/api/orgs/:org/entities/:entity/connections", async (req, p, ctx)
   });
   return json(out, 201);
 });
+
+// ------------------------------------------------- receivables and payables
+
+route("GET", "/api/orgs/:org/entities/:entity/contacts", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ contacts: await listContacts(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/contacts", async (req, p, ctx) => {
+  const b = await body(req);
+  const kind = b.kind as ContactKind;
+  if (!["customer", "vendor", "both"].includes(kind)) throw new HttpError(400, "pick customer, vendor or both");
+  const contact = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createContact(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, kind, name: str(b.name, "name"),
+      email: typeof b.email === "string" && b.email.trim() ? str(b.email, "email") : undefined, actor: ctx.actor,
+    });
+  });
+  return json(contact, 201);
+});
+
+/** "7.25" (percent) to 725 basis points. */
+function taxRateBps(v: unknown): number {
+  if (v === undefined || v === null || v === "") return 0;
+  if (typeof v !== "string" || !/^\d{1,3}(\.\d{1,2})?$/.test(v.trim())) throw new HttpError(400, "tax rate must be a percentage like 7.25");
+  const bps = Math.round(Number(v.trim()) * 100);
+  if (bps > 10000) throw new HttpError(400, "tax rate cannot be over 100%");
+  return bps;
+}
+
+for (const kind of ["invoice", "bill"] as DocumentKind[]) {
+  const base = `/api/orgs/:org/entities/:entity/${kind}s`;
+
+  route("GET", base, async (req, p, ctx) => {
+    const asOf = new URL(req.url).searchParams.get("asOf");
+    return tenant(ctx, async (tx) => {
+      await ensureEntity(tx, p.entity!);
+      return json({ documents: await listDocuments(tx, p.entity!, kind, asOf ? date(asOf, "asOf") : undefined) });
+    });
+  });
+
+  route("GET", `${base}/aging`, async (req, p, ctx) => {
+    const asOf = new URL(req.url).searchParams.get("asOf");
+    return tenant(ctx, async (tx) => {
+      await ensureEntity(tx, p.entity!);
+      return json(await aging(tx, p.entity!, kind, asOf ? date(asOf, "asOf") : undefined));
+    });
+  });
+
+  route("POST", base, async (req, p, ctx) => {
+    const b = await body(req);
+    if (!Array.isArray(b.lines) || !b.lines.length) throw new HttpError(400, "add at least one line");
+    if (b.lines.length > 200) throw new HttpError(400, "too many lines");
+    const lines = b.lines.map((l: any, i: number) => ({
+      account: str(l.account, `line ${i + 1} account`, 40),
+      description: typeof l.description === "string" ? l.description.slice(0, 300) : "",
+      quantity: str(String(l.quantity ?? "1"), `line ${i + 1} quantity`, 20),
+      unitPrice: str(l.unitPrice, `line ${i + 1} price`, 20),
+      taxable: Boolean(l.taxable),
+    }));
+    const doc = await tenant(
+      ctx,
+      async (tx) => {
+        await ensureEntity(tx, p.entity!);
+        return issueDocument(tx, {
+          orgId: ctx.orgId, entityId: p.entity!, kind,
+          contactId: uuid(b.contactId, kind === "invoice" ? "choose a customer" : "choose a vendor"),
+          issueDate: date(b.issueDate, "date"),
+          dueDate: b.dueDate ? date(b.dueDate, "due date") : undefined,
+          memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
+          reference: typeof b.reference === "string" ? b.reference.slice(0, 60) : undefined,
+          taxRateBps: kind === "invoice" ? taxRateBps(b.taxRate) : 0,
+          lines,
+          idempotencyKey: typeof b.idempotencyKey === "string" && b.idempotencyKey ? b.idempotencyKey.slice(0, 100) : crypto.randomUUID(),
+          actor: ctx.actor,
+        });
+      },
+      { allowSoftClosed: ["owner", "admin", "accountant"].includes(ctx.role) },
+    );
+    return json(doc, doc.replayed ? 200 : 201);
+  });
+
+  route("GET", `${base}/:doc`, async (_req, p, ctx) =>
+    tenant(ctx, async (tx) => {
+      const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = $3", [p.doc, p.entity, kind]);
+      if (!rows[0]) throw new HttpError(404, `${kind} not found`);
+      return json(await getDocument(tx, p.doc!));
+    }),
+  );
+
+  route("POST", `${base}/:doc/payments`, async (req, p, ctx) => {
+    const b = await body(req);
+    const amount = str(b.amount, "amount", 20);
+    if (!/^\d+(\.\d{1,2})?$/.test(amount)) throw new HttpError(400, "amount must be like 125.00");
+    const doc = await tenant(
+      ctx,
+      async (tx) => {
+        const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = $3", [p.doc, p.entity, kind]);
+        if (!rows[0]) throw new HttpError(404, `${kind} not found`);
+        return recordPayment(tx, {
+          orgId: ctx.orgId, entityId: p.entity!, documentId: p.doc!, date: date(b.date, "date"), amount,
+          bankAccount: typeof b.bankAccount === "string" && b.bankAccount ? b.bankAccount.slice(0, 40) : undefined,
+          idempotencyKey: typeof b.idempotencyKey === "string" && b.idempotencyKey ? b.idempotencyKey.slice(0, 100) : crypto.randomUUID(),
+          actor: ctx.actor,
+        });
+      },
+      { allowSoftClosed: ["owner", "admin", "accountant"].includes(ctx.role) },
+    );
+    return json(doc, doc.replayed ? 200 : 201);
+  });
+
+  route("POST", `${base}/:doc/void`, async (req, p, ctx) => {
+    const b = await body(req);
+    const doc = await tenant(ctx, async (tx) => {
+      const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = $3", [p.doc, p.entity, kind]);
+      if (!rows[0]) throw new HttpError(404, `${kind} not found`);
+      return voidDocument(tx, { orgId: ctx.orgId, entityId: p.entity!, documentId: p.doc!, date: date(b.date, "date"), reason: str(b.reason, "reason", 300), actor: ctx.actor });
+    });
+    return json(doc);
+  });
+}
 
 // ----------------------------------------------------------------- payroll
 

@@ -55,8 +55,10 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-const STATUS_PILL = { open: "pill", soft_closed: "pill warn", locked: "pill grey", prepared: "pill warn", posted: "pill", voided: "pill grey" };
-const STATUS_LABEL = { open: "Open", soft_closed: "Soft-closed", locked: "Locked", prepared: "Awaiting approval", posted: "Posted", voided: "Voided" };
+const STATUS_PILL = { open: "pill", soft_closed: "pill warn", locked: "pill grey", prepared: "pill warn", posted: "pill", voided: "pill grey", partial: "pill warn", overdue: "pill bad", paid: "pill grey", void: "pill grey" };
+const STATUS_LABEL = { open: "Open", soft_closed: "Soft-closed", locked: "Locked", prepared: "Awaiting approval", posted: "Posted", voided: "Voided", partial: "Part paid", overdue: "Overdue", paid: "Paid", void: "Void" };
+const CONTACT_LABEL = { customer: "Customer", vendor: "Vendor", both: "Customer and vendor" };
+const AGING_LABEL = { current: "Not yet due", d1_30: "1 to 30 days", d31_60: "31 to 60 days", d61_90: "61 to 90 days", over_90: "Over 90 days" };
 const ENTITY_TYPES = {
   llc_single: "Single-member LLC", sole_prop: "Sole proprietorship", llc_partnership: "Multi-member LLC",
   llc_s_corp: "LLC taxed as S corp", s_corp: "S corporation", c_corp: "C corporation", partnership: "Partnership",
@@ -84,7 +86,7 @@ function topbar() {
 }
 
 const ENTITY_TABS = [
-  ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
+  ["invoices", "Invoices"], ["bills", "Bills"], ["contacts", "Customers and vendors"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
   ["accounts", "Chart of accounts"], ["connections", "Connections"],
 ];
 
@@ -139,7 +141,7 @@ async function homeView() {
     <div class="head"><div><h1>Businesses</h1><p class="muted">Each legal entity keeps its own books, periods and tax settings.</p></div></div>
     <div class="cards">
       ${ents.map((e) => `
-        <a class="card" href="#/e/${e.id}/journal">
+        <a class="card" href="#/e/${e.id}/invoices">
           <strong>${esc(e.legal_name)}</strong><br>
           <span class="muted">${esc(ENTITY_TYPES[e.entity_type] ?? e.entity_type)} · ${esc(e.region)}, US</span><br>
           <span class="pill">${esc(e.framework.replace("_", " "))}</span> <span class="pill grey">${esc(RETURN_LABEL[e.tax_return_type] ?? e.tax_return_type)}</span>
@@ -349,6 +351,194 @@ async function connectionsView(id) {
       </form></div>` : ""}`);
 }
 
+// ------------------------------------------------ invoices, bills, contacts
+
+/** Today, kept inside the open 2026 fiscal year. */
+function bookDate() {
+  const t = today();
+  return t < "2026-01-01" ? "2026-01-01" : t > "2026-12-31" ? "2026-12-31" : t;
+}
+
+function plusDays(d, n) {
+  const t = new Date(d + "T00:00:00Z");
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+
+const DOC = {
+  invoice: { path: "invoices", title: "Invoices", one: "invoice", who: "Customer", contactKinds: ["customer", "both"], lineTypes: ["revenue", "liability"], defaultAccount: "4000",
+    blurb: "Issuing an invoice posts it to receivables straight away. An issued invoice can't be edited; void it and issue a new one." },
+  bill: { path: "bills", title: "Bills", one: "bill", who: "Vendor", contactKinds: ["vendor", "both"], lineTypes: ["expense", "asset"], defaultAccount: "6000",
+    blurb: "Recording a bill posts it to payables. Sales tax you pay on purchases is part of the expense, so bills don't carry a tax line." },
+};
+
+function docAccountOptions(kind, selected) {
+  return state.entity.accounts
+    .filter((a) => a.is_active && DOC[kind].lineTypes.includes(a.type) && a.subtype !== "bank" && !["accounts_receivable", "accounts_payable"].includes(a.system_key))
+    .map((a) => `<option value="${a.code}" ${a.code === selected ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("");
+}
+
+function bankOptions() {
+  return state.entity.accounts.filter((a) => a.is_active && a.subtype === "bank")
+    .map((a) => `<option value="${a.code}">${a.code} · ${esc(a.name)}</option>`).join("");
+}
+
+function docLineRow(kind, l = {}) {
+  return `<tr>
+    <td><select name="account" aria-label="Account">${docAccountOptions(kind, l.account ?? DOC[kind].defaultAccount)}</select></td>
+    <td><input name="description" aria-label="Description" value="${esc(l.description ?? "")}"></td>
+    <td><input name="quantity" class="mono" inputmode="decimal" aria-label="Quantity" value="${esc(l.quantity ?? "1")}" style="width:80px"></td>
+    <td><input name="unitPrice" class="mono" inputmode="decimal" aria-label="Price" placeholder="0.00" value="${esc(l.unitPrice ?? "")}"></td>
+    ${kind === "invoice" ? `<td style="text-align:center"><input type="checkbox" name="taxable" aria-label="Taxable" ${l.taxable ? "checked" : ""}></td>` : ""}
+    <td class="num" data-amount></td>
+    <td><button type="button" class="link" data-action="remove-doc-line" aria-label="Remove line">✕</button></td>
+  </tr>`;
+}
+
+function readDocLines() {
+  return [...document.querySelectorAll("#doc-lines tr")].map((tr) => ({
+    account: tr.querySelector("[name=account]").value,
+    description: tr.querySelector("[name=description]").value,
+    quantity: tr.querySelector("[name=quantity]").value.trim(),
+    unitPrice: tr.querySelector("[name=unitPrice]").value.trim(),
+    taxable: tr.querySelector("[name=taxable]")?.checked ?? false,
+  }));
+}
+
+/** Rough preview of the totals; the server's figures are the ones that post. */
+function updateDocTotals() {
+  const form = document.querySelector("form[data-form=document]");
+  if (!form) return;
+  const bps = Math.round(Number(form.querySelector("[name=taxRate]")?.value || 0) * 100) || 0;
+  let sub = 0n, tax = 0n, bad = false;
+  document.querySelectorAll("#doc-lines tr").forEach((tr) => {
+    const q = Number(tr.querySelector("[name=quantity]").value || 0);
+    const p = cents(tr.querySelector("[name=unitPrice]").value.trim());
+    if (p === null || !(q > 0)) { bad = true; tr.querySelector("[data-amount]").textContent = ""; return; }
+    const amt = BigInt(Math.round(q * Number(p)));
+    sub += amt;
+    if (tr.querySelector("[name=taxable]")?.checked) tax += BigInt(Math.round(Number(amt) * bps / 10000));
+    tr.querySelector("[data-amount]").textContent = usd(amt);
+  });
+  document.getElementById("doc-sub").textContent = usd(sub);
+  const t = document.getElementById("doc-tax");
+  if (t) t.textContent = usd(tax);
+  document.getElementById("doc-total").textContent = usd(sub + tax);
+  document.getElementById("doc-save").disabled = bad || sub + tax <= 0n;
+}
+
+async function docsView(id, kind) {
+  await loadEntity(id);
+  const d = DOC[kind];
+  const [{ documents }, ag, { contacts }] = await Promise.all([
+    api(entPath(`/${d.path}`)), api(entPath(`/${d.path}/aging`)), api(entPath("/contacts")),
+  ]);
+  const who = contacts.filter((c) => d.contactKinds.includes(c.kind));
+  const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  const issue = bookDate();
+  app.innerHTML = shell(d.path, `
+    <div class="head"><div><h1>${d.title}</h1><p class="muted">${d.blurb}</p></div></div>
+    <div class="panel">
+      <h2>${kind === "invoice" ? "Receivables" : "Payables"} aging</h2>
+      <div class="row" style="gap:24px">
+        ${Object.entries(AGING_LABEL).map(([k, l]) => `<div><div class="muted">${l}</div><div class="stat">${usd(ag.buckets[k])}</div></div>`).join("")}
+        <div><div class="muted">Total still due</div><div class="stat">${usd(ag.totalMinor)}</div></div>
+      </div>
+    </div>
+    ${canWrite ? `<div class="panel">
+      <h2>New ${d.one}</h2>
+      <form data-form="document" data-kind="${kind}">
+        <div class="row" style="margin-bottom:12px">
+          <label style="min-width:220px">${d.who}<select name="contactId" required>
+            ${who.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}
+            <option value="__new">+ New ${d.who.toLowerCase()}…</option>
+          </select></label>
+          <label data-new-contact ${who.length ? "hidden" : ""}>New ${d.who.toLowerCase()} name<input name="newContact" placeholder="${kind === "invoice" ? "Acme Corp" : "Pixel Freelance"}"></label>
+          <label>Date<input type="date" name="issueDate" value="${issue}" min="2026-01-01" max="2026-12-31" required></label>
+          <label>Due<input type="date" name="dueDate" value="${plusDays(issue, 30)}" required></label>
+          ${kind === "invoice"
+            ? `<label>Sales tax rate (%)<input name="taxRate" inputmode="decimal" placeholder="7.25" style="width:110px"></label>`
+            : `<label>Vendor's invoice no.<input name="reference" style="width:150px"></label>`}
+          <label style="flex:1;min-width:200px">Memo<input name="memo"></label>
+        </div>
+        ${kind === "invoice" ? `<p class="hash">You enter the sales tax rate for the customer's location; Alt-QBO does not look it up yet. Tick the lines it applies to.</p>` : ""}
+        <div class="table-wrap"><table>
+          <thead><tr><th style="width:28%">Account</th><th>Description</th><th>Qty</th><th class="num" style="width:13%">Price</th>${kind === "invoice" ? "<th>Tax</th>" : ""}<th class="num">Amount</th><th></th></tr></thead>
+          <tbody id="doc-lines">${docLineRow(kind)}</tbody>
+          <tfoot>
+            <tr><td><button type="button" class="link" data-action="add-doc-line" data-kind="${kind}">+ Add line</button></td><td colspan="${kind === "invoice" ? 4 : 3}" class="num muted">Subtotal</td><td class="num" id="doc-sub">$0.00</td><td></td></tr>
+            ${kind === "invoice" ? `<tr><td colspan="5" class="num muted">Sales tax</td><td class="num" id="doc-tax">$0.00</td><td></td></tr>` : ""}
+            <tr><td colspan="${kind === "invoice" ? 5 : 4}" class="num">Total</td><td class="num" id="doc-total">$0.00</td><td></td></tr>
+          </tfoot>
+        </table></div>
+        <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button></div>
+      </form>
+    </div>` : ""}
+    <div class="panel">
+      <h2>All ${d.title.toLowerCase()}</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>No.</th><th>${d.who}</th><th>Date</th><th>Due</th><th class="num">Total</th><th class="num">Still due</th><th>Status</th><th></th></tr></thead>
+        <tbody>${documents.map((x) => `<tr>
+          <td class="mono">${esc(x.number)}${x.reference ? `<div class="hash">${esc(x.reference)}</div>` : ""}</td>
+          <td>${esc(x.contactName)}${x.memo ? `<div class="hash">${esc(x.memo)}</div>` : ""}</td>
+          <td>${x.issueDate}</td><td>${x.dueDate}</td>
+          <td class="num">${usd(x.totalMinor)}</td><td class="num">${usd(x.dueMinor, { blankZero: true })}</td>
+          <td><span class="${STATUS_PILL[x.status]}">${STATUS_LABEL[x.status]}</span></td>
+          <td><div class="row">
+            <button class="link" data-action="doc-detail" data-id="${x.id}">Details</button>
+            ${canWrite && x.status !== "void" && x.dueMinor !== "0" ? `<button class="link" data-action="doc-toggle" data-form="pay" data-id="${x.id}">${kind === "invoice" ? "Receive payment" : "Pay"}</button>` : ""}
+            ${canWrite && x.status !== "void" && x.paidMinor === "0" ? `<button class="link" data-action="doc-toggle" data-form="void" data-id="${x.id}">Void</button>` : ""}
+          </div></td>
+        </tr>
+        <tr hidden data-detail="${x.id}"><td colspan="8" id="detail-${x.id}"></td></tr>
+        <tr hidden data-pay="${x.id}"><td colspan="8">
+          <form data-form="pay" data-kind="${kind}" data-id="${x.id}" class="row">
+            <label>Date<input type="date" name="date" value="${bookDate() < x.issueDate ? x.issueDate : bookDate()}" min="${x.issueDate}" required></label>
+            <label>Amount<input name="amount" class="mono" inputmode="decimal" value="${(Number(x.dueMinor) / 100).toFixed(2)}" required style="width:130px"></label>
+            <label>${kind === "invoice" ? "Deposited to" : "Paid from"}<select name="bankAccount">${bankOptions()}</select></label>
+            <button type="submit">Record payment</button>
+          </form></td></tr>
+        <tr hidden data-void="${x.id}"><td colspan="8">
+          <form data-form="void-doc" data-kind="${kind}" data-id="${x.id}" class="row">
+            <label>Void date<input type="date" name="date" value="${bookDate() < x.issueDate ? x.issueDate : bookDate()}" min="${x.issueDate}" required></label>
+            <label style="flex:1">Reason<input name="reason" required placeholder="Why is this being voided?"></label>
+            <button type="submit">Void and post reversal</button>
+          </form></td></tr>`).join("") || `<tr><td colspan="8" class="muted">No ${d.title.toLowerCase()} yet.</td></tr>`}</tbody>
+      </table></div>
+    </div>`);
+  updateDocTotals();
+}
+
+function docDetail(x) {
+  return `<div class="entry" style="margin:0">
+    <table><thead><tr><th>Account</th><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th><th class="num">Tax</th></tr></thead>
+    <tbody>${x.lines.map((l) => `<tr><td>${l.accountCode} · ${esc(l.accountName)}</td><td>${esc(l.description)}</td><td class="num">${esc(l.quantity)}</td>
+      <td class="num">${usd(l.unitPriceMinor)}</td><td class="num">${usd(l.amountMinor)}</td><td class="num">${usd(l.taxMinor, { blankZero: true })}</td></tr>`).join("")}</tbody></table>
+    <div class="hash" style="padding:6px 12px">${x.taxRateBps ? `Sales tax ${(x.taxRateBps / 100).toFixed(2)}% (entered by user) · ` : ""}Created by ${esc(x.createdBy.replace("user:", ""))}</div>
+    ${x.payments.length ? `<div style="padding:0 12px 8px"><strong>Payments</strong>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}</div>` : ""}
+    ${x.status === "void" ? `<div class="alert warn" style="margin:0 12px 10px">Voided ${x.voidDate}: ${esc(x.voidReason)}</div>` : ""}
+  </div>`;
+}
+
+async function contactsView(id) {
+  await loadEntity(id);
+  const { contacts } = await api(entPath("/contacts"));
+  const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  app.innerHTML = shell("contacts", `
+    <div class="head"><div><h1>Customers and vendors</h1><p class="muted">The people and businesses you invoice and pay.</p></div></div>
+    <div class="panel table-wrap"><table>
+      <thead><tr><th>Name</th><th>Type</th><th>Email</th></tr></thead>
+      <tbody>${contacts.map((c) => `<tr><td>${esc(c.name)}</td><td>${CONTACT_LABEL[c.kind]}</td><td>${esc(c.email ?? "")}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">No customers or vendors yet.</td></tr>`}</tbody>
+    </table></div>
+    ${canWrite ? `<div class="panel"><h2>Add a customer or vendor</h2>
+      <form data-form="contact" class="row">
+        <label style="flex:1">Name<input name="name" required></label>
+        <label>Type<select name="kind"><option value="customer">Customer</option><option value="vendor">Vendor</option><option value="both">Both</option></select></label>
+        <label>Email (optional)<input name="email" type="email"></label>
+        <button type="submit">Add</button>
+      </form></div>` : ""}`);
+}
+
 // --------------------------------------------------------------- payroll
 
 let employees = [];
@@ -526,7 +716,7 @@ async function route() {
     }
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
-      const view = { journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "journal"] ?? journalView;
+      const view = { invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "journal"] ?? journalView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
@@ -544,6 +734,7 @@ window.addEventListener("hashchange", route);
 document.addEventListener("input", (ev) => {
   const t = ev.target;
   if (t.closest("#lines")) updateTotals();
+  if (t.closest("form[data-form=document]")) updateDocTotals();
   if (t.dataset.emp !== undefined) {
     const e = employees[Number(t.dataset.emp)];
     if (t.dataset.field === "daily") e.dailyHours[Number(t.dataset.day)] = t.value;
@@ -556,6 +747,11 @@ document.addEventListener("input", (ev) => {
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.name === "contactId" && t.closest("form[data-form=document]")) {
+    const box = t.form.querySelector("[data-new-contact]");
+    box.hidden = t.value !== "__new";
+    if (!box.hidden) box.querySelector("input").focus();
+  }
   if (t.dataset.action === "switch-org") {
     state.orgId = t.value;
     try { localStorage.setItem("altqbo_org", t.value); } catch {}
@@ -581,6 +777,22 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "remove-line") {
       if (document.querySelectorAll("#lines tr").length > 2) b.closest("tr").remove();
       updateTotals();
+    } else if (a === "add-doc-line") {
+      document.getElementById("doc-lines").insertAdjacentHTML("beforeend", docLineRow(b.dataset.kind));
+      updateDocTotals();
+    } else if (a === "remove-doc-line") {
+      if (document.querySelectorAll("#doc-lines tr").length > 1) b.closest("tr").remove();
+      updateDocTotals();
+    } else if (a === "doc-toggle") {
+      const row = document.querySelector(`tr[data-${b.dataset.form}="${b.dataset.id}"]`);
+      row.hidden = !row.hidden;
+    } else if (a === "doc-detail") {
+      const row = document.querySelector(`tr[data-detail="${b.dataset.id}"]`);
+      row.hidden = !row.hidden;
+      if (!row.hidden) {
+        const kind = location.hash.includes("/bills") ? "bills" : "invoices";
+        document.getElementById(`detail-${b.dataset.id}`).innerHTML = docDetail(await api(entPath(`/${kind}/${b.dataset.id}`)));
+      }
     } else if (a === "show-reverse") {
       const f = document.querySelector(`form[data-form=reverse][data-id="${b.dataset.id}"]`);
       f.hidden = !f.hidden;
@@ -648,7 +860,7 @@ document.addEventListener("submit", async (ev) => {
       const e = await api(orgPath("/entities"), { body: { ...d, country: "US" } });
       state.org.stale = true;
       toast(`${e.legalName} created with ${RETURN_LABEL[e.taxReturnType]} tax lines`);
-      location.hash = `#/e/${e.id}/journal`;
+      location.hash = `#/e/${e.id}/invoices`;
     } else if (kind === "journal") {
       const lines = readLines().filter((l) => l.debit || l.credit);
       const e = await api(entPath("/journal"), { body: { ...d, lines, idempotencyKey: crypto.randomUUID() } });
@@ -670,6 +882,31 @@ document.addEventListener("submit", async (ev) => {
       state.entity.fresh = false;
       toast("Connection added");
       await connectionsView(state.entity.entity.id);
+    } else if (kind === "document") {
+      const k = f.dataset.kind;
+      let contactId = d.contactId;
+      if (contactId === "__new" || !contactId) {
+        if (!d.newContact?.trim()) throw new Error(`Enter the new ${DOC[k].who.toLowerCase()}'s name`);
+        contactId = (await api(entPath("/contacts"), { body: { kind: k === "invoice" ? "customer" : "vendor", name: d.newContact } })).id;
+      }
+      const lines = readDocLines().filter((l) => l.unitPrice);
+      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, idempotencyKey: crypto.randomUUID() } });
+      toast(`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`);
+      await docsView(state.entity.entity.id, k);
+    } else if (kind === "pay") {
+      const k = f.dataset.kind;
+      await api(entPath(`/${DOC[k].path}/${f.dataset.id}/payments`), { body: { ...d, idempotencyKey: crypto.randomUUID() } });
+      toast("Payment recorded and posted");
+      await docsView(state.entity.entity.id, k);
+    } else if (kind === "void-doc") {
+      const k = f.dataset.kind;
+      const doc = await api(entPath(`/${DOC[k].path}/${f.dataset.id}/void`), { body: d });
+      toast(`${doc.number} voided; the reversal is in the journal`);
+      await docsView(state.entity.entity.id, k);
+    } else if (kind === "contact") {
+      await api(entPath("/contacts"), { body: d });
+      toast(`${d.name} added`);
+      await contactsView(state.entity.entity.id);
     } else if (kind === "member") {
       await api(orgPath("/members"), { body: d });
       toast(`${d.name} added as ${d.role}`);
