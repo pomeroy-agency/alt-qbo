@@ -91,7 +91,7 @@ function topbar() {
       <a class="brand" href="#/"><img src="/favicon.svg" alt=""><span>Alt-QBO</span></a>
       ${orgs.length > 1 ? `<select data-action="switch-org" aria-label="Organisation">${orgs.map((o) => `<option value="${o.id}" ${o.id === state.orgId ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : `<span>${esc(state.org?.org?.name ?? "")}</span>`}
       <span class="spacer"></span>
-      <span class="who">${esc(state.me?.user?.name)} · ${esc(state.org?.role ?? "")}</span>
+      <a class="who" href="#/account" title="Your account and sign-in security">${esc(state.me?.user?.name)} · ${esc(state.org?.role ?? "")}</a>
       <button class="link" data-action="theme" title="Switch between light, dark and your device's setting">${{ auto: "Theme: device", dark: "Theme: dark", light: "Theme: light" }[t]}</button>
       <button class="secondary" data-action="logout">Sign out</button>
     </header>
@@ -128,13 +128,13 @@ function shell(active, content) {
   const btn = (href, k, l, n = 0, what = "") =>
     `<a href="${href}" class="${active === k ? "on" : ""}">${esc(l)}${n ? `<span class="badge" title="${n} ${what}">${n}</span>` : ""}</a>`;
   const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
-  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"]];
+  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ["account", "#/account", "Your account"]];
   const main = e ? ENTITY_TABS.map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
     ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
     ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
   ];
-  const moreOn = e && (active === "home" || active === "team" || active === "audit" || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const moreOn = e && (["home", "team", "audit", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
   const mobile = `
       <nav class="mobile">
         <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
@@ -148,6 +148,7 @@ function shell(active, content) {
         <div class="label">Organisation</div>
         <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
         <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
+        <a href="#/account" class="${active === "account" ? "on" : ""}">Your account</a>
       </nav>
       ${mobile}
       <main>${content}</main>
@@ -202,6 +203,22 @@ async function authView(mode, error = "", notice = "") {
         <p style="margin-top:14px">${signup ? `Already have an account? <a href="#/login">Sign in</a>` : `New here? <a href="#/signup">Create an account</a>`}</p>`);
 }
 
+/**
+ * The second sign-in step for someone with two-factor on. `then` says where
+ * to go after: "home", or "join" with the invitation's token.
+ */
+function mfaView(ticket, then = "home", inviteToken = "", error = "") {
+  app.innerHTML = authPage(`
+    <p class="muted">Enter the 6-digit code from your authenticator app. Lost your phone? Enter one of your recovery codes instead.</p>
+    ${error ? `<div class="alert bad">${esc(error)}</div>` : ""}
+    <form data-form="mfa" data-ticket="${esc(ticket)}" data-then="${esc(then)}" data-invite="${esc(inviteToken)}">
+      <label>Code<input name="code" required autocomplete="one-time-code" inputmode="text" maxlength="20" autofocus></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <p style="margin-top:14px"><a href="#/login">Start over</a></p>`);
+  app.querySelector("input[name=code]")?.focus();
+}
+
 /** Pages opened from an emailed link. */
 async function emailLinkView(kind, token, error = "") {
   if (kind === "reset") {
@@ -217,6 +234,7 @@ async function emailLinkView(kind, token, error = "") {
   try {
     const r = await api(`/api/auth/${kind}/${token}`, { body: {} });
     state.me = null; state.org = null;
+    if (r.mfaRequired) return mfaView(r.ticket);
     if (kind === "verify") {
       app.innerHTML = authPage(`<div class="alert good">Thanks, ${esc(r.email)} is confirmed.</div><p><a href="#/">Go to your books</a></p>`);
       return;
@@ -1855,7 +1873,8 @@ const ROLE_HELP = {
 const team = { link: null };
 
 async function teamView() {
-  const { members, invitations } = await api(orgPath("/members"));
+  const [{ members, invitations }, security] = await Promise.all([api(orgPath("/members")), api(orgPath("/security"))]);
+  const mfaOf = new Map(security.members.map((m) => [m.email, m.mfa]));
   const mine = state.org.role;
   const canManage = ["owner", "admin"].includes(mine);
   const me = state.me.user.id;
@@ -1869,13 +1888,24 @@ async function teamView() {
     ${link ? `<div class="alert good">${link.emailed ? `We emailed the invitation to ${esc(link.email)}. You can also copy the link below; it` : `Invitation ready. Send this link to ${esc(link.email)}; it`} works once, for that email, for 14 days.
       <div class="row" style="margin-top:8px"><input id="invite-link" class="mono" readonly value="${esc(link.link)}" style="flex:1;min-width:260px"><button class="secondary" data-action="copy-invite">Copy link</button></div></div>` : ""}
     <div class="panel table-wrap"><table>
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Email</th>${canManage ? "<th>Two-factor</th>" : ""}<th>Role</th><th>Joined</th><th></th></tr></thead>
       <tbody>${members.map((m) => `<tr><td>${esc(m.name)}${m.userId === me ? ` <span class="muted">(you)</span>` : ""}</td><td>${esc(m.email)}</td>
+        ${canManage ? `<td>${mfaOf.get(m.email) ? `<span class="pill">On</span>` : `<span class="pill grey">Off</span>`}</td>` : ""}
         <td>${canManage && manageable(m) ? `<select data-action="member-role" data-id="${m.userId}" aria-label="Role for ${esc(m.name)}">${roleChoices(m.role)}</select>` : ROLE_LABEL[m.role]}</td>
         <td>${m.createdAt.slice(0, 10)}</td>
         <td>${canManage && manageable(m) ? `<button class="link" data-action="member-remove" data-id="${m.userId}" data-name="${esc(m.name)}">Remove</button>`
           : m.userId === me ? `<button class="link" data-action="leave-org">Leave</button>` : ""}</td></tr>`).join("")}</tbody>
     </table></div>
+    <div class="panel"><h2>Two-factor sign-in</h2>
+      ${security.requireMfa
+        ? `<p><span class="pill">Required</span> Everyone in this organisation must sign in with a code from an authenticator app.</p>`
+        : `<p><span class="pill grey">Optional</span> Each person can turn it on under <a href="#/account">Your account</a>.</p>`}
+      ${mine === "owner" ? (security.requireMfa
+        ? `<button class="secondary" data-action="require-mfa" data-on="0">Make it optional</button>`
+        : state.me.user.mfa?.enabled
+          ? `<button data-action="require-mfa" data-on="1">Require it for everyone</button>`
+          : `<p class="muted">To require it for everyone, first turn it on for yourself under <a href="#/account">Your account</a>.</p>`) : ""}
+    </div>
     ${canManage ? `<div class="panel">
       <h2>Invite someone</h2>
       <p class="muted">They join by signing up, or signing in, with this email through the link you send them. You never set a password for anyone.</p>
@@ -1943,6 +1973,58 @@ async function joined(orgId) {
   toast("You've joined the team");
 }
 
+// ------------------------------------------------------------------ account
+
+const acct = { setup: null, codes: null };
+
+async function accountView() {
+  if (!state.me) state.me = await api("/api/me");
+  const u = state.me.user;
+  const codes = acct.codes;
+  acct.codes = null;
+  const setup = acct.setup;
+  let mfa;
+  if (codes) {
+    mfa = `<div class="alert good">Save these recovery codes now. Each one works once if you lose your phone. They won't be shown again.</div>
+      <pre class="mono recovery">${codes.map(esc).join("\n")}</pre>
+      <div class="row"><button class="secondary" data-action="copy-codes" data-codes="${esc(codes.join("\n"))}">Copy codes</button><button class="secondary" data-action="print">Print</button></div>`;
+  } else if (u.mfa.enabled) {
+    mfa = `<p><span class="pill">On</span> Signing in needs your password and a code from your authenticator app. ${u.mfa.recoveryCodesLeft} recovery code${u.mfa.recoveryCodesLeft === 1 ? "" : "s"} left.</p>
+      <details><summary>Make new recovery codes</summary>
+        <form data-form="mfa-codes" class="row">
+          <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+          <label>Code from your app<input name="code" required autocomplete="one-time-code" maxlength="20"></label>
+          <button type="submit" class="secondary">Make new codes</button>
+        </form></details>
+      <details><summary>Turn two-factor off</summary>
+        <form data-form="mfa-disable" class="row">
+          <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+          <label>Code from your app<input name="code" required autocomplete="one-time-code" maxlength="20"></label>
+          <button type="submit" class="secondary">Turn off</button>
+        </form></details>`;
+  } else if (setup) {
+    mfa = `<ol class="steps">
+        <li>Open an authenticator app on your phone (Google Authenticator, Microsoft Authenticator, 1Password, Authy and others all work) and scan this code.
+          <div class="qr">${setup.qrSvg}</div>
+          <p class="muted">Can't scan? Enter this key instead: <span class="mono">${esc(setup.secret.replace(/(.{4})/g, "$1 ").trim())}</span></p></li>
+        <li>Type the 6-digit code the app shows.
+          <form data-form="mfa-enable" class="row">
+            <label>Code<input name="code" required inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"></label>
+            <button type="submit">Turn on</button>
+          </form></li>
+      </ol>`;
+    acct.setup = setup;
+  } else {
+    mfa = `<p><span class="pill warn">Off</span> Add a second step to signing in: a 6-digit code from an app on your phone. Someone who learns your password still can't get in.</p>
+      <button data-action="mfa-setup">Set up two-factor sign-in</button>`;
+  }
+  app.innerHTML = shell("account", `
+    <div class="head"><div><h1>Your account</h1><p class="muted">${esc(u.name)} · ${esc(u.email)}${u.emailVerified ? "" : " (not confirmed yet)"}</p></div></div>
+    <div class="panel"><h2>Two-factor sign-in</h2>${mfa}</div>
+    <div class="panel"><h2>Safety and privacy</h2>
+      <p>How we protect your books, and what we promise about prices and your data: <a href="/security.html" target="_blank" rel="noopener">Security</a> · <a href="/promises.html" target="_blank" rel="noopener">Our promises</a> · <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a></p></div>`);
+}
+
 async function auditView() {
   const { events, verification } = await api(orgPath("/audit"));
   app.innerHTML = shell("audit", `
@@ -1975,6 +2057,8 @@ async function route() {
       try { saved = localStorage.getItem("altqbo_org"); } catch {}
       state.orgId = state.me.orgs.some((o) => o.id === saved) ? saved : state.me.orgs[0].id;
     }
+    // Before the organisation loads: one that requires two-factor refuses everything until it's on.
+    if (parts[0] === "account") return await accountView();
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
       if (parts[2] === "reports" && REPORTS.some(([k]) => k === parts[3])) rep.tab = parts[3];
@@ -2155,6 +2239,18 @@ document.addEventListener("click", async (ev) => {
       state.entity.fresh = false;
       toast(b.dataset.active === "true" ? "Account reactivated" : "Account deactivated");
       await accountsView(state.entity.entity.id);
+    } else if (a === "mfa-setup") {
+      b.disabled = true;
+      acct.setup = await api("/api/me/mfa/setup", { body: {} });
+      await accountView();
+    } else if (a === "copy-codes") {
+      await navigator.clipboard.writeText(b.dataset.codes).catch(() => {});
+      toast("Recovery codes copied");
+    } else if (a === "require-mfa") {
+      b.disabled = true;
+      await api(orgPath("/security"), { body: { requireMfa: b.dataset.on === "1" } });
+      toast(b.dataset.on === "1" ? "Everyone here now needs two-factor sign-in" : "Two-factor sign-in is now optional here");
+      await teamView();
     } else if (a === "copy-invite") {
       const input = document.getElementById("invite-link");
       await navigator.clipboard.writeText(input.value).catch(() => { input.select(); document.execCommand("copy"); });
@@ -2293,14 +2389,47 @@ document.addEventListener("submit", async (ev) => {
   try {
     const d = formData(f);
     if (kind === "login" || kind === "signup") {
+      let r;
       try {
-        await api(`/api/auth/${kind}`, { body: d });
+        r = await api(`/api/auth/${kind}`, { body: d });
       } catch (err) {
         return authView(kind, err.message);
       }
+      if (r.mfaRequired) return mfaView(r.ticket);
       state.me = null; state.org = null; state.orgId = null;
       location.hash = "#/";
       await route();
+    } else if (kind === "mfa") {
+      const { ticket, then, invite } = f.dataset;
+      let r;
+      try {
+        r = await api("/api/auth/mfa", { body: { ticket, code: d.code, inviteToken: invite || undefined } });
+      } catch (err) {
+        // A ticket that ran out of tries or time can't be used again.
+        if (/sign in again/.test(err.message)) return then === "join" ? joinView(invite, err.message) : authView("login", err.message);
+        return mfaView(ticket, then, invite, err.message);
+      }
+      if (then === "join") return joined(r.joined);
+      state.me = null; state.org = null; state.orgId = null;
+      location.hash = "#/";
+      await route();
+    } else if (kind === "mfa-enable") {
+      const r = await api("/api/me/mfa/enable", { body: d });
+      state.me = null;
+      acct.codes = r.recoveryCodes;
+      await accountView();
+      toast("Two-factor sign-in is on");
+    } else if (kind === "mfa-disable") {
+      await api("/api/me/mfa/disable", { body: d });
+      state.me = null;
+      await accountView();
+      toast("Two-factor sign-in is off");
+    } else if (kind === "mfa-codes") {
+      const r = await api("/api/me/mfa/recovery-codes", { body: d });
+      state.me = null;
+      acct.codes = r.recoveryCodes;
+      await accountView();
+      toast("New recovery codes made; the old ones no longer work");
     } else if (kind === "forgot" || kind === "magic") {
       try {
         await api(`/api/auth/${kind === "forgot" ? "reset" : "email-link"}`, { body: d });
@@ -2309,10 +2438,15 @@ document.addEventListener("submit", async (ev) => {
       }
       return authView(kind, "", `If ${d.email} has an Alt-QBO account, a link is on its way. Check your inbox and spam folder.`);
     } else if (kind === "reset-password") {
+      let r;
       try {
-        await api(`/api/auth/reset/${f.dataset.token}`, { body: d });
+        r = await api(`/api/auth/reset/${f.dataset.token}`, { body: d });
       } catch (err) {
         return emailLinkView("reset", f.dataset.token, err.message);
+      }
+      if (r.mfaRequired) {
+        toast("Password changed");
+        return mfaView(r.ticket);
       }
       state.me = null; state.org = null; state.orgId = null;
       location.hash = "#/";
@@ -2478,6 +2612,7 @@ document.addEventListener("submit", async (ev) => {
       } catch (err) {
         return joinView(token, err.message);
       }
+      if (r.mfaRequired) return mfaView(r.ticket, "join", token);
       await joined(r.joined);
     }
   } catch (err) {

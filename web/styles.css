@@ -189,3 +189,11 @@ details > summary { cursor: pointer; }
   .stub { break-after: page; }
   .stub:last-child { break-after: auto; }
 }
+
+/* Two-factor setup */
+.qr { width: 200px; max-width: 100%; margin: 10px 0; padding: 8px; background: #fff; border-radius: 8px; }
+.qr svg { display: block; width: 100%; height: auto; }
+.steps li { margin-bottom: 14px; }
+pre.recovery { background: var(--bg); border: 1px solid var(--line); padding: 12px; border-radius: 8px; font-size: 15px; line-height: 1.7; }
+details { margin-top: 10px; }
+details summary { cursor: pointer; color: var(--brand); }

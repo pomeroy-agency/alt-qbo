@@ -19,6 +19,7 @@ import { D, parseMoney, toMajor } from "../core/money.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
+import { beginMfaSetup, checkSecondFactor, disableMfa, enableMfa, issueMfaTicket, mfaStatus, redeemMfaTicket, regenerateRecoveryCodes } from "./mfa.js";
 import type { Mailer } from "./mail.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
@@ -225,6 +226,33 @@ route("POST", "/api/orgs/:org/members/:user/remove", async (_req, p, ctx) => {
 route("POST", "/api/orgs/:org/leave", async (_req, _p, ctx) => {
   await withSystem(ctx.pool, (tx) => removeMember(tx, { orgId: ctx.orgId, userId: ctx.user.id, actor: ctx.actor, self: true }));
   return json({ ok: true });
+});
+
+route("GET", "/api/orgs/:org/security", async (_req, _p, ctx) => {
+  const org = (await ctx.pool.query("SELECT require_mfa FROM organizations WHERE id = $1", [ctx.orgId])).rows[0];
+  const members = (await ctx.pool.query(
+    `SELECT u.name, u.email, m.role, u.totp_enabled_at IS NOT NULL AS mfa FROM memberships m JOIN users u ON u.id = m.user_id
+      WHERE m.org_id = $1 ORDER BY lower(u.name)`,
+    [ctx.orgId],
+  )).rows;
+  return json({ requireMfa: org.require_mfa, members: ["owner", "admin"].includes(ctx.role) ? members : [] });
+});
+
+route("POST", "/api/orgs/:org/security", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner"]);
+  const b = await body(req);
+  const requireMfa = b.requireMfa === true;
+  if (requireMfa && !(await mfaStatus(ctx.pool, ctx.user.id)).enabled) {
+    throw new HttpError(400, "turn on two-factor sign-in for yourself first");
+  }
+  await withSystem(ctx.pool, async (tx) => {
+    await tx.query("UPDATE organizations SET require_mfa = $2 WHERE id = $1", [ctx.orgId, requireMfa]);
+    await appendAudit(tx, {
+      orgId: ctx.orgId, actor: ctx.actor.id, action: requireMfa ? "org.mfa_required" : "org.mfa_optional",
+      objectType: "organization", objectId: ctx.orgId, after: { requireMfa }, context: { role: ctx.role },
+    });
+  });
+  return json({ ok: true, requireMfa });
 });
 
 route("GET", "/api/orgs/:org/audit", async (_req, _p, ctx) =>
@@ -1297,6 +1325,81 @@ async function sendEmailLink(req: Request, pool: pg.Pool, opts: ApiOptions, emai
   }
 }
 
+/** Signs someone in, joining an invitation if they came through one. */
+async function startSession(pool: pg.Pool, userId: string, inviteToken?: unknown): Promise<Response> {
+  const joined = typeof inviteToken === "string" && inviteToken
+    ? (await withSystem(pool, (tx) => acceptInvitation(tx, { token: inviteToken, userId }))).orgId
+    : undefined;
+  const s = await createSession(pool, userId);
+  return json({ ok: true, joined }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+}
+
+/**
+ * After a password or an emailed link passed: a session, or, for someone
+ * with two-factor on, a ticket for the code step and no session yet. An
+ * invitation waits until the code is entered too.
+ */
+async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): Promise<Response> {
+  if ((await mfaStatus(pool, userId)).enabled) {
+    return json({ ok: true, mfaRequired: true, ticket: await issueMfaTicket(pool, userId) });
+  }
+  return startSession(pool, userId, inviteToken);
+}
+
+async function requireMfaIfOrgDoes(pool: pg.Pool, orgId: string, userId: string): Promise<void> {
+  const { rows } = await pool.query(
+    "SELECT o.require_mfa, u.totp_enabled_at IS NOT NULL AS has_mfa FROM organizations o, users u WHERE o.id = $1 AND u.id = $2",
+    [orgId, userId],
+  );
+  if (rows[0]?.require_mfa && !rows[0].has_mfa) {
+    throw new HttpError(403, "this organisation requires two-factor sign-in; turn it on under Your account first");
+  }
+}
+
+/** Turning two-factor sign-in on and off for the signed-in person. */
+async function mfaRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
+  const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+  if (!user) throw new AuthError("not signed in");
+  const b = await body(req);
+  const notify = async (on: boolean) => {
+    if (!opts.mailer) return;
+    try {
+      await opts.mailer({ to: user.email, ...emailText[on ? "mfa_on" : "mfa_off"](user.name) });
+    } catch (err) {
+      console.error("two-factor notice failed", err);
+    }
+  };
+  if (path === "/api/me/mfa/setup") {
+    if ((await mfaStatus(pool, user.id)).enabled) throw new HttpError(409, "two-factor sign-in is already on");
+    return json(await beginMfaSetup(pool, user));
+  }
+  if (path === "/api/me/mfa/enable") {
+    const recoveryCodes = await withSystem(pool, (tx) => enableMfa(tx, user.id, b.code));
+    await notify(true);
+    return json({ ok: true, recoveryCodes });
+  }
+  if (path === "/api/me/mfa/disable" || path === "/api/me/mfa/recovery-codes") {
+    // Both need the password and a current code, so a borrowed session alone can't weaken the account.
+    const row = (await pool.query("SELECT password_hash FROM users WHERE id = $1", [user.id])).rows[0];
+    if (!(await verifyPassword(String(b.password ?? ""), row.password_hash))) throw new AuthError("wrong password", 403);
+    const out = await withSystem(pool, async (tx) => {
+      if (!(await checkSecondFactor(tx, user.id, b.code))) return null;
+      if (path.endsWith("disable")) {
+        await disableMfa(tx, user.id);
+        return [];
+      }
+      return regenerateRecoveryCodes(tx, user.id);
+    });
+    if (!out) throw new AuthError("that code isn't right", 403);
+    if (path.endsWith("disable")) {
+      await notify(false);
+      return json({ ok: true });
+    }
+    return json({ ok: true, recoveryCodes: out });
+  }
+  throw new HttpError(404, "not found");
+}
+
 async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response | null> {
   if (req.method === "GET" && path === "/api/auth/options") return json({ email: Boolean(opts.mailer) });
   // Checks the sales tax rate lookup end to end with one fixed address
@@ -1337,8 +1440,7 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       return u;
     });
     if (purpose === "verify") return json({ ok: true, email: user.email });
-    const s = await createSession(pool, user.id);
-    return json({ ok: true }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+    return signedIn(pool, user.id);
   }
   if (req.method === "GET" && path === "/api/health") return json({ ok: true });
   if (req.method === "GET" && path === "/api/rule-packs") {
@@ -1391,11 +1493,14 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     const { rows } = await pool.query("SELECT id, password_hash FROM users WHERE email = $1", [email]);
     const ok = rows[0] && (await verifyPassword(String(b.password ?? ""), rows[0].password_hash));
     if (!ok) throw new AuthError("wrong email or password");
-    const joined = typeof b.inviteToken === "string" && b.inviteToken
-      ? (await withSystem(pool, (tx) => acceptInvitation(tx, { token: b.inviteToken, userId: rows[0].id }))).orgId
-      : undefined;
-    const s = await createSession(pool, rows[0].id);
-    return json({ ok: true, joined }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+    return signedIn(pool, rows[0].id, b.inviteToken);
+  }
+  // The second step of signing in, for someone with two-factor on.
+  if (req.method === "POST" && path === "/api/auth/mfa") {
+    const b = await body(req);
+    const out = await withSystem(pool, (tx) => redeemMfaTicket(tx, b.ticket, b.code));
+    if ("error" in out) throw new AuthError(out.error);
+    return startSession(pool, out.userId, b.inviteToken);
   }
   if (req.method === "POST" && path === "/api/auth/logout") {
     await endSession(pool, cookie(req, SESSION_COOKIE));
@@ -1422,8 +1527,10 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       [user.id],
     );
     const verified = (await pool.query("SELECT email_verified_at IS NOT NULL AS v FROM users WHERE id = $1", [user.id])).rows[0].v;
-    return json({ user: { ...user, emailVerified: verified }, orgs: rows, emailEnabled: Boolean(opts.mailer) });
+    const mfa = await mfaStatus(pool, user.id);
+    return json({ user: { ...user, emailVerified: verified, mfa }, orgs: rows, emailEnabled: Boolean(opts.mailer) });
   }
+  if (path.startsWith("/api/me/mfa/") && req.method === "POST") return mfaRoutes(req, path, pool, opts);
   return null;
 }
 
@@ -1450,6 +1557,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       if (!user) throw new AuthError("not signed in");
       const role = await membershipRole(pool, user.id, params.org!);
       if (!role) throw new HttpError(404, "organisation not found");
+      if (!path.endsWith("/leave")) await requireMfaIfOrgDoes(pool, params.org!, user.id);
       if (req.method !== "GET" && role === "read_only") throw new HttpError(403, "read-only users cannot make changes");
       const ctx: Ctx = { pool, opts, user, orgId: params.org!, role, actor: { id: `user:${user.email}`, role } };
       return await r.handler(req, params, ctx);
