@@ -1050,7 +1050,11 @@ async function overviewView(id) {
         <label>Add the EIN<input name="ein" placeholder="12-3456789" required pattern="\\d{2}-?\\d{7}" class="mono"></label>
         <button type="submit">Save</button>
       </form>` : ""}
-    </details>`);
+    </details>
+    ${["owner", "admin", "accountant"].includes(state.org.role) ? `<div class="panel row" style="justify-content:space-between">
+      <div><strong>Backup</strong><div class="muted">Save a complete copy of these books (every entry, invoice, bill, bank line and the audit log) as one file on your computer.</div></div>
+      <button class="secondary" data-action="backup">Download a backup</button>
+    </div>` : ""}`);
 }
 
 // ------------------------------------------------------------- reports
@@ -1697,6 +1701,16 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);
+    } else if (a === "backup") {
+      b.disabled = true;
+      const res = await api(entPath("/backup"), { body: {}, raw: true });
+      if (!res.ok) throw new Error((await res.json()).error);
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "alt-qbo-backup.json";
+      const url = URL.createObjectURL(await res.blob());
+      Object.assign(document.createElement("a"), { href: url, download: name }).click();
+      URL.revokeObjectURL(url);
+      toast("Backup downloaded. Keep it somewhere safe: it holds all of these books");
+      b.disabled = false;
     } else if (a === "report-csv") {
       const [path, q, name] = reportQuery();
       const res = await api(entPath(`${path}?${q}&format=csv`), { raw: true });

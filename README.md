@@ -23,6 +23,7 @@ This repository holds **Phase 0**: the core every module builds on.
 | Books health | `src/core/statements.ts` (`booksHealth`) | On the Overview: trial balance and balance sheet in balance, bank lines reviewed, bank accounts reconciled within 45 days, overdue invoices, past months closed, EIN on file. Bookkeeping checks, not a compliance determination |
 | Close the books | `src/core/overview.ts` (`closeBooksThrough`) | One "closed through" date: locks (or soft-closes) every month ending on or before it, oldest first, each through the normal period rules. Month-by-month control stays available |
 | Example business | `src/app/example.ts` | A made-up California design studio with a year of invoices, bills, payments and a bank statement to review, created in its own organisation so it never mixes with real books |
+| Backup | `src/core/backup.ts` | "Download a backup" on the Overview (owners, admins, accountants): one JSON file with every row behind the books and the organisation's audit chain, a checksum that catches edits, and no passwords, session or email-link tokens, or connection credentials. Each download is in the audit log |
 | Tax export | `src/core/reports.ts` | Trial balance by tax line as CSV for Intuit tax software; an unmapped account blocks the export, not the books |
 
 Payroll **never moves money or files returns**. It calculates and prepares; the client or their accountant pays and files.
