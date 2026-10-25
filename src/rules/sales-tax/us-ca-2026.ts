@@ -42,6 +42,11 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
       help: "Files, software or artwork sent by email or download with no disk or print. Not taxable.",
       taxable: false, cite: "Regulation 1502(f)(1)(D)",
     },
+    prewritten_software: {
+      label: "Software or app access",
+      help: "Ready-made software or a subscription to an online app (SaaS), sold to many customers. Not taxable in 2026 when delivered electronically; taxable from January 1, 2027.",
+      taxable: false, cite: "Regulation 1502(f)(1)(D); SB 122 (2026) from 2027",
+    },
     repair_labor: {
       label: "Repair or installation labor",
       help: "Labor to repair or install, billed separately from parts. Not taxable; bill parts as goods.",
@@ -88,7 +93,46 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
   ],
 };
 
-const PACKS: readonly SalesTaxRulePack[] = [usCaliforniaSalesTax2026];
+// SB 122 (signed June 29, 2026) brings prewritten software into the sales
+// tax base from January 1, 2027, however it's delivered, including remote
+// access. Custom software and digital visual, audio and audiovisual works
+// and books stay outside it, so electronically delivered creative work is
+// still not taxable.
+export const usCaliforniaSalesTax2027: SalesTaxRulePack = {
+  ...usCaliforniaSalesTax2026,
+  id: "us-ca-sales-tax-2027",
+  version: "2027.1.0",
+  effectiveFrom: "2027-01-01",
+  effectiveTo: "2027-12-31",
+  status: "draft",
+  categories: {
+    ...usCaliforniaSalesTax2026.categories,
+    digital_delivery: {
+      label: "Delivered electronically",
+      help: "Files, artwork, photos, writing or custom-built software sent by email, download or a shared link, with no disk or print. Not taxable. Ready-made software and app subscriptions are taxable from 2027: choose \"Software or app access\".",
+      taxable: false, cite: "Regulation 1502(f)(1)(D); SB 122 (2026) exclusions for custom software and digital works",
+    },
+    prewritten_software: {
+      label: "Software or app access",
+      help: "Ready-made software or a subscription to an online app (SaaS), sold to many customers, however it's delivered. Taxable from January 1, 2027. Custom software built for one customer is not.",
+      taxable: true, cite: "SB 122 (2026), operative January 1, 2027",
+    },
+  },
+  sources: [
+    ...usCaliforniaSalesTax2026.sources,
+    { ref: "SB 122 (Stats. 2026), signed June 29, 2026", covers: "prewritten software, including SaaS, taxable from 2027-01-01; exclusions", basis: "working-knowledge" },
+    { ref: "CDTFA discussion paper and draft emergency regulations on digital products (Sept 2026)", covers: "SaaS and remotely accessed software within the definition", basis: "working-knowledge" },
+  ],
+  reviewNotes: [
+    "Carried over unchanged from the 2026 pack: the 7.25% statewide rate, the 12% sanity bound, and every category except the two below. The statewide rate is not changing for 2027 as far as published sources show; January 2027 district rate changes come from the CDTFA rate lookup, not this pack.",
+    "New for 2027 (rule watch, 2026-10-25): SB 122 makes prewritten software taxable however delivered, including SaaS. 'prewritten_software' is taxable; 'digital_delivery' stays not taxable for custom software and digital works (visual, audio, audiovisual, books), which SB 122 excludes. Confirmed by several secondary sources (K&L Gates, Snell & Wilmer, Baker Tilly, Avalara); the statute text and CDTFA's emergency regulations were not read directly because ca.gov is blocked from the build machines.",
+    "SB 122 shifts reporting to the purchaser for some sales over $5,000,000 and has its own rules for where remotely accessed software is taxed. Alt-QBO taxes at the customer's address like any other sale; confirm that's right for SaaS sold to customers with users in several places.",
+    "Software first built custom and later held for repeated sale becomes prewritten. The help text says 'sold to many customers'; confirm the wording.",
+    ...usCaliforniaSalesTax2026.reviewNotes,
+  ],
+};
+
+const PACKS: readonly SalesTaxRulePack[] = [usCaliforniaSalesTax2026, usCaliforniaSalesTax2027];
 
 /** The sales-tax pack in force in a state on a date. */
 export function salesTaxRules(region: string | null, onDate: string): SalesTaxRulePack | null {
