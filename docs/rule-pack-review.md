@@ -99,6 +99,20 @@ The forms are worksheets with each line's figure, for copying into the filing si
 | W-2 / W-3 | Boxes 1-6, 12 code D (401(k)), 14 CASDI, 15-17 with the 8-digit EDD account number; W-3 b and c | 2026 General Instructions for Forms W-2 and W-3 | ✅ matches. Box 12 DD (employer health coverage cost) isn't filled in; employers filing fewer than 250 W-2s are exempt |
 | Due dates | 941 and DE 9: last day of the month after the quarter, moved to the next business day; 940 and W-2: Jan 31 (moved past weekends) | Pub 15 (2026); EDD | ✅ |
 
+## Sales and use tax return worksheet (`src/core/sales-tax-return.ts`)
+
+A worksheet for the business's own CDTFA-401, built on the sales tax report. Alt-QBO doesn't file or pay it.
+
+| Item | What Alt-QBO does | Source | Check |
+|---|---|---|---|
+| Due dates | Last day of the month after the period (monthly, quarterly, yearly; fiscal year July to June), moved past weekends and California holidays | CDTFA filing due dates | ⚠️ from working knowledge; ca.gov is blocked here. Confirm the weekend and holiday rule |
+| Prepayments | Quarterly prepay accounts: due the 24th of the month after each of the first two months of the quarter. Shows the month's tax charged; the amount to prepay comes from the CDTFA's notice | CDTFA prepayment guidance | ⚠️ confirm the 24th and the accepted share (90% of the month, or two-thirds of the same quarter last year) |
+| Accrual basis | Sales count in the period of the invoice date. An invoice voided after its period ends stays in that period, with a warning to amend | Accrual is the CDTFA default; cash basis needs the CDTFA's approval | ⚠️ confirm Greg wants accrual, and the authority for the default |
+| Line labels | Labeled by what the line is, not by line number, because the online return numbers its lines differently from the paper CDTFA-401 | CDTFA-401 | ⚠️ match each to the 2027 online return. SB 122 direct-pay and multiple-points-of-use software go under "other deductions" with a description; confirm CDTFA doesn't add its own lines |
+| State and district tax | State and local at 7.25% of taxable sales; district tax per place on Schedule A at the looked-up rate less 7.25% | CDTFA-401 Schedule A | ⚠️ Schedule A asks for district codes; Alt-QBO shows the place name from the rate lookup |
+| Excess tax collected | When invoices charged more than the return computes, a warning says to pay the extra | Rev. & Tax. Code §6901.5 | ✅ |
+| No permit | An invoice charging tax with no seller's permit recorded shows a warning (it isn't stopped) | Rev. & Tax. Code §§6066, 6071 | ✅ |
+
 ## Chart of accounts tax lines (`src/rules/coa/us-service.ts`)
 
 Tax-line codes for Schedule C, 1065, 1120S and 1120 are from working knowledge and need checking against the current forms and against each Intuit product's trial-balance import layout.

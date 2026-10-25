@@ -26,6 +26,7 @@ import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
 import { createEmployee, listEmployees, setUiRate, updateEmployee, type EmployeeFields } from "../payroll/employees.js";
 import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
+import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
 import { form940, form941, formDe9, formsFor, formW2, type PreparedForm } from "../payroll/forms.js";
 import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
 import { calculateSavedRun, carrySickLeave, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
@@ -1082,6 +1083,38 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms/prepared", async (re
     });
   }
   return new Response(toJson(form), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+});
+
+/** The business's own sales tax: its seller's permit, filing frequency and return periods. */
+route("GET", "/api/orgs/:org/entities/:entity/sales-tax", async (req, p, ctx) => {
+  const today = pacificToday();
+  const year = Number(new URL(req.url).searchParams.get("year") ?? today.slice(0, 4));
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new HttpError(400, "year should be like 2027");
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const settings = await salesTaxSettings(tx, p.entity!);
+    const periods = settings.filingFrequency ? returnPeriods(settings.filingFrequency, year, today) : [];
+    return json({ year, today, ...settings, frequencies: FILING_FREQUENCIES, periods });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/sales-tax-settings", async (req, p, ctx) => {
+  const b = await body(req);
+  for (const k of ["sellerPermit", "filingFrequency"]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
+  const saved = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return setSalesTaxSettings(tx, { orgId: ctx.orgId, entityId: p.entity!, sellerPermit: b.sellerPermit, filingFrequency: b.filingFrequency as FilingFrequency | null | undefined, actor: ctx.actor });
+  });
+  return json(saved);
+});
+
+/** The prepared return for one period. */
+route("GET", "/api/orgs/:org/entities/:entity/sales-tax/return", async (req, p, ctx) => {
+  const period = new URL(req.url).searchParams.get("period") ?? "";
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json(await prepareSalesTaxReturn(tx, p.entity!, period));
+  });
 });
 
 /** The business's bank details for direct deposit files. */
