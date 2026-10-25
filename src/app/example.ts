@@ -1,7 +1,8 @@
 import type pg from "pg";
 import { withSystem, withTenant } from "../db/pool.js";
 import { importBankCsv } from "../core/bank.js";
-import { createContact, issueDocument, recordPayment, type DocumentLineInput } from "../core/documents.js";
+import { createContact, issueDocument, recordPayment } from "../core/documents.js";
+import { createItem, issueInvoice, setBusinessAddress, type InvoiceLineInput } from "../core/sales-tax.js";
 import { postJournal, type Actor } from "../core/ledger.js";
 import { createEntity, createOrganization } from "../core/tenancy.js";
 
@@ -32,34 +33,41 @@ export async function createExampleBusiness(pool: pg.Pool, user: { id: string; e
       lines: [{ account: "1000", debit: "15000.00" }, { account: "3000", credit: "15000.00" }],
     });
 
-    const contact = async (kind: "customer" | "vendor", name: string, email?: string) =>
-      (await createContact(tx, { ...base, kind, name, email })).id;
-    const harbor = await contact("customer", "Harbor Coffee Co", "ap@harborcoffee.example");
-    const dental = await contact("customer", "Mission Dental Group", "office@missiondental.example");
-    const lark = await contact("customer", "Lark & Finch Bakery", "hello@larkfinch.example");
+    await setBusinessAddress(tx, { ...base, address: { line1: "2150 Sunset Blvd", city: "Los Angeles", state: "CA", zip: "90026" } });
+    const contact = async (kind: "customer" | "vendor", name: string, email?: string, address?: { line1: string; city: string; state: string; zip: string }) =>
+      (await createContact(tx, { ...base, kind, name, email, address })).id;
+    const harbor = await contact("customer", "Harbor Coffee Co", "ap@harborcoffee.example", { line1: "88 Harbor Dr", city: "San Diego", state: "CA", zip: "92101" });
+    const dental = await contact("customer", "Mission Dental Group", "office@missiondental.example", { line1: "450 S Main St", city: "Los Angeles", state: "CA", zip: "90013" });
+    const lark = await contact("customer", "Lark & Finch Bakery", "hello@larkfinch.example", { line1: "1200 SE Division St", city: "Portland", state: "OR", zip: "97202" });
     const studio = await contact("vendor", "Mission Street Studios");
     const adobe = await contact("vendor", "Adobe");
     const printer = await contact("vendor", "Bay Area Print Shop");
 
-    const invoice = async (contactId: string, issueDate: string, dueDate: string, lines: DocumentLineInput[], taxRateBps = 0) =>
-      issueDocument(tx, { ...base, kind: "invoice", contactId, issueDate, dueDate, lines, taxRateBps, idempotencyKey: key() });
+    const item = async (name: string, taxCategory: string, unitPrice: string) => (await createItem(tx, { ...base, name, taxCategory, unitPrice, account: "4000" })).id;
+    const design = await item("Design work (per hour)", "professional_service", "125.00");
+    const brochures = await item("Printed brochures", "printed_materials", "1.20");
+    // The example is made without asking the CDTFA, so its one taxable invoice carries a rate set by hand.
+    const exampleRate = { ratePercent: "9.75", reason: "Example business: a sample rate entered by hand" };
+    const invoice = async (contactId: string, issueDate: string, dueDate: string, lines: InvoiceLineInput[], manual?: typeof exampleRate) =>
+      issueInvoice(tx, { ...base, contactId, issueDate, dueDate, lines, manual, idempotencyKey: key() });
+    const service = (description: string, unitPrice: string, quantity = "1"): InvoiceLineInput => ({ itemId: design, description, quantity, unitPrice });
     const bill = async (contactId: string, issueDate: string, dueDate: string, account: string, description: string, unitPrice: string, reference?: string) =>
       issueDocument(tx, { ...base, kind: "bill", contactId, issueDate, dueDate, reference, lines: [{ account, description, quantity: "1", unitPrice }], idempotencyKey: key() });
     const pay = async (documentId: string, date: string, amount: bigint) =>
       recordPayment(tx, { ...base, documentId, date, amount, idempotencyKey: key() });
 
-    // Design work isn't taxable in California; the printed brochures are, here at a 9.75% local rate.
-    const i1 = await invoice(harbor, "2026-02-03", "2026-03-05", [{ account: "4000", description: "Brand identity: logo and style guide", quantity: "1", unitPrice: "4800.00" }]);
+    // Design work isn't taxable in California; the printed brochures are, here at a sample 9.75% rate.
+    const i1 = await invoice(harbor, "2026-02-03", "2026-03-05", [service("Brand identity: logo and style guide", "4800.00")]);
     await pay(i1.id, "2026-03-01", i1.totalMinor);
     const i2 = await invoice(dental, "2026-04-14", "2026-05-14", [
-      { account: "4000", description: "Website redesign, phase 1", quantity: "1", unitPrice: "6500.00" },
-      { account: "4000", description: "Printed brochures (500)", quantity: "500", unitPrice: "1.20", taxable: true },
-    ], 975);
+      service("Website redesign, phase 1", "6500.00"),
+      { itemId: brochures, description: "Printed brochures (500)", quantity: "500" },
+    ], exampleRate);
     await pay(i2.id, "2026-05-12", i2.totalMinor);
-    const i3 = await invoice(lark, "2026-07-08", "2026-08-07", [{ account: "4000", description: "Menu and packaging design", quantity: "32", unitPrice: "125.00" }]);
+    const i3 = await invoice(lark, "2026-07-08", "2026-08-07", [service("Menu and packaging design", "125.00", "32")]);
     await pay(i3.id, "2026-08-20", 200000n);
-    await invoice(harbor, "2026-08-25", "2026-09-24", [{ account: "4000", description: "Seasonal campaign: posters and social", quantity: "1", unitPrice: "3200.00" }]);
-    await invoice(dental, "2026-10-06", "2026-11-05", [{ account: "4000", description: "Website redesign, phase 2", quantity: "1", unitPrice: "5200.00" }]);
+    await invoice(harbor, "2026-08-25", "2026-09-24", [service("Seasonal campaign: posters and social", "3200.00")]);
+    await invoice(dental, "2026-10-06", "2026-11-05", [service("Website redesign, phase 2", "5200.00")]);
 
     for (const [i, month] of ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"].entries()) {
       const b = await bill(studio, `2026-${month}-01`, `2026-${month}-05`, "6400", "Studio rent", "1450.00", `MSS-26${month}`);

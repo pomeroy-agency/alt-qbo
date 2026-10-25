@@ -31,28 +31,75 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 
 // --------------------------------------------------------------- contacts
 
+export interface ContactAddress {
+  line1: string;
+  city: string;
+  state: string;
+  zip: string;
+}
+
 export interface Contact {
   id: string;
   kind: ContactKind;
   name: string;
   email: string | null;
+  /** Where the customer takes delivery; decides the sales tax rate. */
+  address: ContactAddress | null;
+  /** California seller's permit from the customer's resale certificate. */
+  resalePermit: string | null;
+}
+
+const CONTACT_COLS = "id, kind, name, email, address_line1, address_city, address_state, address_zip, resale_permit";
+
+function contactOf(r: any): Contact {
+  return {
+    id: r.id, kind: r.kind, name: r.name, email: r.email,
+    address: r.address_line1 ? { line1: r.address_line1, city: r.address_city, state: r.address_state, zip: r.address_zip } : null,
+    resalePermit: r.resale_permit,
+  };
+}
+
+interface ContactFields {
+  name?: string;
+  email?: string | null;
+  /** Checked by cleanAddress in core/sales-tax.ts before it gets here. */
+  address?: ContactAddress | null;
+  resalePermit?: string | null;
+}
+
+function contactColumns(f: ContactFields): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (f.name !== undefined) {
+    const name = f.name.trim();
+    if (!name) throw new LedgerError("INVALID", "a contact needs a name");
+    out.name = name;
+  }
+  if (f.email !== undefined) out.email = f.email?.trim().toLowerCase() || null;
+  if (f.address !== undefined) {
+    out.address_line1 = f.address?.line1 ?? null;
+    out.address_city = f.address?.city ?? null;
+    out.address_state = f.address?.state ?? null;
+    out.address_zip = f.address?.zip ?? null;
+  }
+  if (f.resalePermit !== undefined) out.resale_permit = f.resalePermit?.trim().slice(0, 40) || null;
+  return out;
 }
 
 export async function createContact(
   tx: Tx,
-  input: { orgId: string; entityId: string; kind: ContactKind; name: string; email?: string; actor: Actor },
+  input: ContactFields & { orgId: string; entityId: string; kind: ContactKind; name: string; actor: Actor },
 ): Promise<Contact> {
   requireWriter(input.actor, "add contacts");
-  const name = input.name.trim();
-  if (!name) throw new LedgerError("INVALID", "a contact needs a name");
-  const dup = await tx.query("SELECT 1 FROM contacts WHERE entity_id = $1 AND lower(name) = lower($2)", [input.entityId, name]);
-  if (dup.rows[0]) throw new LedgerError("INVALID", `there is already a contact named ${name}`);
+  const cols = contactColumns({ email: null, ...input });
+  const dup = await tx.query("SELECT 1 FROM contacts WHERE entity_id = $1 AND lower(name) = lower($2)", [input.entityId, cols.name]);
+  if (dup.rows[0]) throw new LedgerError("INVALID", `there is already a contact named ${cols.name}`);
+  const names = Object.keys(cols);
   const { rows } = await run(() => tx.query(
-    `INSERT INTO contacts (org_id, entity_id, kind, name, email) VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, kind, name, email`,
-    [input.orgId, input.entityId, input.kind, name, input.email?.trim().toLowerCase() || null],
+    `INSERT INTO contacts (org_id, entity_id, kind, ${names.join(", ")}) VALUES ($1, $2, $3, ${names.map((_, i) => `$${i + 4}`).join(", ")})
+     RETURNING ${CONTACT_COLS}`,
+    [input.orgId, input.entityId, input.kind, ...Object.values(cols)],
   ));
-  const contact = rows[0] as Contact;
+  const contact = contactOf(rows[0]);
   await appendAudit(tx, {
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "contact.created",
     objectType: "contact", objectId: contact.id, after: contact,
@@ -60,9 +107,34 @@ export async function createContact(
   return contact;
 }
 
+/** Changes a contact's details. Past invoices keep the address and tax they were issued with. */
+export async function updateContact(
+  tx: Tx,
+  input: ContactFields & { orgId: string; entityId: string; contactId: string; actor: Actor },
+): Promise<Contact> {
+  requireWriter(input.actor, "change contacts");
+  const before = (await tx.query(`SELECT ${CONTACT_COLS} FROM contacts WHERE id = $1 AND entity_id = $2 FOR UPDATE`, [input.contactId, input.entityId])).rows[0];
+  if (!before) throw new LedgerError("INVALID", "contact not found");
+  const cols = contactColumns(input);
+  if (cols.name && (await tx.query("SELECT 1 FROM contacts WHERE entity_id = $1 AND lower(name) = lower($2) AND id <> $3", [input.entityId, cols.name, input.contactId])).rows[0]) {
+    throw new LedgerError("INVALID", `there is already a contact named ${cols.name}`);
+  }
+  const changed = Object.entries(cols).filter(([k, v]) => (before[k] ?? null) !== v);
+  if (!changed.length) return contactOf(before);
+  const { rows } = await run(() => tx.query(
+    `UPDATE contacts SET ${changed.map(([k], i) => `${k} = $${i + 2}`).join(", ")} WHERE id = $1 RETURNING ${CONTACT_COLS}`,
+    [input.contactId, ...changed.map(([, v]) => v)],
+  ));
+  await appendAudit(tx, {
+    orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "contact.updated", objectType: "contact", objectId: input.contactId,
+    before: Object.fromEntries(changed.map(([k]) => [k, before[k]])), after: Object.fromEntries(changed), context: { role: input.actor.role },
+  });
+  return contactOf(rows[0]);
+}
+
 export async function listContacts(tx: Tx, entityId: string): Promise<Contact[]> {
-  const { rows } = await tx.query("SELECT id, kind, name, email FROM contacts WHERE entity_id = $1 ORDER BY lower(name)", [entityId]);
-  return rows;
+  const { rows } = await tx.query(`SELECT ${CONTACT_COLS} FROM contacts WHERE entity_id = $1 ORDER BY lower(name)`, [entityId]);
+  return rows.map(contactOf);
 }
 
 // -------------------------------------------------------------- documents
@@ -76,6 +148,20 @@ export interface DocumentLineInput {
   /** Major units ("125.00"). */
   unitPrice: string;
   taxable?: boolean;
+  /** Kind of sale from the state's sales-tax rule pack ("professional_service", "goods"). */
+  taxCategory?: string;
+  /** The product or service this line was filled from. */
+  itemId?: string;
+}
+
+/** An invoice's sales tax, decided before it is issued and frozen on it. See core/sales-tax.ts. */
+export interface DocumentTax {
+  /** Fraction, up to five decimals ("0.08625"). */
+  rate: string;
+  source: "none" | "not_taxable" | "resale" | "out_of_state" | "lookup" | "manual";
+  jurisdiction?: string | null;
+  address?: string | null;
+  note?: string | null;
 }
 
 export interface IssueDocumentInput {
@@ -88,8 +174,8 @@ export interface IssueDocumentInput {
   memo?: string;
   /** Vendor's invoice number, for bills. */
   reference?: string;
-  /** Invoices only. Basis points, entered by the user (725 = 7.25%). */
-  taxRateBps?: number;
+  /** Invoices only. */
+  tax?: DocumentTax;
   lines: DocumentLineInput[];
   idempotencyKey: string;
   actor: Actor;
@@ -104,13 +190,15 @@ interface PricedLine {
   amountMinor: bigint;
   taxable: boolean;
   taxMinor: bigint;
+  taxCategory: string | null;
+  itemId: string | null;
 }
 
 /** Line amount = quantity x unit price; tax = rate on each taxable line. Both rounded half-up to the cent. */
-export function priceLine(quantity: string, unitPriceMinor: bigint, taxable: boolean, taxRateBps: number) {
+export function priceLine(quantity: string, unitPriceMinor: bigint, taxable: boolean, taxRate: string) {
   const amountMinor = BigInt(new D(quantity).mul(unitPriceMinor.toString()).toDecimalPlaces(0, D.ROUND_HALF_UP).toFixed(0));
   const taxMinor = taxable
-    ? BigInt(new D(amountMinor.toString()).mul(taxRateBps).div(10000).toDecimalPlaces(0, D.ROUND_HALF_UP).toFixed(0))
+    ? BigInt(new D(amountMinor.toString()).mul(taxRate).toDecimalPlaces(0, D.ROUND_HALF_UP).toFixed(0))
     : 0n;
   return { amountMinor, taxMinor };
 }
@@ -118,7 +206,7 @@ export function priceLine(quantity: string, unitPriceMinor: bigint, taxable: boo
 function requestHash(input: IssueDocumentInput): string {
   return createHash("sha256").update(canonicalJson({
     kind: input.kind, contactId: input.contactId, issueDate: input.issueDate, dueDate: input.dueDate ?? null,
-    memo: input.memo ?? "", reference: input.reference ?? null, taxRateBps: input.taxRateBps ?? 0, lines: input.lines,
+    memo: input.memo ?? "", reference: input.reference ?? null, tax: input.tax ?? null, lines: input.lines,
   })).digest("hex");
 }
 
@@ -141,10 +229,10 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     return { ...doc, replayed: true };
   }
 
-  const taxRateBps = input.kind === "invoice" ? input.taxRateBps ?? 0 : 0;
-  if (!Number.isInteger(taxRateBps) || taxRateBps < 0 || taxRateBps > 10000) {
-    throw new LedgerError("INVALID", "the tax rate must be between 0% and 100%");
-  }
+  if (input.kind === "bill" && input.tax && input.tax.source !== "none") throw new LedgerError("INVALID", "bills don't charge sales tax");
+  const tax: DocumentTax = input.kind === "invoice" && input.tax ? input.tax : { rate: "0", source: "none" };
+  if (!/^(0(\.\d{1,5})?|1(\.0{1,5})?)$/.test(tax.rate)) throw new LedgerError("INVALID", "the tax rate must be a fraction between 0 and 1, up to five decimals");
+  const taxRate = new D(tax.rate).toFixed(5);
   if (!input.lines.length) throw new LedgerError("INVALID", `a ${input.kind} needs at least one line`);
   if (input.lines.length > 200) throw new LedgerError("INVALID", `a ${input.kind} can have at most 200 lines`);
   const dueDate = input.dueDate || input.issueDate;
@@ -180,12 +268,13 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     return {
       accountId: a.id, accountCode: a.code, description: (l.description ?? "").slice(0, 300),
       quantity: new D(l.quantity).toFixed(4), unitPriceMinor, taxable,
-      ...priceLine(l.quantity, unitPriceMinor, taxable, taxRateBps),
+      taxCategory: input.kind === "invoice" ? l.taxCategory ?? null : null, itemId: l.itemId ?? null,
+      ...priceLine(l.quantity, unitPriceMinor, taxable, taxRate),
     };
   });
   const subtotal = lines.reduce((s, l) => s + l.amountMinor, 0n);
-  const tax = lines.reduce((s, l) => s + l.taxMinor, 0n);
-  if (subtotal + tax <= 0n) throw new LedgerError("INVALID", `the ${input.kind} total must be more than zero`);
+  const taxTotal = lines.reduce((s, l) => s + l.taxMinor, 0n);
+  if (subtotal + taxTotal <= 0n) throw new LedgerError("INVALID", `the ${input.kind} total must be more than zero`);
 
   const counter = input.kind === "invoice" ? "next_invoice_number" : "next_bill_number";
   const num = await tx.query(`UPDATE entities SET ${counter} = ${counter} + 1 WHERE id = $1 RETURNING ${counter} - 1 AS n`, [input.entityId]);
@@ -194,19 +283,21 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
   const docId = randomUUID();
   await run(() => tx.query(
     `INSERT INTO documents (id, org_id, entity_id, kind, number, reference, contact_id, issue_date, due_date, memo,
-        currency, tax_rate_bps, subtotal_minor, tax_minor, total_minor, idempotency_key, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+        currency, tax_rate, tax_source, tax_jurisdiction, tax_address, tax_note, subtotal_minor, tax_minor, total_minor,
+        idempotency_key, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
     [docId, input.orgId, input.entityId, input.kind, number, input.reference?.trim() || null, input.contactId,
-     input.issueDate, dueDate, (input.memo ?? "").slice(0, 300), currency, taxRateBps, subtotal, tax, subtotal + tax,
-     key, input.actor.id],
+     input.issueDate, dueDate, (input.memo ?? "").slice(0, 300), currency, taxRate, tax.source,
+     tax.jurisdiction?.slice(0, 200) || null, tax.address || null, tax.note?.slice(0, 300) || null,
+     subtotal, taxTotal, subtotal + taxTotal, key, input.actor.id],
   ));
   for (const [i, l] of lines.entries()) {
     await run(() => tx.query(
       `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, description, account_id, quantity,
-          unit_price_minor, amount_minor, taxable, tax_rate_bps, tax_minor)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          unit_price_minor, amount_minor, taxable, tax_rate, tax_minor, tax_category, item_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [input.orgId, input.entityId, docId, i + 1, l.description, l.accountId, l.quantity, l.unitPriceMinor,
-       l.amountMinor, l.taxable, taxRateBps, l.taxMinor],
+       l.amountMinor, l.taxable, taxRate, l.taxMinor, l.taxCategory, l.itemId],
     ));
   }
 
@@ -215,9 +306,9 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
   for (const l of lines) perAccount.set(l.accountCode, (perAccount.get(l.accountCode) ?? 0n) + l.amountMinor);
   const side = input.kind === "invoice" ? "credit" : "debit";
   const jl: LineInput[] = [...perAccount].filter(([, v]) => v > 0n).map(([account, v]) => ({ account, [side]: v, description: number }));
-  if (tax > 0n) jl.push({ account: "sales_tax_payable", credit: tax, description: `${number} sales tax` });
-  if (input.kind === "invoice") jl.unshift({ account: CONTROL.invoice, debit: subtotal + tax, description: number });
-  else jl.push({ account: CONTROL.bill, credit: subtotal + tax, description: number });
+  if (taxTotal > 0n) jl.push({ account: "sales_tax_payable", credit: taxTotal, description: `${number} sales tax` });
+  if (input.kind === "invoice") jl.unshift({ account: CONTROL.invoice, debit: subtotal + taxTotal, description: number });
+  else jl.push({ account: CONTROL.bill, credit: subtotal + taxTotal, description: number });
 
   const entry = await postJournal(tx, {
     orgId: input.orgId, entityId: input.entityId, date: input.issueDate,
@@ -229,8 +320,8 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id,
     action: input.kind === "invoice" ? "invoice.issued" : "bill.recorded",
     objectType: input.kind, objectId: docId,
-    after: { number, contactId: input.contactId, issueDate: input.issueDate, dueDate, subtotal, tax, total: subtotal + tax, taxRateBps, entryId: entry.id },
-    context: { role: input.actor.role, requestHash: hash, ...(taxRateBps ? { taxRateSource: "user_entered" } : {}) },
+    after: { number, contactId: input.contactId, issueDate: input.issueDate, dueDate, subtotal, tax: taxTotal, total: subtotal + taxTotal, taxRate, entryId: entry.id },
+    context: { role: input.actor.role, requestHash: hash, taxSource: tax.source, ...(tax.note ? { taxNote: tax.note } : {}) },
   });
   return getDocument(tx, docId, hash);
 }
@@ -246,7 +337,12 @@ export interface DocumentSummary {
   dueDate: string;
   memo: string;
   currency: string;
-  taxRateBps: number;
+  /** Fraction with five decimals ("0.08625"). */
+  taxRate: string;
+  taxSource: string;
+  taxJurisdiction: string | null;
+  taxAddress: string | null;
+  taxNote: string | null;
   subtotalMinor: bigint;
   taxMinor: bigint;
   totalMinor: bigint;
@@ -262,7 +358,7 @@ export interface DocumentDetail extends DocumentSummary {
   voidReason: string | null;
   createdBy: string;
   lines: { lineNo: number; description: string; accountCode: string; accountName: string; quantity: string;
-    unitPriceMinor: bigint; amountMinor: bigint; taxable: boolean; taxMinor: bigint }[];
+    unitPriceMinor: bigint; amountMinor: bigint; taxable: boolean; taxMinor: bigint; taxCategory: string | null; itemId: string | null }[];
   payments: { id: string; date: string; amountMinor: bigint; bankAccountCode: string; entryId: string; createdBy: string }[];
   requestHash?: string;
   replayed: boolean;
@@ -270,7 +366,7 @@ export interface DocumentDetail extends DocumentSummary {
 
 const SUMMARY_SQL = `
   SELECT d.id, d.kind, d.number, d.reference, d.contact_id, c.name AS contact_name, d.issue_date, d.due_date, d.memo,
-         d.currency, d.tax_rate_bps, d.subtotal_minor, d.tax_minor, d.total_minor, d.status, d.entry_id, d.void_entry_id,
+         d.currency, d.tax_rate::text AS tax_rate, d.tax_source, d.tax_jurisdiction, d.tax_address, d.tax_note, d.subtotal_minor, d.tax_minor, d.total_minor, d.status, d.entry_id, d.void_entry_id,
          d.void_date, d.void_reason, d.created_by,
          coalesce((SELECT sum(p.amount_minor) FROM document_payments p
                     WHERE p.document_id = d.id AND p.payment_date <= $2::date), 0)::bigint AS paid
@@ -287,7 +383,8 @@ function statusOf(r: any, asOf: string): DocumentStatus {
 function summary(r: any, asOf: string): DocumentSummary {
   return {
     id: r.id, kind: r.kind, number: r.number, reference: r.reference, contactId: r.contact_id, contactName: r.contact_name,
-    issueDate: r.issue_date, dueDate: r.due_date, memo: r.memo, currency: r.currency.trim(), taxRateBps: r.tax_rate_bps,
+    issueDate: r.issue_date, dueDate: r.due_date, memo: r.memo, currency: r.currency.trim(),
+    taxRate: r.tax_rate, taxSource: r.tax_source, taxJurisdiction: r.tax_jurisdiction, taxAddress: r.tax_address, taxNote: r.tax_note,
     subtotalMinor: r.subtotal_minor, taxMinor: r.tax_minor, totalMinor: r.total_minor, paidMinor: r.paid,
     dueMinor: r.status === "void" && r.void_date <= asOf ? 0n : (r.total_minor as bigint) - (r.paid as bigint),
     status: statusOf(r, asOf), entryId: r.entry_id, voidEntryId: r.void_entry_id,
@@ -312,7 +409,7 @@ export async function getDocument(tx: Tx, documentId: string, requestHashHint?: 
   if (!r) throw new LedgerError("INVALID", `document ${documentId} not found`);
   const lines = await tx.query(
     `SELECT l.line_no, l.description, a.code, a.name, l.quantity::text AS quantity, l.unit_price_minor, l.amount_minor,
-            l.taxable, l.tax_minor
+            l.taxable, l.tax_minor, l.tax_category, l.item_id
        FROM document_lines l JOIN accounts a ON a.id = l.account_id WHERE l.document_id = $1 ORDER BY l.line_no`,
     [documentId],
   );
@@ -335,7 +432,7 @@ export async function getDocument(tx: Tx, documentId: string, requestHashHint?: 
     lines: lines.rows.map((l) => ({
       lineNo: l.line_no, description: l.description, accountCode: l.code, accountName: l.name,
       quantity: new D(l.quantity).toString(), unitPriceMinor: l.unit_price_minor, amountMinor: l.amount_minor,
-      taxable: l.taxable, taxMinor: l.tax_minor,
+      taxable: l.taxable, taxMinor: l.tax_minor, taxCategory: l.tax_category, itemId: l.item_id,
     })),
     payments: pays.rows.map((p) => ({
       id: p.id, date: p.payment_date, amountMinor: p.amount_minor, bankAccountCode: p.code, entryId: p.entry_id, createdBy: p.created_by,

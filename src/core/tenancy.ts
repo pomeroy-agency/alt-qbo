@@ -55,6 +55,8 @@ export interface Entity {
   taxReturnType: string;
   ledgerRetentionYears: number;
   payrollRetentionYears: number;
+  /** The business's own address: where over-the-counter sales happen, and the rate when a customer has no address. */
+  address: { line1: string; city: string; state: string; zip: string } | null;
 }
 
 export interface CreateEntityInput {
@@ -151,7 +153,7 @@ export async function getEntity(tx: Tx, entityId: string): Promise<Entity> {
   const { rows } = await tx.query(
     `SELECT id, org_id, legal_name, entity_type, country, region, framework, functional_currency,
             fiscal_year_start_month, coa_template, tax_return_type, ledger_retention_years,
-            payroll_retention_years
+            payroll_retention_years, address_line1, address_city, address_state, address_zip
        FROM entities WHERE id = $1`,
     [entityId],
   );
@@ -171,6 +173,7 @@ export async function getEntity(tx: Tx, entityId: string): Promise<Entity> {
     taxReturnType: r.tax_return_type,
     ledgerRetentionYears: r.ledger_retention_years,
     payrollRetentionYears: r.payroll_retention_years,
+    address: r.address_line1 ? { line1: r.address_line1, city: r.address_city, state: r.address_state, zip: r.address_zip } : null,
   };
 }
 

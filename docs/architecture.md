@@ -41,9 +41,12 @@ Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields
 
 12. **Email (`src/app/email-auth.ts`).** Sign-in, reset and confirmation links each carry a random 32-byte token; `email_tokens` keeps its SHA-256 hash, purpose, the address it went to and an expiry (15 minutes, an hour, three days). A trigger lets a token be spent once, before it expires, and never edited or deleted. A token stops working if the account's email changes, and spending any token marks the email confirmed. Links are built from the configured site address (`APP_URL`, or Netlify's `URL`), never the request's Host header. The request forms answer the same way whether or not an account exists.
 
+13. **Sales tax (`src/core/sales-tax.ts`).** Taxability is data: the state's sales-tax rule pack maps each kind of sale to taxable or not, with the regulation it rests on. `issueInvoice` decides the tax before the invoice exists, in a fixed order (an owner's or accountant's rate set by hand with a reason; nothing taxable; a resale certificate; delivery outside the state; otherwise the CDTFA rate for the customer's address, or the business's), refuses a looked-up rate outside the state's possible range rather than use it, and passes the decision to `issueDocument`, which stores the rate (five decimals, so 8.625% is exact), its source, the address and the jurisdiction on the invoice. The database keeps every line's rate equal to the invoice's, requires a note for a rate set by hand and an address for a looked-up one, and allows tax only on invoices. A retried invoice replays the stored decision instead of looking the rate up again. Rate lookups are cached for a few hours for the live preview on the invoice screen.
+
 ## Not in Phase 0 yet
 
 - Multi-currency functional amounts and revaluation (lines carry a currency and balance per currency today).
 - Persisted employees, pay runs, NACHA files, deposit schedules and prepared forms (941, 940, DE 9, DE 9C, W-2, DE 34).
 - HTTP API, authentication, MFA; roles are passed in by the caller.
 - City minimum wages, regular-rate overtime for bonuses, supplemental-rate withholding.
+- Sales tax outside California, use tax on purchases, prepayments.

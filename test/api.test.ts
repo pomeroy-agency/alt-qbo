@@ -135,13 +135,14 @@ describe("invoices and bills API", () => {
 
     const inv = await call(`${base}/invoices`, {
       cookie: s.cookie,
-      body: { contactId: cust.data.id, issueDate: "2026-05-01", dueDate: "2026-05-31", taxRate: "7.25", idempotencyKey: "k1",
-        lines: [{ account: "4000", description: "Design", quantity: "2", unitPrice: "500.00", taxable: true }] },
+      body: { contactId: cust.data.id, issueDate: "2026-05-01", dueDate: "2026-05-31", idempotencyKey: "k1",
+        manualTax: { ratePercent: "7.25", reason: "test rate" },
+        lines: [{ account: "4000", description: "Signs", quantity: "2", unitPrice: "500.00", taxCategory: "goods" }] },
     });
     expect(inv.status).toBe(201);
     expect(inv.data).toMatchObject({ number: "INV-1001", subtotalMinor: "100000", taxMinor: "7250", totalMinor: "107250" });
     expect((await call(`${base}/invoices`, { cookie: s.cookie, body: { contactId: "nope", issueDate: "2026-05-01", lines: [{ account: "4000", unitPrice: "1.00" }] } })).status).toBe(400);
-    expect((await call(`${base}/invoices`, { cookie: s.cookie, body: { contactId: cust.data.id, issueDate: "2026-05-01", taxRate: "abc", lines: [{ account: "4000", unitPrice: "1.00" }] } })).status).toBe(400);
+    expect((await call(`${base}/invoices`, { cookie: s.cookie, body: { contactId: cust.data.id, issueDate: "2026-05-01", manualTax: { ratePercent: "abc", reason: "x" }, lines: [{ account: "4000", unitPrice: "1.00", taxCategory: "goods" }] } })).status).toBe(422);
 
     const over = await call(`${base}/invoices/${inv.data.id}/payments`, { cookie: s.cookie, body: { date: "2026-05-10", amount: "2000.00" } });
     expect(over.status).toBe(422);

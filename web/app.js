@@ -102,7 +102,7 @@ function topbar() {
 // The everyday menu stays short. Bookkeeping mechanics live under "Accountant tools".
 const ENTITY_TABS = [
   ["overview", "Overview"], ["invoices", "Invoices", "overdueInvoices", "overdue"], ["bills", "Bills", "billsDueSoon", "due within a week"],
-  ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["reports", "Reports"], ["payroll", "Payroll", "payRunsToApprove", "to approve"],
+  ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["items", "Products and services"], ["reports", "Reports"], ["payroll", "Payroll", "payRunsToApprove", "to approve"],
 ];
 const ACCOUNTANT_TABS = [
   ["reconcile", "Reconcile"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"],
@@ -551,56 +551,136 @@ function bankOptions() {
     .map((a) => `<option value="${a.code}">${a.code} · ${esc(a.name)}</option>`).join("");
 }
 
+// Sales tax: each line's kind of sale says whether it's taxable; the rate comes from the customer's address.
+const taxCategories = () => state.entity.salesTaxCategories ?? [];
+const isTaxable = (category) => taxCategories().find((c) => c.id === category)?.taxable ?? false;
+const DEFAULT_KIND = "professional_service";
+const pct = (rate) => `${(Number(rate) * 100).toFixed(3).replace(/\.?0+$/, "")}%`;
+
+function kindOptions(selected) {
+  return taxCategories().map((c) => `<option value="${c.id}" title="${esc(c.help)}" ${c.id === selected ? "selected" : ""}>${esc(c.label)}</option>`).join("");
+}
+
+function itemOptions(selected = "") {
+  return `<option value="">Other…</option>${(state.items ?? []).filter((i) => i.isActive || i.id === selected)
+    .map((i) => `<option value="${i.id}" ${i.id === selected ? "selected" : ""}>${esc(i.name)}</option>`).join("")}`;
+}
+
 function docLineRow(kind, l = {}) {
+  const tail = `
+    <td><input name="quantity" class="mono" inputmode="decimal" aria-label="Quantity" value="${esc(l.quantity ?? "1")}" style="width:80px"></td>
+    <td><input name="unitPrice" class="mono" inputmode="decimal" aria-label="Price" placeholder="0.00" value="${esc(l.unitPrice ?? "")}"></td>
+    <td class="num" data-amount></td>
+    <td><button type="button" class="link" data-action="remove-doc-line" aria-label="Remove line">✕</button></td>`;
+  if (kind === "invoice") {
+    const cat = l.taxCategory ?? DEFAULT_KIND;
+    return `<tr>
+      <td><select name="itemId" aria-label="Product or service">${itemOptions(l.itemId)}</select></td>
+      <td><input name="description" aria-label="Description" value="${esc(l.description ?? "")}"></td>
+      <td><select name="taxCategory" aria-label="Kind of sale">${kindOptions(cat)}</select><div class="hash" data-taxable>${isTaxable(cat) ? "Taxable" : "Not taxable"}</div></td>
+      ${tail}
+    </tr>`;
+  }
   return `<tr>
     <td><select name="account" aria-label="Account">${docAccountOptions(kind, l.account ?? DOC[kind].defaultAccount)}</select></td>
     <td><input name="description" aria-label="Description" value="${esc(l.description ?? "")}"></td>
-    <td><input name="quantity" class="mono" inputmode="decimal" aria-label="Quantity" value="${esc(l.quantity ?? "1")}" style="width:80px"></td>
-    <td><input name="unitPrice" class="mono" inputmode="decimal" aria-label="Price" placeholder="0.00" value="${esc(l.unitPrice ?? "")}"></td>
-    ${kind === "invoice" ? `<td style="text-align:center"><input type="checkbox" name="taxable" aria-label="Taxable" ${l.taxable ? "checked" : ""}></td>` : ""}
-    <td class="num" data-amount></td>
-    <td><button type="button" class="link" data-action="remove-doc-line" aria-label="Remove line">✕</button></td>
+    ${tail}
   </tr>`;
 }
 
 function readDocLines() {
-  return [...document.querySelectorAll("#doc-lines tr")].map((tr) => ({
-    account: tr.querySelector("[name=account]").value,
-    description: tr.querySelector("[name=description]").value,
-    quantity: tr.querySelector("[name=quantity]").value.trim(),
-    unitPrice: tr.querySelector("[name=unitPrice]").value.trim(),
-    taxable: tr.querySelector("[name=taxable]")?.checked ?? false,
-  }));
+  return [...document.querySelectorAll("#doc-lines tr")].map((tr) => {
+    const v = (n) => tr.querySelector(`[name=${n}]`)?.value.trim() ?? "";
+    const common = { description: v("description"), quantity: v("quantity"), unitPrice: v("unitPrice") };
+    return tr.querySelector("[name=taxCategory]")
+      ? { ...common, itemId: v("itemId") || undefined, taxCategory: v("taxCategory") }
+      : { ...common, account: v("account") };
+  });
+}
+
+/** What the server said about this invoice's sales tax, for the figures shown while typing. */
+const docTax = { rate: null, explanation: "", error: "", timer: null, seq: 0 };
+
+/** Asks the server how this invoice will be taxed. Called when the customer, date or kinds of sale change. */
+function scheduleTaxPreview() {
+  clearTimeout(docTax.timer);
+  docTax.timer = setTimeout(runTaxPreview, 250);
+}
+
+async function runTaxPreview() {
+  const form = document.querySelector("form[data-form=document][data-kind=invoice]");
+  if (!form) return;
+  const d = formData(form);
+  const lines = readDocLines();
+  const anyTaxable = lines.some((l) => isTaxable(l.taxCategory));
+  const seq = ++docTax.seq;
+  const show = (rate, explanation, error = "") => {
+    if (seq !== docTax.seq) return;
+    Object.assign(docTax, { rate, explanation, error });
+    const note = document.getElementById("doc-tax-note");
+    note.className = error ? "alert warn" : "hash";
+    note.textContent = error || explanation;
+    const manual = form.querySelector("[data-manual]");
+    if (manual) manual.hidden = !error;
+    updateDocTotals();
+  };
+  if (!anyTaxable) return show("0", "No sales tax: nothing on this invoice is taxable in California.");
+  if (!d.contactId || d.contactId === "__new") return show(null, "Sales tax will be worked out from the new customer's address when you issue the invoice.");
+  const manualTax = d.manualRate && d.manualReason ? { ratePercent: d.manualRate, reason: d.manualReason } : undefined;
+  try {
+    const r = await api(entPath("/invoices/tax-preview"), { body: { contactId: d.contactId, issueDate: d.issueDate, lines, manualTax } });
+    show(r.rate, r.explanation);
+  } catch (err) {
+    show(null, "", err.message);
+  }
 }
 
 /** Rough preview of the totals; the server's figures are the ones that post. */
 function updateDocTotals() {
   const form = document.querySelector("form[data-form=document]");
   if (!form) return;
-  const bps = Math.round(Number(form.querySelector("[name=taxRate]")?.value || 0) * 100) || 0;
+  const rate = Number(docTax.rate ?? 0);
   let sub = 0n, tax = 0n, bad = false;
   document.querySelectorAll("#doc-lines tr").forEach((tr) => {
+    const cat = tr.querySelector("[name=taxCategory]");
+    if (cat) tr.querySelector("[data-taxable]").textContent = isTaxable(cat.value) ? "Taxable" : "Not taxable";
     const q = Number(tr.querySelector("[name=quantity]").value || 0);
     const p = cents(tr.querySelector("[name=unitPrice]").value.trim());
     if (p === null || !(q > 0)) { bad = true; tr.querySelector("[data-amount]").textContent = ""; return; }
     const amt = BigInt(Math.round(q * Number(p)));
     sub += amt;
-    if (tr.querySelector("[name=taxable]")?.checked) tax += BigInt(Math.round(Number(amt) * bps / 10000));
+    if (cat && isTaxable(cat.value)) tax += BigInt(Math.round(Number(amt) * rate));
     tr.querySelector("[data-amount]").textContent = usd(amt);
   });
   document.getElementById("doc-sub").textContent = usd(sub);
   const t = document.getElementById("doc-tax");
-  if (t) t.textContent = usd(tax);
+  if (t) t.textContent = docTax.rate === null && tax === 0n && form.dataset.kind === "invoice" && !document.getElementById("doc-tax-note").textContent.startsWith("No sales tax") ? "—" : usd(tax);
+  const tl = document.getElementById("doc-tax-label");
+  if (tl) tl.textContent = docTax.rate && Number(docTax.rate) > 0 ? `Sales tax ${pct(docTax.rate)}` : "Sales tax";
   document.getElementById("doc-total").textContent = usd(sub + tax);
   document.getElementById("doc-save").disabled = bad || sub + tax <= 0n;
+}
+
+/** Fills a line from the product or service picked for it. */
+function fillFromItem(tr, itemId) {
+  const item = (state.items ?? []).find((i) => i.id === itemId);
+  if (!item) return;
+  const desc = tr.querySelector("[name=description]");
+  if (!desc.value.trim() || (state.items ?? []).some((i) => i.name === desc.value)) desc.value = item.name;
+  tr.querySelector("[name=taxCategory]").value = item.taxCategory;
+  tr.querySelector("[name=unitPrice]").value = (Number(item.unitPriceMinor) / 100).toFixed(2);
 }
 
 async function docsView(id, kind) {
   await loadEntity(id);
   const d = DOC[kind];
-  const [{ documents }, ag, { contacts }] = await Promise.all([
+  const [{ documents }, ag, { contacts }, { items }] = await Promise.all([
     api(entPath(`/${d.path}`)), api(entPath(`/${d.path}/aging`)), api(entPath("/contacts")),
+    kind === "invoice" ? api(entPath("/items")) : { items: [] },
   ]);
+  state.items = items;
+  Object.assign(docTax, { rate: null, explanation: "", error: "" });
+  const canSetRate = ["owner", "accountant"].includes(state.org.role);
   const who = contacts.filter((c) => d.contactKinds.includes(c.kind));
   const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
   const issue = bookDate();
@@ -621,24 +701,30 @@ async function docsView(id, kind) {
             ${who.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}
             <option value="__new">+ New ${d.who.toLowerCase()}…</option>
           </select></label>
-          <label data-new-contact ${who.length ? "hidden" : ""}>New ${d.who.toLowerCase()} name<input name="newContact" placeholder="${kind === "invoice" ? "Acme Corp" : "Pixel Freelance"}"></label>
+          <div data-new-contact class="row" ${who.length ? "hidden" : ""}>
+            <label>New ${d.who.toLowerCase()} name<input name="newContact" placeholder="${kind === "invoice" ? "Acme Corp" : "Pixel Freelance"}"></label>
+            ${kind === "invoice" ? `<label>Street<input name="newLine1" placeholder="123 Main St"></label><label>City<input name="newCity" style="width:140px"></label>
+              <label>State<input name="newState" value="CA" maxlength="2" style="width:56px"></label><label>ZIP<input name="newZip" inputmode="numeric" style="width:90px"></label>` : ""}
+          </div>
           <label>Date<input type="date" name="issueDate" value="${issue}" min="2026-01-01" max="2026-12-31" required></label>
           <label>Due<input type="date" name="dueDate" value="${plusDays(issue, 30)}" required></label>
-          ${kind === "invoice"
-            ? `<label>Sales tax rate (%)<input name="taxRate" inputmode="decimal" placeholder="7.25" style="width:110px"></label>`
-            : `<label>Vendor's invoice no.<input name="reference" style="width:150px"></label>`}
+          ${kind === "invoice" ? "" : `<label>Vendor's invoice no.<input name="reference" style="width:150px"></label>`}
           <label style="flex:1;min-width:200px">Memo<input name="memo"></label>
         </div>
-        ${kind === "invoice" ? `<p class="hash">You enter the sales tax rate for the customer's location; Alt-QBO does not look it up yet. Tick the lines it applies to.</p>` : ""}
         <div class="table-wrap"><table>
-          <thead><tr><th style="width:28%">Account</th><th>Description</th><th>Qty</th><th class="num" style="width:13%">Price</th>${kind === "invoice" ? "<th>Tax</th>" : ""}<th class="num">Amount</th><th></th></tr></thead>
+          <thead><tr>${kind === "invoice" ? `<th style="width:17%">Product or service</th><th>Description</th><th style="width:25%">Kind of sale</th>` : `<th style="width:28%">Account</th><th>Description</th>`}<th>Qty</th><th class="num" style="width:12%">Price</th><th class="num">Amount</th><th></th></tr></thead>
           <tbody id="doc-lines">${docLineRow(kind)}</tbody>
           <tfoot>
             <tr><td><button type="button" class="link" data-action="add-doc-line" data-kind="${kind}">+ Add line</button></td><td colspan="${kind === "invoice" ? 4 : 3}" class="num muted">Subtotal</td><td class="num" id="doc-sub">$0.00</td><td></td></tr>
-            ${kind === "invoice" ? `<tr><td colspan="5" class="num muted">Sales tax</td><td class="num" id="doc-tax">$0.00</td><td></td></tr>` : ""}
+            ${kind === "invoice" ? `<tr><td colspan="5" class="num muted" id="doc-tax-label">Sales tax</td><td class="num" id="doc-tax">$0.00</td><td></td></tr>` : ""}
             <tr><td colspan="${kind === "invoice" ? 5 : 4}" class="num">Total</td><td class="num" id="doc-total">$0.00</td><td></td></tr>
           </tfoot>
         </table></div>
+        ${kind === "invoice" ? `<p id="doc-tax-note" class="hash" style="margin-top:8px"></p>
+          ${canSetRate ? `<div data-manual class="row" hidden>
+            <label>Set the rate by hand (%)<input name="manualRate" inputmode="decimal" placeholder="9.5" style="width:90px"></label>
+            <label style="flex:1">Why<input name="manualReason" placeholder="e.g. CDTFA lookup down; rate from the CDTFA website"></label>
+          </div>` : ""}` : ""}
         <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button></div>
       </form>
     </div>` : ""}
@@ -674,6 +760,7 @@ async function docsView(id, kind) {
       </table></div>
     </div>`);
   updateDocTotals();
+  if (kind === "invoice" && canWrite) runTaxPreview();
 }
 
 /** One invoice or bill as a document: what the customer sees, plus its payments. Prints cleanly. */
@@ -684,6 +771,7 @@ async function docPageView(id, kind, docId) {
   const e = state.entity.entity;
   const who = contacts.find((c) => c.id === x.contactId);
   const invoice = kind === "invoice";
+  const addr = (a) => (a ? `<div>${esc(a.line1)}</div><div>${esc(a.city)}, ${esc(a.state)} ${esc(a.zip)}</div>` : "");
   const status = x.status === "void" ? "void" : BigInt(x.totalMinor) - BigInt(x.paidMinor) <= 0n ? "paid" : x.dueDate < today() ? "overdue" : BigInt(x.paidMinor) > 0n ? "partial" : "open";
   const due = status === "void" ? 0n : BigInt(x.totalMinor) - BigInt(x.paidMinor);
   app.innerHTML = shell(d.path, `
@@ -698,10 +786,10 @@ async function docPageView(id, kind, docId) {
           ${x.reference ? `<div class="muted">Vendor's invoice no. ${esc(x.reference)}</div>` : ""}
           <span class="${STATUS_PILL[status]}">${STATUS_LABEL[status]}</span>
         </div>
-        <div style="text-align:right"><strong>${esc(e.legalName)}</strong></div>
+        <div style="text-align:right"><strong>${esc(e.legalName)}</strong>${addr(e.address)}</div>
       </div>
       <div class="row" style="gap:40px;margin:20px 0">
-        <div><div class="muted">${invoice ? "Bill to" : "From"}</div><strong>${esc(x.contactName)}</strong>${who?.email ? `<div>${esc(who.email)}</div>` : ""}</div>
+        <div><div class="muted">${invoice ? "Bill to" : "From"}</div><strong>${esc(x.contactName)}</strong>${addr(who?.address)}${who?.email ? `<div>${esc(who.email)}</div>` : ""}</div>
         <div><div class="muted">${invoice ? "Invoice date" : "Bill date"}</div>${longDate(x.issueDate)}</div>
         <div><div class="muted">Due</div>${longDate(x.dueDate)}</div>
         <div><div class="muted">Balance due</div><strong class="mono">${usd(due)}</strong></div>
@@ -712,7 +800,7 @@ async function docPageView(id, kind, docId) {
           <td class="num">${esc(l.quantity)}</td><td class="num">${usd(l.unitPriceMinor)}</td><td class="num">${usd(l.amountMinor)}</td></tr>`).join("")}</tbody>
         <tfoot>
           <tr><td colspan="3" class="num muted">Subtotal</td><td class="num">${usd(x.subtotalMinor)}</td></tr>
-          ${invoice && BigInt(x.taxMinor) ? `<tr><td colspan="3" class="num muted">Sales tax ${(x.taxRateBps / 100).toFixed(2)}%</td><td class="num">${usd(x.taxMinor)}</td></tr>` : ""}
+          ${invoice && BigInt(x.taxMinor) ? `<tr><td colspan="3" class="num muted">Sales tax ${pct(x.taxRate)}</td><td class="num">${usd(x.taxMinor)}</td></tr>` : ""}
           <tr><td colspan="3" class="num">Total</td><td class="num">${usd(x.totalMinor)}</td></tr>
           ${BigInt(x.paidMinor) ? `<tr><td colspan="3" class="num muted">Paid</td><td class="num">${usd(-BigInt(x.paidMinor))}</td></tr><tr><td colspan="3" class="num">Balance due</td><td class="num">${usd(due)}</td></tr>` : ""}
         </tfoot>
@@ -726,28 +814,102 @@ async function docPageView(id, kind, docId) {
         <thead><tr><th>Account</th><th>Line</th><th class="num">Amount</th><th class="num">Tax</th></tr></thead>
         <tbody>${x.lines.map((l) => `<tr><td>${l.accountCode} · ${esc(l.accountName)}</td><td>${esc(l.description)}</td><td class="num">${usd(l.amountMinor)}</td><td class="num">${usd(l.taxMinor, { blankZero: true })}</td></tr>`).join("")}</tbody>
       </table></div>
-      <p class="hash" style="margin-top:8px">${x.taxRateBps ? `Sales tax rate ${(x.taxRateBps / 100).toFixed(2)}% (entered by user) · ` : ""}Created by ${esc(x.createdBy.replace("user:", ""))}</p>
+      ${invoice ? `<p style="margin-top:8px">${esc(taxExplanation(x))}</p>` : ""}
+      <p class="hash" style="margin-top:8px">Created by ${esc(x.createdBy.replace("user:", ""))}</p>
       ${x.payments.length ? `<h3>Payments</h3>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}` : ""}
     </div>`);
+}
+
+/** Why an issued invoice has the tax it has, from what was frozen on it. Mirrors explainTax on the server. */
+function taxExplanation(x) {
+  const at = x.taxAddress ? ` (${x.taxAddress})` : "";
+  return {
+    not_taxable: "No sales tax: nothing on this invoice is taxable in California.",
+    resale: `No sales tax: ${x.taxNote ?? "sale for resale"}.`,
+    out_of_state: `No sales tax: delivered outside California${at}.`,
+    lookup: `Sales tax ${pct(x.taxRate)} on taxable lines, the rate for ${x.taxJurisdiction}${at}.`,
+    manual: `Sales tax ${pct(x.taxRate)}, set by hand: ${x.taxNote}.`,
+    user_entered: `Sales tax ${pct(x.taxRate)}, entered by hand before the rate was worked out automatically.`,
+  }[x.taxSource] ?? "No sales tax.";
 }
 
 async function contactsView(id) {
   await loadEntity(id);
   const { contacts } = await api(entPath("/contacts"));
   const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  const oneLine = (a) => (a ? `${a.line1}, ${a.city}, ${a.state} ${a.zip}` : "");
+  const addressFields = (a = {}) => `
+    <label>Street<input name="line1" value="${esc(a?.line1 ?? "")}" placeholder="123 Main St"></label>
+    <label>City<input name="city" value="${esc(a?.city ?? "")}" style="width:140px"></label>
+    <label>State<input name="state" value="${esc(a?.state ?? "CA")}" maxlength="2" style="width:56px"></label>
+    <label>ZIP<input name="zip" value="${esc(a?.zip ?? "")}" inputmode="numeric" style="width:90px"></label>`;
   app.innerHTML = shell("contacts", `
-    <div class="head"><div><h1>Customers and vendors</h1><p class="muted">The people and businesses you invoice and pay.</p></div></div>
+    <div class="head"><div><h1>Customers and vendors</h1><p class="muted">The people and businesses you invoice and pay. A customer's address decides the sales tax rate on what you sell them.</p></div></div>
     <div class="panel table-wrap"><table>
-      <thead><tr><th>Name</th><th>Type</th><th>Email</th></tr></thead>
-      <tbody>${contacts.map((c) => `<tr><td>${esc(c.name)}</td><td>${CONTACT_LABEL[c.kind]}</td><td>${esc(c.email ?? "")}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">No customers or vendors yet.</td></tr>`}</tbody>
+      <thead><tr><th>Name</th><th>Type</th><th>Email</th><th>Address</th><th></th></tr></thead>
+      <tbody>${contacts.map((c) => `<tr><td>${esc(c.name)}${c.resalePermit ? `<div class="hash">Resale certificate · permit ${esc(c.resalePermit)}</div>` : ""}</td><td>${CONTACT_LABEL[c.kind]}</td>
+          <td>${esc(c.email ?? "")}</td><td>${esc(oneLine(c.address)) || (c.kind === "vendor" ? "" : `<span class="muted">No address</span>`)}</td>
+          <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="contact-edit" data-id="${c.id}">Edit</button>` : ""}</td></tr>
+        <tr hidden data-contact-edit="${c.id}"><td colspan="5">
+          <form data-form="contact-edit" data-id="${c.id}" class="row">
+            <label>Email<input name="email" type="email" value="${esc(c.email ?? "")}"></label>
+            ${addressFields(c.address)}
+            ${c.kind !== "vendor" ? `<label>Seller's permit<input name="resalePermit" value="${esc(c.resalePermit ?? "")}" placeholder="Only with a resale certificate" style="width:190px"></label>` : ""}
+            <button type="submit">Save</button>
+          </form></td></tr>`).join("") || `<tr><td colspan="5" class="muted">No customers or vendors yet.</td></tr>`}</tbody>
     </table></div>
     ${canWrite ? `<div class="panel"><h2>Add a customer or vendor</h2>
       <form data-form="contact" class="row">
         <label style="flex:1">Name<input name="name" required></label>
         <label>Type<select name="kind"><option value="customer">Customer</option><option value="vendor">Vendor</option><option value="both">Both</option></select></label>
         <label>Email (optional)<input name="email" type="email"></label>
+        ${addressFields()}
         <button type="submit">Add</button>
-      </form></div>` : ""}`);
+      </form>
+      <p class="hash">A customer who buys to resell can give you a resale certificate (CDTFA-230). Add their seller's permit number with Edit, and Alt-QBO won't charge them sales tax.</p></div>` : ""}`);
+}
+
+/** The four address fields of a form, as the API takes them; null when left blank. */
+function addressOf(d, prefix = "") {
+  const a = { line1: d[`${prefix}line1`] ?? d[`${prefix}Line1`], city: d[`${prefix}city`] ?? d[`${prefix}City`], state: d[`${prefix}state`] ?? d[`${prefix}State`], zip: d[`${prefix}zip`] ?? d[`${prefix}Zip`] };
+  return [a.line1, a.city, a.zip].some((v) => v?.trim()) ? a : null;
+}
+
+// ---------------------------------------------------------- products and services
+
+async function itemsView(id) {
+  await loadEntity(id);
+  const { items } = await api(entPath("/items"));
+  const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  const label = (cat) => taxCategories().find((c) => c.id === cat)?.label ?? cat;
+  const income = (selected) => docAccountOptions("invoice", selected);
+  app.innerHTML = shell("items", `
+    <div class="head"><div><h1>Products and services</h1><p class="muted">What you sell. Picking one on an invoice fills in the description and price, and its kind of sale tells Alt-QBO whether California taxes it.</p></div></div>
+    <div class="panel table-wrap"><table>
+      <thead><tr><th>Name</th><th>Kind of sale</th><th>Sales tax</th><th class="num">Price</th><th></th></tr></thead>
+      <tbody>${items.map((i) => `<tr class="${i.isActive ? "" : "muted"}"><td>${esc(i.name)}${i.isActive ? "" : " <span class=\"pill grey\">Retired</span>"}</td><td>${esc(label(i.taxCategory))}</td>
+          <td>${isTaxable(i.taxCategory) ? "Taxable" : "Not taxable"}</td><td class="num">${usd(i.unitPriceMinor)}</td>
+          <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="item-edit" data-id="${i.id}">Edit</button>` : ""}</td></tr>
+        <tr hidden data-item-edit="${i.id}"><td colspan="5">
+          <form data-form="item-edit" data-id="${i.id}" class="row">
+            <label>Name<input name="name" value="${esc(i.name)}" required></label>
+            <label>Kind of sale<select name="taxCategory">${kindOptions(i.taxCategory)}</select></label>
+            <label>Price<input name="unitPrice" class="mono" inputmode="decimal" value="${(Number(i.unitPriceMinor) / 100).toFixed(2)}" style="width:110px"></label>
+            <label>Income account<select name="account">${income(i.accountCode)}</select></label>
+            <label class="row"><input type="checkbox" name="active" ${i.isActive ? "checked" : ""}> Still sold</label>
+            <button type="submit">Save</button>
+          </form></td></tr>`).join("") || `<tr><td colspan="5" class="muted">Nothing yet. Add what you sell most often.</td></tr>`}</tbody>
+    </table></div>
+    ${canWrite ? `<div class="panel"><h2>Add a product or service</h2>
+      <form data-form="item" class="row">
+        <label style="flex:1">Name<input name="name" required placeholder="Logo design"></label>
+        <label>Kind of sale<select name="taxCategory">${kindOptions(DEFAULT_KIND)}</select></label>
+        <label>Price<input name="unitPrice" class="mono" inputmode="decimal" placeholder="0.00" style="width:110px"></label>
+        <label>Income account<select name="account">${income("4000")}</select></label>
+        <button type="submit">Add</button>
+      </form>
+      <ul class="hash">${taxCategories().map((c) => `<li><strong>${esc(c.label)}</strong> (${c.taxable ? "taxable" : "not taxable"}): ${esc(c.help)}</li>`).join("")}</ul>
+    </div>` : ""}`);
 }
 
 // -------------------------------------------------------------------- bank
@@ -855,12 +1017,19 @@ async function overviewView(id) {
       ${kpi("Customers owe you", g.owedToYouMinor, go("invoices"))}
       ${kpi("You owe vendors", g.youOweMinor, go("bills"))}
       ${kpi("Profit this year", g.profitThisYearMinor, go("reports"), `since ${longDate(g.fiscalYearFrom)}`)}
-      ${BigInt(g.salesTaxHeldMinor) ? kpi("Sales tax to set aside", g.salesTaxHeldMinor, go("reports"), "collected, not yet paid to the CDTFA") : ""}
+      ${BigInt(g.salesTaxHeldMinor) ? kpi("Sales tax to set aside", g.salesTaxHeldMinor, go("reports/st"), "collected, not yet paid to the CDTFA") : ""}
     </div>
     <div class="split">
       <div class="panel">
         <h2>To do</h2>
         ${todo.length ? `<ul class="todo">${todo.map(([n, what, k]) => `<li><a href="${go(k)}"><span class="badge">${n}</span> ${what}</a></li>`).join("")}</ul>` : `<p class="muted">Nothing waiting on you.</p>`}
+        ${!e.address && canSettings ? `<form data-form="business-address" style="margin-top:12px">
+          <p><strong>Add your business address.</strong> <span class="muted">Alt-QBO uses it for the sales tax rate when a customer has no address of their own.</span></p>
+          <div class="row">
+            <label>Street<input name="line1" required placeholder="123 Main St"></label><label>City<input name="city" required style="width:140px"></label>
+            <label>State<input name="state" value="CA" maxlength="2" style="width:56px"></label><label>ZIP<input name="zip" required inputmode="numeric" style="width:90px"></label>
+            <button type="submit">Save</button>
+          </div></form>` : ""}
       </div>
       <div class="panel">
         <h2>Recent activity</h2>
@@ -886,7 +1055,7 @@ async function overviewView(id) {
 
 // ------------------------------------------------------------- reports
 
-const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"]];
+const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"]];
 const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all" };
 
 const RANGE_PRESETS = [["this-month", "This month"], ["last-month", "Last month"], ["this-quarter", "This quarter"], ["last-quarter", "Last quarter"], ["this-year", "This year to date"], ["last-year", "Last year"], ["custom", "Custom dates"]];
@@ -931,6 +1100,7 @@ function reportDefaults() {
 function reportQuery() {
   if (rep.tab === "pl") return ["/reports/profit-and-loss", `from=${rep.from}&to=${rep.to}`, `profit-and-loss-${rep.from}-to-${rep.to}`];
   if (rep.tab === "bs") return ["/reports/balance-sheet", `asOf=${rep.asOf}`, `balance-sheet-${rep.asOf}`];
+  if (rep.tab === "st") return ["/reports/sales-tax", `from=${rep.from}&to=${rep.to}`, `sales-tax-${rep.from}-to-${rep.to}`];
   if (rep.tab === "gl") return ["/reports/general-ledger", `account=${encodeURIComponent(rep.account)}&from=${rep.from}&to=${rep.to}`, `general-ledger-${rep.account}-${rep.from}-to-${rep.to}`];
   const kind = rep.tab === "ar" ? "receivables" : "payables";
   return [`/reports/${kind}-aging`, `asOf=${rep.asOf}`, `${kind}-aging-${rep.asOf}`];
@@ -953,7 +1123,7 @@ async function reportsView(id) {
   await loadEntity(id);
   reportDefaults();
   const [path, q] = reportQuery();
-  const range = ["pl", "gl"].includes(rep.tab);
+  const range = ["pl", "gl", "st"].includes(rep.tab);
   let body;
   if (rep.tab === "pl") {
     const pl = await api(entPath(`${path}?${q}`));
@@ -973,6 +1143,24 @@ async function reportsView(id) {
       <tr><td></td><td>Current year earnings</td><td class="num">${usd(bs.currentYearEarningsMinor)}</td></tr>
       ${totalRow("Total equity", bs.totalEquityMinor)}</tbody>
       <tfoot><tr><td></td><td>Liabilities and equity</td><td class="num">${usd(BigInt(bs.totalLiabilitiesMinor) + BigInt(bs.totalEquityMinor))}</td></tr></tfoot></table>`;
+  } else if (rep.tab === "st") {
+    const r = await api(entPath(`${path}?${q}`));
+    const line = (label, minor, note = "") => `<tr><td>${label}${note ? `<div class="hash">${note}</div>` : ""}</td><td class="num">${usd(minor)}</td></tr>`;
+    body = `<p class="muted">The figures for your CDTFA sales and use tax return, from invoices dated in this period. Alt-QBO prepares them; you or your accountant file and pay on the CDTFA's site.</p>
+      <table><tbody>
+        ${line("Total sales", r.totalSalesMinor, "All invoiced sales before tax")}
+        ${r.nontaxable.map((n) => line(`Less nontaxable: ${esc(n.label)}`, n.amountMinor)).join("")}
+        ${line("Less sales for resale", r.resaleMinor, "To customers with a resale certificate on file")}
+        ${line("Less sales delivered outside California", r.interstateMinor)}
+      </tbody><tfoot>
+        <tr><td>Taxable sales</td><td class="num">${usd(r.taxableMinor)}</td></tr>
+        <tr><td>Sales tax charged on invoices</td><td class="num">${usd(r.taxMinor)}</td></tr>
+      </tfoot></table>
+      <h3>By tax area</h3>
+      <table><thead><tr><th>Where</th><th class="num">Rate</th><th class="num">Invoices</th><th class="num">Taxable sales</th><th class="num">Tax</th></tr></thead>
+      <tbody>${r.byJurisdiction.map((j) => `<tr><td>${esc(j.jurisdiction)}</td><td class="num">${j.ratePercent}%</td><td class="num">${j.invoices}</td><td class="num">${usd(j.taxableMinor)}</td><td class="num">${usd(j.taxMinor)}</td></tr>`).join("")
+        || `<tr><td colspan="5" class="muted">No taxable sales in these dates.</td></tr>`}</tbody></table>
+      <p style="margin-top:12px">Sales tax owed per the books on ${longDate(r.to)}: <strong class="mono">${usd(r.payableMinor)}</strong></p>`;
   } else if (rep.tab === "gl") {
     const gl = await api(entPath(`${path}?${q}`));
     body = rep.account === "all"
@@ -1340,8 +1528,9 @@ async function route() {
     }
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
+      if (parts[2] === "reports" && REPORTS.some(([k]) => k === parts[3])) rep.tab = parts[3];
       if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
-      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "overview"] ?? overviewView;
+      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
@@ -1379,6 +1568,11 @@ document.addEventListener("change", (ev) => {
     const box = t.form.querySelector("[data-new-contact]");
     box.hidden = t.value !== "__new";
     if (!box.hidden) box.querySelector("input").focus();
+  }
+  if (t.name === "itemId" && t.closest("#doc-lines")) fillFromItem(t.closest("tr"), t.value);
+  if (t.closest("form[data-form=document][data-kind=invoice]") && ["contactId", "issueDate", "itemId", "taxCategory", "manualRate", "manualReason"].includes(t.name)) {
+    updateDocTotals();
+    scheduleTaxPreview();
   }
   if (t.dataset.action === "bank-account") {
     bankUi.account = t.value;
@@ -1450,9 +1644,11 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "add-doc-line") {
       document.getElementById("doc-lines").insertAdjacentHTML("beforeend", docLineRow(b.dataset.kind));
       updateDocTotals();
+      if (b.dataset.kind === "invoice") scheduleTaxPreview();
     } else if (a === "remove-doc-line") {
       if (document.querySelectorAll("#doc-lines tr").length > 1) b.closest("tr").remove();
       updateDocTotals();
+      if (document.getElementById("doc-tax-note")) scheduleTaxPreview();
     } else if (a === "doc-toggle") {
       const row = document.querySelector(`tr[data-${b.dataset.form}="${b.dataset.id}"]`);
       row.hidden = !row.hidden;
@@ -1661,10 +1857,13 @@ document.addEventListener("submit", async (ev) => {
       let contactId = d.contactId;
       if (contactId === "__new" || !contactId) {
         if (!d.newContact?.trim()) throw new Error(`Enter the new ${DOC[k].who.toLowerCase()}'s name`);
-        contactId = (await api(entPath("/contacts"), { body: { kind: k === "invoice" ? "customer" : "vendor", name: d.newContact } })).id;
+        contactId = (await api(entPath("/contacts"), { body: {
+          kind: k === "invoice" ? "customer" : "vendor", name: d.newContact, ...(k === "invoice" ? { address: addressOf(d, "new") } : {}),
+        } })).id;
       }
-      const lines = readDocLines().filter((l) => l.unitPrice);
-      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, idempotencyKey: crypto.randomUUID() } });
+      const lines = readDocLines().filter((l) => l.unitPrice || l.itemId);
+      const manualTax = d.manualRate?.trim() ? { ratePercent: d.manualRate.trim(), reason: d.manualReason ?? "" } : undefined;
+      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, idempotencyKey: crypto.randomUUID() } });
       toast(`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`);
       await docsView(state.entity.entity.id, k);
     } else if (kind === "pay") {
@@ -1694,9 +1893,24 @@ document.addEventListener("submit", async (ev) => {
       toast("Undone; the reversal is in the journal");
       await bankView(state.entity.entity.id);
     } else if (kind === "contact") {
-      await api(entPath("/contacts"), { body: d });
+      await api(entPath("/contacts"), { body: { name: d.name, kind: d.kind, email: d.email, address: addressOf(d) } });
       toast(`${d.name} added`);
       await contactsView(state.entity.entity.id);
+    } else if (kind === "contact-edit") {
+      await api(entPath(`/contacts/${f.dataset.id}`), { body: { email: d.email, address: addressOf(d), ...(d.resalePermit !== undefined ? { resalePermit: d.resalePermit } : {}) } });
+      toast("Saved");
+      await contactsView(state.entity.entity.id);
+    } else if (kind === "item" || kind === "item-edit") {
+      const body = { name: d.name, taxCategory: d.taxCategory, unitPrice: d.unitPrice || "0", account: d.account };
+      if (kind === "item") await api(entPath("/items"), { body });
+      else await api(entPath(`/items/${f.dataset.id}`), { body: { ...body, active: f.querySelector("[name=active]").checked } });
+      toast(kind === "item" ? `${d.name} added` : "Saved");
+      await itemsView(state.entity.entity.id);
+    } else if (kind === "business-address") {
+      await api(entPath("/address"), { body: { address: addressOf(d) } });
+      state.entity.fresh = false;
+      toast("Business address saved");
+      await overviewView(state.entity.entity.id);
     } else if (kind === "account") {
       const r = await api(entPath("/accounts"), { body: { ...d, taxLine: d.taxLine || null } });
       state.entity.fresh = false;
