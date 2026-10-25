@@ -322,15 +322,51 @@ async function periodsView(id) {
     </table></div>`);
 }
 
+const TYPE_LABEL = { asset: "Asset", liability: "Liability", equity: "Equity", revenue: "Income", expense: "Expense" };
+const coa = { options: null, kind: "operating_expense", showInactive: false };
+
+const taxLineChoices = (type, selected) => `<option value="">Not mapped (blocks the tax export)</option>${(coa.options.taxLines[type] ?? [])
+  .map((o) => `<option value="${o.code}" ${o.code === selected ? "selected" : ""}>${o.code} · like ${esc(o.usedBy.slice(0, 2).join(", "))}${o.usedBy.length > 2 ? "…" : ""}</option>`).join("")}`;
+
 async function accountsView(id) {
   await loadEntity(id);
+  coa.options ??= {};
+  if (coa.options.entityId !== id) coa.options = { entityId: id, ...(await api(entPath("/accounts/options"))) };
+  const e = state.entity.entity;
+  const canEdit = ["owner", "admin", "accountant"].includes(state.org.role);
+  const kind = coa.options.kinds.find((k) => k.key === coa.kind) ?? coa.options.kinds[0];
+  const rows = state.entity.accounts.filter((a) => coa.showInactive || a.is_active);
+  const hidden = state.entity.accounts.length - rows.length;
   app.innerHTML = shell("accounts", `
-    <div class="head"><div><h1>Chart of accounts</h1><p class="muted">Every account maps to a financial-statement line, a cash-flow class and a tax line.</p></div></div>
+    <div class="head"><div><h1>Chart of accounts</h1><p class="muted">Every account maps to a financial-statement line, a cash-flow class and a ${esc(RETURN_LABEL[e.taxReturnType])} tax line. Codes and kinds never change once created; an account can be switched off only at a zero balance.</p></div></div>
     <div class="panel table-wrap"><table>
-      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Statement line</th><th>Cash flow</th><th>Tax line</th></tr></thead>
-      <tbody>${state.entity.accounts.map((a) => `<tr><td class="mono">${a.code}</td><td>${esc(a.name)}</td><td>${a.type}</td>
-        <td class="mono muted">${esc(a.statement_line)}</td><td>${a.cash_flow_class}</td><td class="mono">${esc(a.tax_line ?? "—")}</td></tr>`).join("")}</tbody>
-    </table></div>`);
+      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Statement line</th><th>Tax line</th><th></th></tr></thead>
+      <tbody>${rows.map((a) => `<tr class="${a.is_active ? "" : "muted"}">
+        <td class="mono">${a.code}</td><td>${esc(a.name)}${a.is_active ? "" : ` <span class="pill grey">Inactive</span>`}${a.system_key ? ` <span class="pill grey" title="Used by invoices, bills, payroll or the bank feed">System</span>` : ""}</td>
+        <td>${TYPE_LABEL[a.type]}</td><td class="mono muted">${esc(a.statement_line)}</td><td class="mono">${esc(a.tax_line ?? "—")}</td>
+        <td>${canEdit ? `<button class="link" data-action="acct-edit" data-id="${a.id}">Edit</button>` : ""}</td></tr>
+        <tr data-acct-edit="${a.id}" hidden><td></td><td colspan="5">
+          <form data-form="account-edit" data-id="${a.id}" class="row">
+            <label>Name<input name="name" value="${esc(a.name)}" required maxlength="120"></label>
+            <label>Tax line<select name="taxLine">${taxLineChoices(a.type, a.tax_line)}</select></label>
+            <button type="submit">Save</button>
+            ${a.system_key ? "" : `<button type="button" class="secondary" data-action="acct-active" data-id="${a.id}" data-active="${a.is_active ? "false" : "true"}">${a.is_active ? "Deactivate" : "Reactivate"}</button>`}
+          </form></td></tr>`).join("")}</tbody>
+    </table>
+    ${hidden || coa.showInactive ? `<p style="margin-top:8px"><button class="link" data-action="acct-inactive">${coa.showInactive ? "Hide inactive accounts" : `Show ${hidden} inactive account${hidden === 1 ? "" : "s"}`}</button></p>` : ""}
+    </div>
+    ${canEdit ? `<div class="panel">
+      <h2>Add an account</h2>
+      <form data-form="account" class="row">
+        <label>Kind<select name="kind" data-action="acct-kind">${["asset", "liability", "equity", "revenue", "expense"].map((t) => `<optgroup label="${TYPE_LABEL[t]}">${coa.options.kinds.filter((k) => k.type === t)
+          .map((k) => `<option value="${k.key}" ${k.key === kind.key ? "selected" : ""}>${esc(k.label)}</option>`).join("")}</optgroup>`).join("")}</select></label>
+        <label>Code<input name="code" class="mono" required pattern="\\d{3,6}" style="width:100px" placeholder="6550"></label>
+        <label style="flex:1">Name<input name="name" required maxlength="120"></label>
+        <label>Tax line<select name="taxLine">${taxLineChoices(kind.type, kind.suggestedTaxLine)}</select></label>
+        <button type="submit">Add account</button>
+      </form>
+      <p class="hash" style="margin-top:8px">Reports it on ${esc(kind.statementLine)}. The tax line is a suggestion from the template; check it with whoever prepares the return.</p>
+    </div>` : ""}`);
 }
 
 async function connectionsView(id) {
@@ -1100,6 +1136,15 @@ document.addEventListener("change", (ev) => {
     bankUi.account = t.value;
     bankView(state.entity.entity.id).catch((err) => toast(err.message));
   }
+  if (t.dataset.action === "acct-kind") {
+    coa.kind = t.value;
+    const field = (form, n) => form.elements.namedItem(n);
+    const keep = { code: field(t.form, "code").value, name: field(t.form, "name").value };
+    accountsView(state.entity.entity.id).then(() => {
+      const nf = document.querySelector("form[data-form=account]");
+      field(nf, "code").value = keep.code; field(nf, "name").value = keep.name;
+    }).catch((err) => toast(err.message));
+  }
   if (t.dataset.action === "member-role") {
     api(orgPath(`/members/${t.dataset.id}/role`), { body: { role: t.value } })
       .then(() => toast(`Role changed to ${ROLE_LABEL[t.value]}`))
@@ -1147,6 +1192,18 @@ document.addEventListener("click", async (ev) => {
         const kind = location.hash.includes("/bills") ? "bills" : "invoices";
         document.getElementById(`detail-${b.dataset.id}`).innerHTML = docDetail(await api(entPath(`/${kind}/${b.dataset.id}`)));
       }
+    } else if (a === "acct-edit") {
+      const row = document.querySelector(`tr[data-acct-edit="${b.dataset.id}"]`);
+      row.hidden = !row.hidden;
+    } else if (a === "acct-inactive") {
+      coa.showInactive = !coa.showInactive;
+      await accountsView(state.entity.entity.id);
+    } else if (a === "acct-active") {
+      b.disabled = true;
+      await api(entPath(`/accounts/${b.dataset.id}`), { body: { active: b.dataset.active === "true" } });
+      state.entity.fresh = false;
+      toast(b.dataset.active === "true" ? "Account reactivated" : "Account deactivated");
+      await accountsView(state.entity.entity.id);
     } else if (a === "copy-invite") {
       const input = document.getElementById("invite-link");
       await navigator.clipboard.writeText(input.value).catch(() => { input.select(); document.execCommand("copy"); });
@@ -1350,6 +1407,16 @@ document.addEventListener("submit", async (ev) => {
       await api(entPath("/contacts"), { body: d });
       toast(`${d.name} added`);
       await contactsView(state.entity.entity.id);
+    } else if (kind === "account") {
+      const r = await api(entPath("/accounts"), { body: { ...d, taxLine: d.taxLine || null } });
+      state.entity.fresh = false;
+      toast(`Account ${r.code} added`);
+      await accountsView(state.entity.entity.id);
+    } else if (kind === "account-edit") {
+      await api(entPath(`/accounts/${f.dataset.id}`), { body: { name: d.name, taxLine: d.taxLine || null } });
+      state.entity.fresh = false;
+      toast("Account saved");
+      await accountsView(state.entity.entity.id);
     } else if (kind === "invite") {
       team.link = await api(orgPath("/invitations"), { body: d });
       await teamView();
