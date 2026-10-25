@@ -43,6 +43,8 @@ Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields
 
 13. **Sales tax (`src/core/sales-tax.ts`).** Taxability is data: the state's sales-tax rule pack maps each kind of sale to taxable or not, with the regulation it rests on. `issueInvoice` decides the tax before the invoice exists, in a fixed order (an owner's or accountant's rate set by hand with a reason; nothing taxable; a resale certificate; delivery outside the state; otherwise the CDTFA rate for the customer's address, or the business's), refuses a looked-up rate outside the state's possible range rather than use it, and passes the decision to `issueDocument`, which stores the rate (five decimals, so 8.625% is exact), its source, the address and the jurisdiction on the invoice. The database keeps every line's rate equal to the invoice's, requires a note for a rate set by hand and an address for a looked-up one, and allows tax only on invoices. A retried invoice replays the stored decision instead of looking the rate up again. Rate lookups are cached for a few hours for the live preview on the invoice screen.
 
+14. **Backup (`src/core/backup.ts`).** A backup is the entity's rows from every bookkeeping table, read in one transaction so they are consistent, plus the whole organisation's audit events and their verification. The download is appended to the audit chain first, so the file contains its own record. A SHA-256 over the canonical JSON of the entity, tables and events lets `verifyBackup` spot a changed or damaged file. Restoring from a backup is not built yet.
+
 ## Not in Phase 0 yet
 
 - Multi-currency functional amounts and revaluation (lines carry a currency and balance per currency today).
@@ -50,3 +52,4 @@ Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields
 - HTTP API, authentication, MFA; roles are passed in by the caller.
 - City minimum wages, regular-rate overtime for bonuses, supplemental-rate withholding.
 - Sales tax outside California, use tax on purchases, prepayments.
+- Restoring a business from a backup file.

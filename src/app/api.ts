@@ -12,6 +12,7 @@ import {
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
 import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
+import { backupEntity } from "../core/backup.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { toMajor } from "../core/money.js";
@@ -831,6 +832,17 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/sales-tax", async (req, p,
     "", `Sales tax payable on ${to},${m(r.payableMinor)}`,
   ];
   return csvResponse(lines.join("\n") + "\n", `sales-tax-${from}-to-${to}.csv`);
+});
+
+// A POST, not a GET, because taking a backup is recorded in the audit log.
+route("POST", "/api/orgs/:org/entities/:entity/backup", async (_req, p, ctx) => {
+  requireRole(ctx, ["owner", "admin", "accountant"]);
+  const backup = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return backupEntity(tx, { orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor });
+  });
+  const name = `alt-qbo-backup-${String(backup.entity.legal_name).toLowerCase()}-${backup.createdAt.slice(0, 10)}.json`.replace(/[^\w.-]+/g, "-");
+  return json(backup, 200, { "content-disposition": `attachment; filename="${name}"` });
 });
 
 route("GET", "/api/orgs/:org/entities/:entity/health", async (_req, p, ctx) =>
