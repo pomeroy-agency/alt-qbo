@@ -155,3 +155,31 @@ describe("invoices and bills API", () => {
     expect(audit.data.events.map((e: any) => e.action)).toEqual(expect.arrayContaining(["contact.created", "invoice.issued", "payment.recorded"]));
   });
 });
+
+describe("bank API", () => {
+  it("imports a statement, records and undoes lines, and guards entries owned by documents", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    const csv = "Date,Description,Amount\n2026-05-02,Client deposit,250.00\n2026-05-03,Office supplies,-40.00\n";
+    const imp = await call(`${base}/bank-imports`, { cookie: s.cookie, body: { bankAccount: "1000", csv, fileName: "may.csv" } });
+    expect(imp.status).toBe(201);
+    expect(imp.data).toMatchObject({ added: 2, duplicates: 0 });
+    expect((await call(`${base}/bank-imports`, { cookie: s.cookie, body: { bankAccount: "1000", csv } })).data).toMatchObject({ added: 0, duplicates: 2 });
+
+    const { data } = await call(`${base}/bank-lines?account=1000&status=new`, { cookie: s.cookie });
+    const supplies = data.lines.find((l: any) => l.amountMinor === "-4000");
+    const cat = await call(`${base}/bank-lines/${supplies.id}/categorize`, { cookie: s.cookie, body: { account: "6000" } });
+    expect(cat.status).toBe(200);
+    expect(cat.data.status).toBe("posted");
+
+    // The journal refuses to reverse an entry that belongs to a bank line.
+    const rev = await call(`${base}/journal/${cat.data.entryId}/reverse`, { cookie: s.cookie, body: { date: "2026-05-04", reason: "x" } });
+    expect(rev.status).toBe(409);
+    const undo = await call(`${base}/bank-lines/${supplies.id}/undo`, { cookie: s.cookie, body: { date: "2026-05-04", reason: "wrong account" } });
+    expect(undo.data.status).toBe("new");
+    const ex = await call(`${base}/bank-lines/${supplies.id}/exclude`, { cookie: s.cookie, method: "POST" });
+    expect(ex.data.status).toBe("excluded");
+    expect((await call(`${base}/bank-lines/${crypto.randomUUID()}/exclude`, { cookie: s.cookie, method: "POST" })).status).toBe(404);
+  });
+});
