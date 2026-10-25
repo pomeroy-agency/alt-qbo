@@ -325,3 +325,58 @@ describe("team API", () => {
     await expect(pool.query("DELETE FROM memberships WHERE org_id = $1", [owner.orgId])).rejects.toThrow(/at least one owner/);
   });
 });
+
+describe("simplicity API", () => {
+  it("opens one example business per person, in its own organisation, with figures to look at", async () => {
+    const s = await signup("Real Books Co");
+    const ex = await call("/api/example", { cookie: s.cookie, body: {} });
+    expect(ex.status).toBe(201);
+    expect(ex.data.orgId).not.toBe(s.orgId);
+    expect((await call("/api/example", { cookie: s.cookie, body: {} })).data).toEqual(ex.data);
+    expect((await call("/api/me", { cookie: s.cookie })).data.orgs.map((o: any) => o.name)).toEqual(["Real Books Co", "Example: Sunset Design Studio"]);
+    expect((await call(`/api/orgs/${s.orgId}`, { cookie: s.cookie })).data.entities).toEqual([]);
+    expect((await call("/api/example", { body: {} })).status).toBe(401);
+
+    const base = `/api/orgs/${ex.data.orgId}/entities/${ex.data.entityId}`;
+    const g = (await call(`${base}/glance`, { cookie: s.cookie })).data;
+    expect(g).toMatchObject({ cashMinor: "1524862", owedToYouMinor: "1040000", youOweMinor: "186000", salesTaxHeldMinor: "5850", closedThrough: null });
+    if (g.asOf.startsWith("2026")) expect(g.profitThisYearMinor).toBe("873012");
+    expect(g.recent).toHaveLength(8);
+    expect((await call(`${base}/attention`, { cookie: s.cookie })).data).toMatchObject({ bankToReview: 5, payRunsToApprove: 0 });
+    const accounts = (await call(base, { cookie: s.cookie })).data.accounts;
+    expect(accounts.find((a: any) => a.code === "1000").balance_minor).toBe("1524862");
+  });
+
+  it("searches the journal, shows every account's ledger, and closes the books through a date", async () => {
+    const s = await signup();
+    const id = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${id}`;
+    const post = (date: string, memo: string, amount: string, account = "6400") => call(`${base}/journal`, {
+      cookie: s.cookie, body: { date, memo, lines: [{ account, debit: amount }, { account: "1000", credit: amount }] },
+    });
+    await post("2026-01-05", "January rent", "1450.00");
+    await post("2026-02-05", "February rent", "1450.00");
+    await post("2026-02-09", "Printer paper 100%_off", "38.20", "6500");
+
+    const search = async (q: string) => (await call(`${base}/journal?q=${encodeURIComponent(q)}`, { cookie: s.cookie })).data.entries.map((e: any) => e.memo);
+    expect(await search("rent")).toEqual(["February rent", "January rent"]);
+    expect(await search("software")).toEqual(["Printer paper 100%_off"]); // by account name
+    expect(await search("1,450")).toEqual(["February rent", "January rent"]);
+    expect(await search("38.2")).toEqual(["Printer paper 100%_off"]);
+    expect(await search("#1")).toEqual(["January rent"]);
+    expect(await search("%")).toEqual(["Printer paper 100%_off"]);
+
+    const all = (await call(`${base}/reports/general-ledger?account=all&from=2026-02-01&to=2026-02-28`, { cookie: s.cookie })).data;
+    // Bank opens February at minus January's rent (on its debit side); rent, an expense, at plus; software starts at zero.
+    expect(all.ledgers.map((l: any) => [l.account.code, l.openingMinor, l.lines.length])).toEqual([["1000", "-145000", 2], ["6400", "145000", 1], ["6500", "0", 1]]);
+    const csv = (await call(`${base}/reports/general-ledger?account=all&from=2026-02-01&to=2026-02-28&format=csv`, { cookie: s.cookie })).data as string;
+    expect(csv.split("\n")[1]).toBe("Account,Name,Date,Entry,Type,Memo,Description,Debit,Credit,Balance");
+
+    const closed = await call(`${base}/close-through`, { cookie: s.cookie, body: { through: "2026-02-28", status: "locked" } });
+    expect(closed.data).toEqual({ closed: 2, closedThrough: "2026-02-28" });
+    expect((await call(`${base}/close-through`, { cookie: s.cookie, body: { through: "2026-02-28" } })).data.closed).toBe(0);
+    expect((await post("2026-02-10", "Late receipt", "10.00")).status).toBe(422);
+    expect((await call(`${base}/glance`, { cookie: s.cookie })).data.closedThrough).toBe("2026-02-28");
+    expect((await call(`${base}/close-through`, { cookie: s.cookie, body: { through: "2025-12-31" } })).status).toBe(422);
+  });
+});

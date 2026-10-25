@@ -7,7 +7,9 @@ import { trialBalance, taxLineExportCsv } from "../core/reports.js";
 import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, recordPayment, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
-import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
+import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
+import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
+import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { toMajor } from "../core/money.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
@@ -209,8 +211,9 @@ route("GET", "/api/orgs/:org/entities/:entity", async (_req, p, ctx) =>
     await ensureEntity(tx, p.entity!);
     const entity = await getEntity(tx, p.entity!);
     const accounts = (await tx.query(
-      `SELECT id, code, name, type, subtype, statement_line, cash_flow_class, tax_line, system_key, is_active
-         FROM accounts WHERE entity_id = $1 ORDER BY code`,
+      `SELECT a.id, a.code, a.name, a.type, a.subtype, a.statement_line, a.cash_flow_class, a.tax_line, a.system_key, a.is_active,
+              coalesce((SELECT sum(l.debit_minor - l.credit_minor) FROM journal_lines l WHERE l.account_id = a.id), 0)::bigint AS balance_minor
+         FROM accounts a WHERE a.entity_id = $1 ORDER BY a.code`,
       [p.entity],
     )).rows;
     const periods = (await tx.query(
@@ -225,12 +228,22 @@ route("GET", "/api/orgs/:org/entities/:entity", async (_req, p, ctx) =>
   }),
 );
 
-route("GET", "/api/orgs/:org/entities/:entity/journal", async (_req, p, ctx) =>
+route("GET", "/api/orgs/:org/entities/:entity/journal", async (req, p, ctx) =>
   tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
+    // Search matches the entry number, the memo, a line's description or account name, the lines of the
+    // invoice or bill behind the entry, or an amount on any line ("1,450" or "1450.00").
+    const q = (new URL(req.url).searchParams.get("q") ?? "").trim().slice(0, 100);
+    const amount = /^\$?[\d,]+(\.\d{1,2})?$/.test(q) ? Math.round(Number(q.replace(/[$,]/g, "")) * 100) : null;
     const ids = (await tx.query(
-      "SELECT id FROM journal_entries WHERE entity_id = $1 ORDER BY entry_number DESC LIMIT 100",
-      [p.entity],
+      `SELECT e.id FROM journal_entries e
+        WHERE e.entity_id = $1 AND ($2 = '' OR e.entry_number::text = ltrim($2, '#') OR e.memo ILIKE $3
+          OR EXISTS (SELECT 1 FROM journal_lines l JOIN accounts a ON a.id = l.account_id
+                      WHERE l.entry_id = e.id AND (l.description ILIKE $3 OR a.name ILIKE $3 OR l.debit_minor = $4 OR l.credit_minor = $4))
+          OR EXISTS (SELECT 1 FROM documents d JOIN document_lines dl ON dl.document_id = d.id
+                      WHERE (d.entry_id = e.id OR d.id IN (SELECT document_id FROM document_payments WHERE entry_id = e.id)) AND dl.description ILIKE $3))
+        ORDER BY e.entry_number DESC LIMIT 100`,
+      [p.entity, q, `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`, amount],
     )).rows;
     const entries = [];
     for (const r of ids) entries.push(await getEntry(tx, r.id));
@@ -656,6 +669,13 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/general-ledger", async (re
   const q = new URL(req.url).searchParams;
   const from = date(q.get("from"), "from"), to = date(q.get("to"), "to");
   const account = str(q.get("account") ?? "", "account", 40);
+  if (account === "all") {
+    const ledgers = await tenant(ctx, async (tx) => {
+      await ensureEntity(tx, p.entity!);
+      return generalLedgerAll(tx, p.entity!, from, to);
+    });
+    return q.get("format") === "csv" ? csvResponse(generalLedgerCsv(ledgers), `general-ledger-all-${from}-to-${to}.csv`) : json({ from, to, ledgers });
+  }
   const gl = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
     return generalLedger(tx, p.entity!, account, from, to);
@@ -684,6 +704,30 @@ route("GET", "/api/orgs/:org/entities/:entity/health", async (_req, p, ctx) =>
     return json({ checks: await booksHealth(tx, p.entity!, serverToday()) });
   }),
 );
+
+route("GET", "/api/orgs/:org/entities/:entity/glance", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ ...(await moneyAtAGlance(tx, p.entity!, serverToday())), closedThrough: await closedThrough(tx, p.entity!) });
+  }),
+);
+
+route("GET", "/api/orgs/:org/entities/:entity/attention", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json(await attention(tx, p.entity!, serverToday()));
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/close-through", async (req, p, ctx) => {
+  const b = await body(req);
+  const status = b.status === "soft_closed" ? "soft_closed" : "locked";
+  const out = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return closeBooksThrough(tx, { orgId: ctx.orgId, entityId: p.entity!, through: date(b.through, "through"), status, actor: ctx.actor });
+  });
+  return json(out);
+});
 
 route("POST", "/api/orgs/:org/entities/:entity/settings", async (req, p, ctx) => {
   requireRole(ctx, ["owner", "admin"]);
@@ -878,6 +922,18 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
   if (req.method === "POST" && path === "/api/auth/logout") {
     await endSession(pool, cookie(req, SESSION_COOKIE));
     return json({ ok: true }, 200, { "set-cookie": sessionCookie("", 0) });
+  }
+  if (req.method === "POST" && path === "/api/example") {
+    const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+    if (!user) throw new AuthError("not signed in");
+    // One example per person: opening it again goes back to the same books.
+    const existing = (await pool.query(
+      `SELECT o.id AS org_id, (SELECT e.id FROM entities e WHERE e.org_id = o.id ORDER BY e.created_at LIMIT 1) AS entity_id
+         FROM memberships m JOIN organizations o ON o.id = m.org_id WHERE m.user_id = $1 AND o.name = $2 LIMIT 1`,
+      [user.id, EXAMPLE_ORG_NAME],
+    )).rows[0];
+    if (existing?.entity_id) return json({ orgId: existing.org_id, entityId: existing.entity_id });
+    return json(await createExampleBusiness(pool, user), 201);
   }
   if (req.method === "GET" && path === "/api/me") {
     const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
