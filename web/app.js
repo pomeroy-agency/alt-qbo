@@ -86,7 +86,7 @@ function topbar() {
 }
 
 const ENTITY_TABS = [
-  ["invoices", "Invoices"], ["bills", "Bills"], ["bank", "Bank"], ["reconcile", "Reconcile"], ["contacts", "Customers and vendors"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
+  ["overview", "Overview"], ["invoices", "Invoices"], ["bills", "Bills"], ["bank", "Bank"], ["reconcile", "Reconcile"], ["contacts", "Customers and vendors"], ["journal", "Journal"], ["reports", "Reports"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
   ["accounts", "Chart of accounts"], ["connections", "Connections"],
 ];
 
@@ -141,7 +141,7 @@ async function homeView() {
     <div class="head"><div><h1>Businesses</h1><p class="muted">Each legal entity keeps its own books, periods and tax settings.</p></div></div>
     <div class="cards">
       ${ents.map((e) => `
-        <a class="card" href="#/e/${e.id}/invoices">
+        <a class="card" href="#/e/${e.id}/overview">
           <strong>${esc(e.legal_name)}</strong><br>
           <span class="muted">${esc(ENTITY_TYPES[e.entity_type] ?? e.entity_type)} · ${esc(e.region)}, US</span><br>
           <span class="pill">${esc(e.framework.replace("_", " "))}</span> <span class="pill grey">${esc(RETURN_LABEL[e.tax_return_type] ?? e.tax_return_type)}</span>
@@ -606,6 +606,126 @@ async function bankView(id) {
     </div>`);
 }
 
+// ------------------------------------------------------------ overview
+
+async function overviewView(id) {
+  await loadEntity(id);
+  const { checks } = await api(entPath("/health"));
+  const e = state.entity.entity;
+  const canSettings = ["owner", "admin"].includes(state.org.role);
+  const problems = checks.filter((c) => !c.ok && !c.warn).length;
+  const warnings = checks.filter((c) => !c.ok && c.warn).length;
+  const summary = problems ? `<div class="alert bad">${problems} thing${problems === 1 ? " needs" : "s need"} fixing in the books.</div>`
+    : warnings ? `<div class="alert warn">The books are sound. ${warnings} housekeeping item${warnings === 1 ? " is" : "s are"} worth a look.</div>`
+    : `<div class="alert good">Everything checks out.</div>`;
+  const einMissing = checks.some((c) => c.key === "ein" && !c.ok);
+  app.innerHTML = shell("overview", `
+    <div class="head"><div><h1>${esc(e.legalName)}</h1><p class="muted">Books health for today. These are bookkeeping checks, not a tax or compliance review.</p></div></div>
+    ${summary}
+    <div class="panel table-wrap"><table>
+      <thead><tr><th></th><th>Check</th><th>Detail</th><th></th></tr></thead>
+      <tbody>${checks.map((c) => `<tr>
+        <td><span class="${c.ok ? "pill" : c.warn ? "pill warn" : "pill bad"}">${c.ok ? "OK" : c.warn ? "Review" : "Fix"}</span></td>
+        <td>${esc(c.title)}</td><td class="muted">${esc(c.detail)}</td>
+        <td>${!c.ok && c.go ? `<a href="#/e/${e.id}/${c.go}">Go there</a>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div>
+    ${einMissing && canSettings ? `<div class="panel">
+      <h2>Add the EIN</h2>
+      <form data-form="ein" class="row">
+        <label>EIN<input name="ein" placeholder="12-3456789" required pattern="\\d{2}-?\\d{7}" class="mono"></label>
+        <button type="submit">Save</button>
+      </form>
+    </div>` : ""}`);
+}
+
+// ------------------------------------------------------------- reports
+
+const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"]];
+const rep = { tab: "pl", from: "", to: "", asOf: "", account: "" };
+
+function reportDefaults() {
+  const t = today();
+  if (!rep.to) rep.to = t;
+  if (!rep.asOf) rep.asOf = t;
+  if (!rep.from) {
+    const m = state.entity.entity.fiscalYearStartMonth ?? 1;
+    const [y, mo] = t.split("-").map(Number);
+    rep.from = `${mo >= m ? y : y - 1}-${String(m).padStart(2, "0")}-01`;
+  }
+  if (!rep.account) rep.account = state.entity.accounts.find((a) => a.subtype === "bank")?.code ?? state.entity.accounts[0]?.code ?? "";
+}
+
+function reportQuery() {
+  if (rep.tab === "pl") return ["/reports/profit-and-loss", `from=${rep.from}&to=${rep.to}`, `profit-and-loss-${rep.from}-to-${rep.to}`];
+  if (rep.tab === "bs") return ["/reports/balance-sheet", `asOf=${rep.asOf}`, `balance-sheet-${rep.asOf}`];
+  if (rep.tab === "gl") return ["/reports/general-ledger", `account=${encodeURIComponent(rep.account)}&from=${rep.from}&to=${rep.to}`, `general-ledger-${rep.account}-${rep.from}-to-${rep.to}`];
+  const kind = rep.tab === "ar" ? "receivables" : "payables";
+  return [`/reports/${kind}-aging`, `asOf=${rep.asOf}`, `${kind}-aging-${rep.asOf}`];
+}
+
+const sectionRows = (s) => `
+  <tr><th colspan="3">${esc(s.label)}</th></tr>
+  ${s.rows.map((r) => `<tr><td class="mono">${r.code}</td><td>${esc(r.name)}</td><td class="num">${usd(r.amountMinor)}</td></tr>`).join("") || `<tr><td></td><td class="muted">None</td><td></td></tr>`}
+  <tr><td></td><td><strong>Total ${esc(s.label.toLowerCase())}</strong></td><td class="num"><strong>${usd(s.totalMinor)}</strong></td></tr>`;
+const totalRow = (label, minor) => `<tr><td></td><td><strong>${label}</strong></td><td class="num"><strong>${usd(minor)}</strong></td></tr>`;
+
+async function reportsView(id) {
+  await loadEntity(id);
+  reportDefaults();
+  const [path, q] = reportQuery();
+  const range = ["pl", "gl"].includes(rep.tab);
+  let body;
+  if (rep.tab === "pl") {
+    const pl = await api(entPath(`${path}?${q}`));
+    const [rev, cor, opx, oi, oe] = pl.sections;
+    body = `<table><tbody>${sectionRows(rev)}${sectionRows(cor)}${totalRow("Gross profit", pl.grossProfitMinor)}${sectionRows(opx)}
+      ${totalRow("Operating income", pl.operatingIncomeMinor)}${sectionRows(oi)}${sectionRows(oe)}</tbody>
+      <tfoot><tr><td></td><td>Net income</td><td class="num">${usd(pl.netIncomeMinor)}</td></tr></tfoot></table>`;
+  } else if (rep.tab === "bs") {
+    const bs = await api(entPath(`${path}?${q}`));
+    const [ca, nca, cl, ncl, eq] = bs.sections;
+    body = `${bs.balanced ? "" : `<div class="alert bad">This balance sheet doesn't balance. Check the trial balance.</div>`}
+      <table><tbody>${sectionRows(ca)}${sectionRows(nca)}${totalRow("Total assets", bs.totalAssetsMinor)}
+      ${sectionRows(cl)}${sectionRows(ncl)}${totalRow("Total liabilities", bs.totalLiabilitiesMinor)}
+      <tr><th colspan="3">Equity</th></tr>
+      ${eq.rows.map((r) => `<tr><td class="mono">${r.code}</td><td>${esc(r.name)}</td><td class="num">${usd(r.amountMinor)}</td></tr>`).join("")}
+      <tr><td></td><td>Prior years' earnings</td><td class="num">${usd(bs.priorYearsEarningsMinor)}</td></tr>
+      <tr><td></td><td>Current year earnings</td><td class="num">${usd(bs.currentYearEarningsMinor)}</td></tr>
+      ${totalRow("Total equity", bs.totalEquityMinor)}</tbody>
+      <tfoot><tr><td></td><td>Liabilities and equity</td><td class="num">${usd(BigInt(bs.totalLiabilitiesMinor) + BigInt(bs.totalEquityMinor))}</td></tr></tfoot></table>`;
+  } else if (rep.tab === "gl") {
+    const gl = await api(entPath(`${path}?${q}`));
+    body = `<table>
+      <thead><tr><th>Date</th><th>Entry</th><th>Memo</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+      <tbody><tr><td>${gl.from}</td><td></td><td class="muted">Opening balance</td><td></td><td></td><td class="num">${usd(gl.openingMinor)}</td></tr>
+      ${gl.lines.map((l) => `<tr><td>${l.date}</td><td class="mono">#${l.entryNumber}</td><td>${esc(l.memo || l.description)}</td>
+        <td class="num">${usd(l.debitMinor, { blankZero: true })}</td><td class="num">${usd(l.creditMinor, { blankZero: true })}</td><td class="num">${usd(l.balanceMinor)}</td></tr>`).join("")}</tbody>
+      <tfoot><tr><td colspan="5">Closing balance</td><td class="num">${usd(gl.closingMinor)}</td></tr></tfoot></table>`;
+  } else {
+    const ag = await api(entPath(`/${rep.tab === "ar" ? "invoices" : "bills"}/aging?asOf=${rep.asOf}`));
+    body = `<div class="row" style="gap:24px;margin-bottom:12px">
+        ${Object.entries(AGING_LABEL).map(([k, l]) => `<div><div class="muted">${l}</div><div class="stat">${usd(ag.buckets[k])}</div></div>`).join("")}
+      </div>
+      <table><thead><tr><th>Number</th><th>${rep.tab === "ar" ? "Customer" : "Vendor"}</th><th>Due</th><th>Days past due</th><th class="num">Still due</th></tr></thead>
+      <tbody>${ag.rows.map((r) => `<tr><td class="mono">${esc(r.number)}</td><td>${esc(r.contactName)}</td><td>${r.dueDate}</td><td>${r.daysPastDue || ""}</td><td class="num">${usd(r.dueMinor)}</td></tr>`).join("")
+        || `<tr><td colspan="5" class="muted">Nothing outstanding.</td></tr>`}</tbody>
+      <tfoot><tr><td colspan="4">Total</td><td class="num">${usd(ag.totalMinor)}</td></tr></tfoot></table>`;
+  }
+  app.innerHTML = shell("reports", `
+    <div class="head"><div><h1>Reports</h1><p class="muted">Built from posted journal lines, so they always agree with the trial balance.</p></div></div>
+    <div class="row" style="margin-bottom:12px">${REPORTS.map(([k, l]) => `<button class="${rep.tab === k ? "" : "secondary"}" data-action="report-tab" data-tab="${k}">${l}</button>`).join("")}</div>
+    <div class="panel">
+      <form data-form="report" class="row" style="margin-bottom:12px">
+        ${rep.tab === "gl" ? `<label>Account<select name="account">${accountOptions(rep.account)}</select></label>` : ""}
+        ${range ? `<label>From<input type="date" name="from" value="${rep.from}" required></label><label>To<input type="date" name="to" value="${rep.to}" required></label>`
+          : `<label>As of<input type="date" name="asOf" value="${rep.asOf}" required></label>`}
+        <button type="submit" class="secondary">Update</button>
+        <button type="button" data-action="report-csv">Download CSV</button>
+      </form>
+      <div class="table-wrap">${body}</div>
+    </div>`);
+}
+
 // ---------------------------------------------------------- reconciliation
 
 const recon = { account: null, statementDate: "", statementBalance: "", data: null };
@@ -863,7 +983,7 @@ async function route() {
     }
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
-      const view = { invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "journal"] ?? journalView;
+      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
@@ -945,6 +1065,16 @@ document.addEventListener("click", async (ev) => {
         const kind = location.hash.includes("/bills") ? "bills" : "invoices";
         document.getElementById(`detail-${b.dataset.id}`).innerHTML = docDetail(await api(entPath(`/${kind}/${b.dataset.id}`)));
       }
+    } else if (a === "report-tab") {
+      rep.tab = b.dataset.tab;
+      await reportsView(state.entity.entity.id);
+    } else if (a === "report-csv") {
+      const [path, q, name] = reportQuery();
+      const res = await api(entPath(`${path}?${q}&format=csv`), { raw: true });
+      if (!res.ok) throw new Error((await res.json()).error);
+      const url = URL.createObjectURL(await res.blob());
+      Object.assign(document.createElement("a"), { href: url, download: `${name}.csv` }).click();
+      URL.revokeObjectURL(url);
     } else if (a === "rc-all" || a === "rc-none") {
       document.querySelectorAll("[data-rc]").forEach((x) => { x.checked = a === "rc-all"; });
       updateRecon();
@@ -1038,7 +1168,7 @@ document.addEventListener("submit", async (ev) => {
       const e = await api(orgPath("/entities"), { body: { ...d, country: "US" } });
       state.org.stale = true;
       toast(`${e.legalName} created with ${RETURN_LABEL[e.taxReturnType]} tax lines`);
-      location.hash = `#/e/${e.id}/invoices`;
+      location.hash = `#/e/${e.id}/overview`;
     } else if (kind === "journal") {
       const lines = readLines().filter((l) => l.debit || l.credit);
       const e = await api(entPath("/journal"), { body: { ...d, lines, idempotencyKey: crypto.randomUUID() } });
@@ -1048,6 +1178,13 @@ document.addEventListener("submit", async (ev) => {
       const e = await api(entPath(`/journal/${f.dataset.id}/reverse`), { body: d });
       toast(`Reversal #${e.entryNumber} posted`);
       await journalView(state.entity.entity.id);
+    } else if (kind === "report") {
+      Object.assign(rep, d);
+      await reportsView(state.entity.entity.id);
+    } else if (kind === "ein") {
+      await api(entPath("/settings"), { body: { ein: d.ein } });
+      toast("EIN saved");
+      await overviewView(state.entity.entity.id);
     } else if (kind === "tb") {
       await trialBalanceView(state.entity.entity.id, d.asOf);
     } else if (kind === "reopen") {

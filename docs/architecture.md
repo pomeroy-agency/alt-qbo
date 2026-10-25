@@ -23,6 +23,8 @@
 
 7. **Reconciliation (`src/core/reconcile.ts`).** A completed reconciliation records the statement date and balance, the beginning balance and the cleared journal lines. The database requires each one to start from the previous statement's ending balance, to be dated after it, and (at commit) for beginning + cleared lines = statement balance. A journal line can be cleared only once, only on its own bank account and only if dated on or before the statement. Reconciliations are append-only.
 
+8. **Reports and books health (`src/core/statements.ts`).** Every report is a query over posted journal lines grouped by each account's statement line, so reports can't disagree with the trial balance. The balance sheet doesn't depend on a closing entry: income before the fiscal year start shows as prior years' earnings and income since as current year earnings. The health check reads the same data and only reports; it never changes the books.
+
 ## Money
 
 Amounts are `bigint` minor units with a currency everywhere outside the tax math. Rates and per-period tax math use `decimal.js` (40 digits), rounding half-up to cents only at the end of each tax. Postgres `int8` parses as `BigInt`. No floats touch money.
