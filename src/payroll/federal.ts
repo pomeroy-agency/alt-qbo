@@ -8,7 +8,7 @@ import type { Bracket, FederalFilingStatus, FederalPayrollRules } from "../rules
  *     then each bracket threshold shifted up by that amount;
  *   - Step 2 checkbox schedule: zero bracket = half the standard deduction,
  *     thresholds halved (each of two jobs gets half of every bracket).
- * This reproduces the published 2026 MFJ schedules exactly (see tests).
+ * This reproduces every published 2026 schedule exactly (see tests).
  */
 export function federalSchedule(
   rules: FederalPayrollRules["incomeTax"],
@@ -30,7 +30,9 @@ export function federalSchedule(
       const width = new D(b.over).sub(prev.over).mul(scale);
       base = base.add(width.mul(prev.rate));
     }
-    rows.push({ over: over.toString(), rate: b.rate, base: base.toString() });
+    // Pub 15-T prints halved thresholds rounded to the whole dollar (108,937.50 -> 108,938)
+    // and the tentative amount to the cent; withholding follows the printed table.
+    rows.push({ over: over.toDecimalPlaces(0).toString(), rate: b.rate, base: base.toDecimalPlaces(2).toString() });
   });
   return rows;
 }

@@ -9,15 +9,15 @@ export const usFederal2026: FederalRulePack = {
   effectiveTo: "2026-12-31",
   status: "draft",
   sources: [
-    { ref: "IRS Publication 15-T (2026), dated Dec 3, 2025", covers: "Worksheet 1A line 1g; MFJ annual schedules (used as test fixtures)", basis: "published" },
-    { ref: "SSA, 2026 contribution and benefit base (Oct 2025)", covers: "Social Security wage base $184,500", basis: "published" },
-    { ref: "Rev. Proc. 2025-32 (2026 inflation adjustments after P.L. 119-21)", covers: "2026 brackets and standard deductions", basis: "working-knowledge" },
-    { ref: "IRC 3101, 3111, 3301; Form 941 and 940 instructions", covers: "FICA and FUTA rates", basis: "working-knowledge" },
+    { ref: "IRS Publication 15-T (2026), page 11, Annual Percentage Method tables", covers: "Worksheet 1A line 1g ($12,900 MFJ, $8,600 other); all six STANDARD and Step 2 schedules, reproduced exactly in tests", basis: "published" },
+    { ref: "Rev. Proc. 2025-32, section 3.01 Tables 1-4 and 3.14", covers: "2026 brackets for every filing status; standard deductions $32,200 / $24,150 / $16,100", basis: "published" },
+    { ref: "SSA announcement, October 2025", covers: "Social Security wage base $184,500", basis: "published" },
+    { ref: "IRC 3101, 3111, 3301, 3102(f); Pub 15 (2026)", covers: "FICA rates, Additional Medicare 0.9% over $200,000, FUTA 0.6% net on $7,000, 22% supplemental rate", basis: "published" },
   ],
   reviewNotes: [
-    "Single and head-of-household withholding schedules are derived from the 2026 brackets and standard deductions using the same method that reproduces the published MFJ schedule exactly; compare them with Pub 15-T 2026 pages 11-12 before release.",
-    "Head-of-household 2026 bracket thresholds are from working knowledge; confirm against Rev. Proc. 2025-32.",
-    "FUTA here is the 0.6% net rate. California is a credit-reduction state; the 2026 reduction is set by the Department of Labor in November 2026 and lands on Form 940 Schedule A, so it is not withheld per pay run.",
+    "Checked 2026-10-25 against the IRS PDFs of Pub 15-T (2026) and Rev. Proc. 2025-32: every bracket, standard deduction and withholding schedule matches. Step 2 schedules round halved thresholds to the whole dollar, as the published table does.",
+    "California is on the Department of Labor's list for a 2026 FUTA credit reduction (likely 1.5%, more if no benefit-cost-rate waiver). The final figure comes after November 10, 2026 and lands on Form 940 Schedule A, not on paychecks.",
+    "2027: the Social Security wage base rises to $192,300 (SSA, October 14, 2026). The 2027 brackets (Rev. Proc. expected October or November 2026) and the 2027 Pub 15-T (December) are not out yet; a 2027 pack is needed before the first 2027 pay date.",
   ],
   payroll: {
     socialSecurity: { employeeRate: "0.062", employerRate: "0.062", wageBase: "184500" },
