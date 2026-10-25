@@ -23,7 +23,7 @@ export const usFederal2026: FederalRulePack = {
   payroll: {
     socialSecurity: { employeeRate: "0.062", employerRate: "0.062", wageBase: "184500" },
     medicare: { employeeRate: "0.0145", employerRate: "0.0145", additionalRate: "0.009", additionalThreshold: "200000" },
-    futa: { rate: "0.006", wageBase: "7000", note: "net of the 5.4% state credit; credit reduction handled on Schedule A" },
+    futa: { rate: "0.006", wageBase: "7000", note: "net of the 5.4% state credit; credit reduction handled on Schedule A", creditReduction: { CA: null } },
     supplementalRate: "0.22",
     deposits: { semiweeklyLookbackOver: "50000", nextDayAtOrAbove: "100000", payWithReturnUnder: "2500", futaDepositOver: "500" },
     incomeTax: {

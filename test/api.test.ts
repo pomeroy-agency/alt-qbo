@@ -617,3 +617,76 @@ describe("payroll tax deposits", () => {
     expect(sent.filter((x) => x.to === s.email)).toHaveLength(1);
   });
 });
+
+describe("prepared payroll forms", () => {
+  it("prepares 941, 940, DE 9 with DE 9C, and W-2s with the W-3 from posted runs and deposits", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    const approver = await join(s, `approver${Date.now()}${n++}@example.com`, "approver");
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { caEmployerAccount: "123-4567" } })).status).toBe(400);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { caEmployerAccount: "123-4567-8" } })).status).toBe(200);
+    await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "12-3456789" } });
+    const m = (await call(`${base}/employees`, { cookie: s.cookie, body: {
+      ...maya, ssn: "123-45-6789", address: { line1: "1 Main St", city: "Oakland", zip: "94607" },
+      deductions: [{ kind: "traditional401k", amount: "150" }, { kind: "section125", amount: "100" }],
+    } })).data;
+    for (const payDate of ["2026-05-22", "2026-06-05"]) {
+      const r = (await call(`${base}/pay-runs`, { cookie: s.cookie, body: { ...runFor([m.id], payDate), periodStart: `${payDate.slice(0, 8)}01`, periodEnd: `${payDate.slice(0, 8)}14` } })).data;
+      expect((await call(`${base}/pay-runs/${r.id}/approve`, { cookie: approver.cookie, body: {} })).status).toBe(201);
+    }
+    const deposits = (await call(`${base}/tax-deposits?year=2026`, { cookie: s.cookie })).data.deposits;
+    const may = deposits.find((d: any) => d.key === "federal_941:m:2026-05");
+    await call(`${base}/tax-deposits/pay`, { cookie: s.cookie, body: { key: may.key, paidDate: "2026-06-10" } });
+
+    const list = await call(`${base}/payroll-forms?year=2026`, { cookie: s.cookie });
+    expect(list.data.forms.map((f: any) => `${f.form} ${f.period}`)).toEqual(expect.arrayContaining(["941 Q2 2026", "DE 9 Q2 2026", "940 2026", "W-2 2026"]));
+
+    const line = (f: any, l: string) => { const x = f.lines.find((y: any) => y.line === l); return x.kind === "money" ? BigInt(x.value ?? 0) : x.value; };
+    const r941 = await call(`${base}/payroll-forms/prepared?form=941&year=2026&quarter=2`, { cookie: s.cookie });
+    expect(r941.data).not.toHaveProperty("error");
+    const f941 = r941.data;
+    // Each paycheck: 3,000 gross, 100 section 125, 150 401(k).
+    expect(line(f941, "2")).toBe(2n * 275000n);
+    expect(line(f941, "5a col 1")).toBe(2n * 290000n);
+    expect(line(f941, "5a col 2")).toBe(71920n);
+    expect(line(f941, "6") + line(f941, "7")).toBe(line(f941, "12"));
+    expect(line(f941, "12")).toBe(deposits.filter((d: any) => d.kind === "federal_941").reduce((s: bigint, d: any) => s + BigInt(d.amountMinor), 0n));
+    expect(line(f941, "13")).toBe(BigInt(may.amountMinor));
+    expect(line(f941, "14")).toBe(line(f941, "12") - BigInt(may.amountMinor));
+    expect(line(f941, "1")).toBe(1);
+    expect(f941.dueDate).toBe("2026-07-31");
+
+    const f940 = (await call(`${base}/payroll-forms/prepared?form=940&year=2026`, { cookie: s.cookie })).data;
+    expect(line(f940, "3")).toBe(600000n);
+    expect(line(f940, "4")).toBe(20000n);
+    expect(line(f940, "7")).toBe(580000n);
+    expect(line(f940, "8")).toBe(3480n);
+    expect(line(f940, "11")).toBe(0n);
+    expect(f940.warnings.join(" ")).toMatch(/credit reduction/);
+
+    const de9 = (await call(`${base}/payroll-forms/prepared?form=de9&year=2026&quarter=2`, { cookie: s.cookie })).data;
+    expect(line(de9, "C")).toBe(580000n);
+    expect(line(de9, "D2")).toBe(580000n);
+    expect(line(de9, "H")).toBe(line(de9, "D3") + line(de9, "E2") + line(de9, "F3") + line(de9, "G"));
+    expect(de9.employees[0]).toMatchObject({ ssn: "xxx-xx-6789", subjectWagesMinor: "580000", pitWagesMinor: "550000" });
+
+    const w2 = (await call(`${base}/payroll-forms/prepared?form=w2&year=2026&ssn=full`, { cookie: s.cookie })).data;
+    expect(w2.employees[0]).toMatchObject({
+      ssn: "123-45-6789", box1: "550000", box3: "580000", box5: "580000", box16: "550000",
+      box12: [{ code: "D", amountMinor: "30000" }], box15: { state: "CA", employerStateId: "123-4567-8" },
+    });
+    expect(line(w2, "W-3 c")).toBe(1);
+    // Only owners, admins and accountants see full numbers, and each look is in the audit log.
+    const masked = (await call(`${base}/payroll-forms/prepared?form=w2&year=2026&ssn=full`, { cookie: approver.cookie })).data;
+    expect(masked.employees[0].ssn).toBe("xxx-xx-6789");
+    const audit = JSON.stringify((await call(`/api/orgs/${s.orgId}/audit`, { cookie: s.cookie })).data.events);
+    expect(audit).toContain("payroll_form.viewed_with_ssn");
+    expect(audit).not.toContain("123456789");
+
+    const csv = await call(`${base}/payroll-forms/prepared?form=de9&year=2026&quarter=2&format=csv`, { cookie: s.cookie });
+    expect(csv.data).toContain("ssn,name,subjectWagesMinor");
+    expect(csv.data).toContain("5800.00");
+    expect((await call(`${base}/payroll-forms/prepared?form=nope&year=2026`, { cookie: s.cookie })).status).toBe(404);
+  });
+});

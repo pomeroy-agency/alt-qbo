@@ -8,7 +8,7 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 |---|---|---|---|
 | Social Security wage base | $184,500 | SSA, Oct 2025 | ✅ matches |
 | SS / Medicare rates | 6.2% / 1.45% each side; Additional Medicare 0.9% over $200,000 | IRC 3101, 3111, 3102(f) | ✅ matches |
-| FUTA | 0.6% net on first $7,000 | IRC 3301; Form 940 | ✅ matches. California is on the DOL's 2026 credit-reduction list (likely 1.5%); final figure after Nov 10, 2026, goes on Schedule A |
+| FUTA | 0.6% net on first $7,000 | IRC 3301; Form 940 | ✅ matches. California is on the DOL's 2026 credit-reduction list (likely 1.5%); final figure after Nov 10, 2026, goes on Schedule A. `futa.creditReduction.CA` is blank until then, so Form 940 line 11 shows blank with a warning |
 | Supplemental rate | 22% (37% over $1 million) | Pub 15 (2026) | ✅ matches |
 | 2026 brackets, all statuses | as in file | Rev. Proc. 2025-32, Tables 1-4 | ✅ matches the IRS PDF, including head of household (17,700 / 67,450 / 105,700 / 201,750 / 256,200 / 640,600) |
 | Standard deductions | $16,100 / $32,200 / $24,150 | Rev. Proc. 2025-32 §3.14 | ✅ matches |
@@ -65,6 +65,19 @@ Also to confirm:
 - **Own-vehicle delivery.** Delivery in the seller's own vehicle can be taxable, so consider a separate kind of sale for it (Reg. 1628).
 - **Rate lookup.** The rate comes from the CDTFA's tax rate API. It was spot-checked for four cities on 2026-10-25, and the live site returned 10.25% for Los Angeles City Hall the same day. Addresses on district boundaries still need checking.
 - **Design charges.** CDTFA annotations (430.0194, 100.0103, 100.0159, 100.0162, still in the 2026 law guide) say finished or sketched designs handed over in physical form are taxable, while preliminary art billed separately is not. Designs delivered only electronically are not tangible, which is why "professional or creative service" defaults to not taxable.
+
+## Prepared payroll forms (`src/payroll/forms.ts`)
+
+The forms are worksheets with each line's figure, for copying into the filing site. Alt-QBO doesn't file them.
+
+| Form | What to check | Source | Check |
+|---|---|---|---|
+| 941 | Line numbers and labels 1-16; line 7 fractions of cents; Schedule B over $50,000 or semiweekly | 2026 Form 941 and instructions (Rev. Mar 2026) | ✅ line numbers match the IRS PDF. Lines 5b, 5f, 8, 9 and 11 (tips, sick-pay and credit adjustments) aren't used by Alt-QBO and are left out |
+| 940 | Lines 1a-15a; line 4 exempt payments (section 125); line 9/10 not used; quarterly liability when over $500 | 2025 Form 940 and Schedule A (the 2026 form comes out in December) | ⚠️ checked against the 2025 form; recheck against the 2026 form when published. Line 11 waits for California's 2026 credit reduction |
+| DE 9 | Item letters C (total subject wages), D (UI, ETT, SDI wages, rates and contributions), E (UI and ETT), F (SDI), G, H (PIT withheld), I (deposits), J (balance due) | DE 9 form and instructions | ⚠️ from memory of the form; the EDD and DIR sites are blocked here. Confirm each item letter against the current DE 9 |
+| DE 9C | A1-A3 employee counts for the pay period including the 12th of each month; per employee SSN, name, total subject wages, PIT wages, PIT withheld | DE 9C form and instructions | ⚠️ same as DE 9 |
+| W-2 / W-3 | Boxes 1-6, 12 code D (401(k)), 14 CASDI, 15-17 with the 8-digit EDD account number; W-3 b and c | 2026 General Instructions for Forms W-2 and W-3 | ✅ matches. Box 12 DD (employer health coverage cost) isn't filled in; employers filing fewer than 250 W-2s are exempt |
+| Due dates | 941 and DE 9: last day of the month after the quarter, moved to the next business day; 940 and W-2: Jan 31 (moved past weekends) | Pub 15 (2026); EDD | ✅ |
 
 ## Chart of accounts tax lines (`src/rules/coa/us-service.ts`)
 

@@ -1462,7 +1462,8 @@ async function payrollView(id) {
   const active = employees.filter((e) => e.status === "active");
   const next = nextPeriod(payRuns);
   app.innerHTML = shell("payroll", `
-    <div class="head"><div><h1>Payroll</h1><p class="muted">Alt-QBO works out pay, taxes and deductions, makes pay stubs and posts payroll to the books. You pay employees from your own bank and file and pay the taxes with the IRS and EDD yourself.</p></div></div>
+    <div class="head"><div><h1>Payroll</h1><p class="muted">Alt-QBO works out pay, taxes and deductions, makes pay stubs and posts payroll to the books. You pay employees from your own bank and file and pay the taxes with the IRS and EDD yourself.</p></div>
+      <div class="row"><a class="btn secondary" href="#/e/${id}/payroll/forms">Tax forms</a></div></div>
     <div class="panel">
       <div class="row" style="justify-content:space-between"><h2>Employees</h2>${canWrite && !pay.adding ? `<button data-action="emp-add">+ Add employee</button>` : ""}</div>
       ${pay.adding ? `<div class="emp">${employeeForm()}</div>` : ""}
@@ -1627,6 +1628,76 @@ function stubCard(r, c, s) {
   </div>`;
 }
 
+const FORM_SLUG = { "941": "941", "940": "940", "DE 9": "de9", "W-2": "w2" };
+
+async function formsView(id, yearParam) {
+  await loadEntity(id);
+  const year = Number(yearParam) || Number(bookDate().slice(0, 4));
+  const t = await api(entPath(`/payroll-forms?year=${year}`));
+  const canSet = ["owner", "admin", "accountant"].includes(state.org.role);
+  const acct = t.caEmployerAccount;
+  app.innerHTML = shell("payroll", `
+    <div class="head"><div><p><a href="#/e/${id}/payroll">&larr; Payroll</a></p><h1>Payroll tax forms</h1>
+      <p class="muted">Each form's figures come from approved pay runs and the deposits you've recorded. Copy them into the filing site (or hand them to your accountant), check them, and sign. Alt-QBO doesn't file anything.</p></div>
+      <div class="row"><a class="btn secondary" href="#/e/${id}/payroll/forms/${year - 1}">${year - 1}</a>${year < Number(bookDate().slice(0, 4)) ? `<a class="btn secondary" href="#/e/${id}/payroll/forms/${year + 1}">${year + 1}</a>` : ""}</div></div>
+    <div class="panel">
+      <form data-form="edd-account" class="row" style="margin-bottom:12px">
+        <label>EDD employer payroll tax account number<input name="caEmployerAccount" value="${acct ? `${acct.slice(0, 3)}-${acct.slice(3, 7)}-${acct.slice(7)}` : ""}" placeholder="123-4567-8" style="width:140px" ${canSet ? "" : "disabled"}></label>
+        ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+        <span class="hash">The 8-digit number the EDD gave you when you registered as an employer. It goes on the DE 9, DE 9C and W-2s.</span>
+      </form>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Form</th><th>Period</th><th>Due</th><th></th></tr></thead>
+        <tbody>${t.forms.map((f) => `<tr><td>${esc(f.form)}</td><td>${esc(f.period)}</td><td>${esc(f.dueDate)}</td>
+          <td><a href="#/e/${id}/payroll/form/${FORM_SLUG[f.form]}/${f.year}${f.quarter ? `/${f.quarter}` : ""}">Open</a></td></tr>`).join("")}</tbody>
+      </table></div>
+    </div>`);
+}
+
+const fmtLine = (l) => l.value === null ? `<span class="muted">${l.kind === "money" ? "blank" : ""}</span>` : l.kind === "money" ? usd(l.value) : esc(String(l.value));
+
+async function formView(id, slug, year, quarter, fullSsn = false) {
+  await loadEntity(id);
+  const f = await api(entPath(`/payroll-forms/prepared?form=${slug}&year=${year}${quarter ? `&quarter=${quarter}` : ""}${fullSsn ? "&ssn=full" : ""}`));
+  const canSee = ["owner", "admin", "accountant"].includes(state.org.role);
+  const emp = f.employer;
+  const head = `<div><strong>${esc(emp.name)}</strong>${emp.ein ? ` · EIN ${esc(emp.ein)}` : ""}${emp.address ? `<div class="hash">${esc(emp.address.line1)}, ${esc(emp.address.city)}, ${esc(emp.address.state)} ${esc(emp.address.zip)}</div>` : ""}</div>`;
+  const rows = f.employees ?? [];
+  const table = slug === "de9" ? `<h3>DE 9C wage detail</h3><div class="table-wrap"><table>
+      <thead><tr><th>SSN</th><th>Employee</th><th class="num">Total subject wages</th><th class="num">PIT wages</th><th class="num">PIT withheld</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr><td>${esc(r.ssn ?? "missing")}</td><td>${esc(r.name)}</td><td class="num">${usd(r.subjectWagesMinor)}</td><td class="num">${usd(r.pitWagesMinor)}</td><td class="num">${usd(r.pitWithheldMinor)}</td></tr>`).join("")}</tbody></table></div>`
+    : slug === "w2" ? rows.map((w) => `<div class="panel stub">
+      <div class="row" style="justify-content:space-between"><div><strong>W-2 ${esc(f.period)}: ${esc(w.name)}</strong><div class="hash">SSN ${esc(w.ssn ?? "missing")}${w.address ? `<br>${esc(w.address.line1)}, ${esc(w.address.city)}, ${esc(w.address.state)} ${esc(w.address.zip)}` : ""}</div></div>${head}</div>
+      <table><tbody>
+        <tr><td>1 Wages, tips, other compensation</td><td class="num">${usd(w.box1)}</td><td>2 Federal income tax withheld</td><td class="num">${usd(w.box2)}</td></tr>
+        <tr><td>3 Social security wages</td><td class="num">${usd(w.box3)}</td><td>4 Social security tax withheld</td><td class="num">${usd(w.box4)}</td></tr>
+        <tr><td>5 Medicare wages and tips</td><td class="num">${usd(w.box5)}</td><td>6 Medicare tax withheld</td><td class="num">${usd(w.box6)}</td></tr>
+        <tr><td>12</td><td colspan="3">${w.box12.map((b) => `${esc(b.code)} ${usd(b.amountMinor)}`).join(", ") || "—"}</td></tr>
+        <tr><td>14 Other</td><td colspan="3">${w.box14.map((b) => `${esc(b.label)} ${usd(b.amountMinor)}`).join(", ") || "—"}</td></tr>
+        <tr><td>15 State / employer's state ID</td><td>${esc(w.box15.state)} ${esc(w.box15.employerStateId ?? "missing")}</td><td>16 State wages</td><td class="num">${usd(w.box16)}</td></tr>
+        <tr><td></td><td></td><td>17 State income tax</td><td class="num">${usd(w.box17)}</td></tr>
+      </tbody></table></div>`).join("")
+    : "";
+  app.innerHTML = shell("payroll", `
+    <div class="head no-print"><div><p><a href="#/e/${id}/payroll/forms/${year}">&larr; Tax forms</a></p><h1>${esc(f.title)}</h1>
+      <p class="muted">${esc(f.period)} · due ${esc(f.dueDate)}. ${esc(f.fileAt)}.</p></div>
+      <div class="row"><button class="secondary" data-action="print">Print</button>
+        ${rows.length ? `<button class="secondary" data-action="form-csv" data-slug="${slug}" data-year="${year}" data-quarter="${quarter ?? ""}">Download CSV</button>` : ""}
+        ${rows.length && canSee && !fullSsn ? `<button class="secondary" data-action="form-ssn" data-slug="${slug}" data-year="${year}" data-quarter="${quarter ?? ""}">Show full SSNs</button>` : ""}</div></div>
+    ${f.warnings.map((w) => `<div class="alert warn no-print">${esc(w)}</div>`).join("")}
+    <div class="panel">
+      ${head}
+      <div class="table-wrap" style="margin-top:12px"><table>
+        <thead><tr><th>Line</th><th>Description</th><th class="num">Amount</th></tr></thead>
+        <tbody>${f.lines.map((l) => `<tr><td style="white-space:nowrap">${esc(l.line)}</td><td>${esc(l.label)}${l.note ? `<div class="hash">${esc(l.note)}</div>` : ""}</td><td class="num">${fmtLine(l)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      ${f.liabilities?.length ? `<h3>Tax liability</h3><div class="table-wrap"><table><tbody>${f.liabilities.map((x) => `<tr><td>${esc(x.label)}</td><td class="num">${usd(x.amountMinor)}</td></tr>`).join("")}
+        <tr><td><strong>Total</strong></td><td class="num"><strong>${usd(f.liabilities.reduce((s, x) => s + BigInt(x.amountMinor), 0n))}</strong></td></tr></tbody></table></div>` : ""}
+      ${slug === "de9" ? table : ""}
+    </div>
+    ${slug === "w2" ? table : ""}`);
+}
+
 async function payRunView(id, runId) {
   await loadEntity(id);
   const r = await api(entPath(`/pay-runs/${runId}`));
@@ -1778,6 +1849,8 @@ async function route() {
     if (parts[0] === "e" && parts[1]) {
       if (parts[2] === "reports" && REPORTS.some(([k]) => k === parts[3])) rep.tab = parts[3];
       if (parts[2] === "payroll" && parts[3] === "run" && parts[4]) return await payRunView(parts[1], parts[4]);
+      if (parts[2] === "payroll" && parts[3] === "forms") return await formsView(parts[1], parts[4]);
+      if (parts[2] === "payroll" && parts[3] === "form" && parts[4]) return await formView(parts[1], parts[4], parts[5], parts[6]);
       if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
       const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
@@ -1891,6 +1964,15 @@ document.addEventListener("click", async (ev) => {
       URL.revokeObjectURL(url);
       b.disabled = false;
       toast("Bank file downloaded. Upload it on your bank's ACH page, then delete it from this computer");
+    } else if (a === "form-ssn") {
+      await formView(state.entity.entity.id, b.dataset.slug, b.dataset.year, b.dataset.quarter || undefined, true);
+    } else if (a === "form-csv") {
+      const res = await api(entPath(`/payroll-forms/prepared?form=${b.dataset.slug}&year=${b.dataset.year}${b.dataset.quarter ? `&quarter=${b.dataset.quarter}` : ""}&format=csv${document.querySelector("[data-action=form-ssn]") ? "" : "&ssn=full"}`), { raw: true });
+      if (!res.ok) throw new Error((await res.json()).error);
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "form.csv";
+      const url = URL.createObjectURL(await res.blob());
+      Object.assign(document.createElement("a"), { href: url, download: name }).click();
+      URL.revokeObjectURL(url);
     } else if (a === "print") {
       window.print();
     } else if (a === "logout") {
@@ -2184,6 +2266,10 @@ document.addEventListener("submit", async (ev) => {
       state.entity.fresh = false;
       toast(r.late ? "Recorded. It was paid after the due date, so a late-deposit penalty may follow" : "Payment recorded and posted to the books");
       await payrollView(state.entity.entity.id);
+    } else if (kind === "edd-account") {
+      await api(entPath("/payroll-settings"), { body: { caEmployerAccount: d.caEmployerAccount } });
+      toast("EDD account number saved");
+      await route();
     } else if (kind === "deposit-schedule") {
       await api(entPath("/payroll-settings"), { body: { federalDepositSchedule: d.federalDepositSchedule } });
       toast("Deposit schedule saved");
