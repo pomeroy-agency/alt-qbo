@@ -41,6 +41,11 @@ CREATE TABLE subscriptions (
   card_brand             text,
   card_last4             text CHECK (card_last4 ~ '^\d{4}$'),
   card_exp               text,
+  -- An accounting or HR firm that brought this client in. With a discount
+  -- set, every charge is that percent lower; firms that chose a referral fee
+  -- instead are paid outside the app, and the discount stays 0.
+  partner_org_id         uuid REFERENCES organizations(id),
+  partner_discount_pct   int NOT NULL DEFAULT 0 CHECK (partner_discount_pct BETWEEN 0 AND 50),
   -- The customer record for this organisation in the seller's books.
   seller_contact_id      uuid,
   created_at             timestamptz NOT NULL DEFAULT now(),

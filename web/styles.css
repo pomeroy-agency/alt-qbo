@@ -206,3 +206,6 @@ details summary { cursor: pointer; color: var(--brand); }
 .card.plan input { justify-self: start; }
 .card.plan.on, .card.plan:has(input:checked) { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
 .row.seg { gap: 6px; }
+.card.plan .plan-price { font-size: 26px; font-weight: 700; }
+.card.plan .plan-price .muted { font-size: 14px; font-weight: 400; }
+.muted.small { font-size: 13px; }

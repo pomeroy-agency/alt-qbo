@@ -173,6 +173,7 @@ const authPage = (inner) => `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>Alt-QBO</h1></div>
         ${inner}
       </div>
+      <p class="muted" style="text-align:center;font-size:14px"><a href="/pricing.html">Pricing</a> · <a href="/promises.html">Our promises</a> · <a href="/security.html">Security</a> · <a href="/status.html">Status</a></p>
     </div>`;
 
 async function authView(mode, error = "", notice = "") {
@@ -2027,10 +2028,10 @@ async function billingView() {
     return `<label class="card plan ${on ? "on" : ""}">
       <input type="radio" name="plan" value="${k}" ${on ? "checked" : ""} ${owner || state.org.role === "admin" ? "" : "disabled"}>
       <div class="muted">${PLAN_LABEL[k]}</div>
-      <div class="stat">${price(b.prices.plan[k][interval])} <span class="muted" style="font-size:14px">${per}</span></div>
+      <div class="plan-price">${price(b.prices.plan[k][interval])} <span class="muted">${per}</span></div>
       ${k === "books_payroll" ? `<div>plus ${price(b.prices.perPersonMonth)} for each person paid in a month</div>` : ""}
       <div class="muted">${blurb}</div>
-      <div class="hash">Each extra business ${price(b.prices.extraBusiness[k][interval])} ${per}</div>
+      <div class="muted small">Each extra business ${price(b.prices.extraBusiness[k][interval])} ${per}</div>
     </label>`;
   };
   const next = b.next ? `<p>Next charge on ${longDate(b.next.periodStart)}: <strong>${usd(b.next.subtotalMinor)}</strong> plus California sales tax where it applies, for ${longDate(b.next.periodStart)} to ${longDate(b.next.periodEnd)}.</p>
@@ -2048,7 +2049,7 @@ async function billingView() {
         <div class="row seg"><button class="${interval === "month" ? "" : "secondary"}" data-action="bill-interval" data-v="month">Monthly</button><button class="${interval === "year" ? "" : "secondary"}" data-action="bill-interval" data-v="year">Yearly, 2 months free</button></div></div>
       <form data-form="bill-plan" data-interval="${interval}">
         <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, California sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: California overtime, pay stubs, direct-deposit file, prepared 941, DE 9 and W-2 forms.")}</div>
-        <p class="muted">You have ${b.businesses} business${b.businesses === 1 ? "" : "es"} here. ${b.status === "trialing" ? "Changes apply right away." : "Moving up to Books + Payroll applies now, charged for the days left; anything else applies at the next renewal."}</p>
+        <p class="muted">${b.businesses ? `You have ${b.businesses} business${b.businesses === 1 ? "" : "es"} here.` : "No businesses added yet; the plan price covers the first one."} ${b.status === "trialing" ? "Changes apply right away." : "Moving up to Books + Payroll applies now, charged for the days left; anything else applies at the next renewal."}</p>
         <button type="submit">Save plan</button>
       </form>
     </div>

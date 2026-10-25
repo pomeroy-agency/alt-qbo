@@ -1562,6 +1562,20 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     return signedIn(pool, user.id);
   }
   if (req.method === "GET" && path === "/api/health") return json({ ok: true });
+  // For the public status page: up or down, and last night's backups as counts only.
+  if (req.method === "GET" && path === "/api/status") {
+    try {
+      const b = (await pool.query(
+        `SELECT max(backup_date)::text AS night,
+                count(*) FILTER (WHERE verified)::int AS verified, count(*) FILTER (WHERE NOT verified)::int AS failed
+           FROM backup_runs WHERE backup_date = (SELECT max(backup_date) FROM backup_runs)`,
+      )).rows[0];
+      return json({ api: true, database: true, backups: { lastNight: b.night, verified: b.verified, failed: b.failed } });
+    } catch (err) {
+      console.error("status check failed", err);
+      return json({ api: true, database: false, backups: { lastNight: null, verified: 0, failed: 0 } });
+    }
+  }
   if (req.method === "GET" && path === "/api/rule-packs") {
     return json({ packs: allRulePacks().map((p) => ({ id: p.id, version: p.version, status: p.status, effectiveFrom: p.effectiveFrom, effectiveTo: p.effectiveTo, sources: p.sources, reviewNotes: p.reviewNotes })) });
   }

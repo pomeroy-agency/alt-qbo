@@ -207,3 +207,15 @@ describe("Stripe client", () => {
     expect(String(calls[0]!.init.body)).toContain("off_session=true");
   });
 });
+
+describe("partner discount", () => {
+  it("takes the firm's 20% off every line", async () => {
+    const c = await customer("books");
+    await pool.query("UPDATE subscriptions SET partner_discount_pct = 20 WHERE org_id = $1", [c.orgId]);
+    await endTrial(c.orgId, 1);
+    await runBilling(pool, cfg(), pacificToday(), c.orgId);
+    expect(charges.at(-1)!.amountMinor).toBe(1200n);
+    const ch = (await pool.query("SELECT lines FROM billing_charges WHERE org_id = $1", [c.orgId])).rows[0];
+    expect(ch.lines[0].description).toMatch(/20% partner discount/);
+  });
+});

@@ -47,7 +47,7 @@ interface Sub {
   founding: boolean; price_locked_until: string | null; billing_name: string | null; billing_email: string | null;
   address_line1: string | null; address_city: string | null; address_state: string | null; address_zip: string | null;
   processor_customer: string | null; processor_card: string | null; card_brand: string | null; card_last4: string | null; card_exp: string | null;
-  seller_contact_id: string | null;
+  seller_contact_id: string | null; partner_discount_pct: number;
 }
 
 export interface ChargeLine { description: string; quantity: number; unitMinor: number; periodStart: string; periodEnd: string }
@@ -140,6 +140,12 @@ function peopleLine(prices: PriceList, people: number, from: string, to: string)
 
 const subtotal = (lines: ChargeLine[]) => lines.reduce((s, l) => s + l.quantity * l.unitMinor, 0);
 
+/** A partner firm's client discount, shown on each line it lowers. */
+function discounted(lines: ChargeLine[], pct: number): ChargeLine[] {
+  if (!pct) return lines;
+  return lines.map((l) => ({ ...l, description: `${l.description} (${pct}% partner discount)`, unitMinor: Math.round((l.unitMinor * (100 - pct)) / 100) }));
+}
+
 /** What the next renewal would charge, before tax. */
 export async function estimateRenewal(tx: Tx, sub: Sub, today: string): Promise<{ periodStart: string; periodEnd: string; lines: ChargeLine[]; subtotalMinor: number }> {
   const plan = sub.next_plan ?? sub.plan;
@@ -151,7 +157,8 @@ export async function estimateRenewal(tx: Tx, sub: Sub, today: string): Promise<
     const from = addDays(sub.people_billed_through, 1);
     lines.push(...peopleLine(sub.prices, await peoplePaid(tx, sub.org_id, from, addDays(start, -1)), from, addDays(start, -1)));
   }
-  return { periodStart: start, periodEnd: end, lines, subtotalMinor: subtotal(lines) };
+  const final = discounted(lines, sub.partner_discount_pct);
+  return { periodStart: start, periodEnd: end, lines: final, subtotalMinor: subtotal(final) };
 }
 
 // --------------------------------------------------------------- changes
@@ -206,7 +213,7 @@ export async function choosePlan(tx: Tx, orgId: string, today: string, plan: unk
     const total = daysBetween(sub.period_start!, sub.period_end) + 1;
     const businesses = await businessCount(tx, orgId);
     const full = (p: Plan) => sub.prices.plan[p][sub.interval] + Math.max(0, businesses - 1) * sub.prices.extraBusiness[p][sub.interval];
-    const diff = Math.round(((full("books_payroll") - full("books")) * left) / total);
+    const diff = Math.round(((full("books_payroll") - full("books")) * left * (100 - sub.partner_discount_pct)) / total / 100);
     await tx.query("UPDATE subscriptions SET plan = 'books_payroll', next_plan = NULL, next_interval = $2, updated_at = now() WHERE org_id = $1", [orgId, nextInterval]);
     // Payroll for the rest of a yearly period: people are billed monthly from now.
     if (sub.interval === "year") await tx.query("UPDATE subscriptions SET people_billed_through = $2 WHERE org_id = $1", [orgId, addDays(today, -1)]);
@@ -277,7 +284,7 @@ export async function billingSummary(tx: Tx, orgId: string, today: string, cfg: 
     free: false as const,
     plan: sub.plan, interval: sub.interval, nextPlan: sub.next_plan, nextInterval: sub.next_interval, status: sub.status,
     trialEndsOn: sub.trial_ends_on, periodStart: sub.period_start, periodEnd: sub.period_end, cancelAtPeriodEnd: sub.cancel_at_period_end,
-    founding: sub.founding, priceLockedUntil: sub.price_locked_until, foundingSeatsLeft: foundingLeft,
+    founding: sub.founding, priceLockedUntil: sub.price_locked_until, foundingSeatsLeft: foundingLeft, partnerDiscountPct: sub.partner_discount_pct,
     prices: sub.prices,
     billing: { name: sub.billing_name, email: sub.billing_email, address: sub.address_line1 ? { line1: sub.address_line1, city: sub.address_city, state: sub.address_state, zip: sub.address_zip } : null },
     card: sub.card_last4 ? { brand: sub.card_brand, last4: sub.card_last4, exp: sub.card_exp } : null,
@@ -329,7 +336,7 @@ async function createDueCharges(tx: Tx, orgId: string, today: string): Promise<v
     const from = addDays(sub.people_billed_through, 1);
     const to = addDays(addMonths(from, 1), -1);
     if (today > to) {
-      const lines = peopleLine(sub.prices, await peoplePaid(tx, orgId, from, to), from, to);
+      const lines = discounted(peopleLine(sub.prices, await peoplePaid(tx, orgId, from, to), from, to), sub.partner_discount_pct);
       if (lines.length) await createCharge(tx, sub, "people", from, to, lines, sub.plan, sub.interval);
       else await tx.query("UPDATE subscriptions SET people_billed_through = $2 WHERE org_id = $1", [orgId, to]);
     }

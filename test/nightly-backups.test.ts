@@ -71,3 +71,12 @@ describe("nightly backups", () => {
     expect(list.data.restorePoints.map((r: { date: string }) => r.date)).toEqual(["2026-11-01"]);
   });
 });
+
+describe("status", () => {
+  it("reports the service and last night's backups, without naming anyone", async () => {
+    const r = await call("/api/status");
+    expect(r.data).toMatchObject({ api: true, database: true });
+    expect(r.data.backups.lastNight).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(JSON.stringify(r.data)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+  });
+});
