@@ -1,33 +1,44 @@
-# Sending email through Gmail
+# Sending email
 
-Alt-QBO sends sign-in links, password resets, email confirmations and team invitations through one Gmail or Google Workspace mailbox over SMTP. Until it is set up, those features stay hidden and invitation links are copied by hand, as before.
+Alt-QBO sends sign-in links, password resets, email confirmations and team invitations over SMTP. Until it is set up, those features stay hidden and invitation links are copied by hand.
 
-## 1. Pick the mailbox
+Brevo is the recommended route: mail comes from your own domain, and its SMTP key can only send mail. A Gmail mailbox with an app password also works, but an app password opens the whole mailbox, so use one only on an account kept for this.
 
-Use a mailbox people will recognise, such as `books@yourdomain.com` on Google Workspace. A personal `@gmail.com` address works too, but Workspace is better for deliverability and its limit is higher (about 2,000 messages a day, against about 500).
+## Brevo
 
-## 2. Create an app password
+1. **Verify the sender.** In Brevo, go to Senders, Domains & Dedicated IPs. Add and authenticate the domain (for example `pomeroyagency.com`; Brevo gives DNS records for DKIM and DMARC), then add a sender such as `books@pomeroyagency.com`.
+2. **Create an SMTP key.** Go to SMTP & API, then the SMTP tab, and generate a new SMTP key named "Alt-QBO". The same page shows the SMTP server and your login.
+3. **Add the settings to Netlify.** Open Site configuration, then Environment variables, and add:
 
-1. Sign in to that mailbox's Google Account and turn on 2-Step Verification (Security, 2-Step Verification).
-2. Go to <https://myaccount.google.com/apppasswords>, create an app password named "Alt-QBO", and copy the 16 characters.
+   | Variable | Value |
+   |---|---|
+   | `SMTP_HOST` | `smtp-relay.brevo.com` |
+   | `SMTP_PORT` | `587` |
+   | `SMTP_USER` | the login shown on Brevo's SMTP tab (it looks like `…@smtp-brevo.com`) |
+   | `SMTP_PASSWORD` | the SMTP key (mark it secret) |
+   | `MAIL_FROM` | `Alt-QBO <books@pomeroyagency.com>`, using the sender you verified |
+   | `APP_URL` | optional: the address links should point at, such as `https://alt-qbo.netlify.app`. It defaults to Netlify's URL for the deploy |
 
-On Google Workspace, if the App passwords page says the setting isn't available, a Workspace admin needs to allow users to manage 2-Step Verification (Admin console, Security, Authentication, 2-Step Verification).
+4. **Redeploy.**
 
-## 3. Add the settings to Netlify
+Once it's live, signing up sends a confirmation email, and the sign-in page shows "Forgot your password?" and "Email me a sign-in link".
 
-In the Netlify project (Site configuration, Environment variables), add:
+Brevo counts these emails against the plan's monthly allowance, which is shared with marketing campaigns. Brevo's Transactional log shows each message that was sent, delivered or bounced.
 
-| Variable | Value |
-|---|---|
-| `GMAIL_USER` | the mailbox address |
-| `GMAIL_APP_PASSWORD` | the app password (spaces don't matter); mark it secret |
-| `MAIL_FROM` | optional, e.g. `Alt-QBO <books@yourdomain.com>` |
-| `APP_URL` | optional, the address links should point at, e.g. `https://alt-qbo.netlify.app`; defaults to Netlify's URL for the deploy |
+## Gmail instead
 
-Then redeploy. Signing up sends a confirmation email; "Forgot your password?" and "Email me a sign-in link" appear on the sign-in page.
+1. In the Google Account you will send from, turn on 2-Step Verification.
+2. Create an app password at <https://myaccount.google.com/apppasswords>.
+3. In Netlify, set `GMAIL_USER` to the mailbox address and `GMAIL_APP_PASSWORD` to the app password. `MAIL_FROM` is optional.
 
-## Limits and notes
+Gmail allows about 500 emails a day.
+
+If both are configured, the `SMTP_*` settings win.
+
+## Limits
 
 - Each person can request at most five links of each kind an hour.
-- Gmail may rewrite the From address to the mailbox itself if `MAIL_FROM` names a different address that isn't set up as a "Send mail as" alias.
-- To move to a sending service later, point `SMTP_HOST` at its SMTP server and use its credentials in the same two variables, or replace `gmailFromEnv` in `src/app/mail.ts`.
+- Links are one-time and short-lived:
+  - sign-in links last 15 minutes;
+  - reset links last 1 hour;
+  - confirmation links last 3 days.

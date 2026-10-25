@@ -6,7 +6,7 @@ import path from "node:path";
 import { createPool } from "../src/db/pool.js";
 import { migrate } from "../src/db/migrate.js";
 import { handleApi } from "../src/app/api.js";
-import { gmailFromEnv, type Mailer } from "../src/app/mail.js";
+import { mailerFromEnv, type Mailer } from "../src/app/mail.js";
 
 const pool = createPool();
 await migrate(pool);
@@ -15,7 +15,7 @@ const types: Record<string, string> = { ".html": "text/html", ".js": "text/javas
 const port = Number(process.env.PORT ?? 8888);
 // DEV_MAIL=log prints emails to the console instead of sending them.
 const logMailer: Mailer = async (m) => console.log(`\n--- email to ${m.to}: ${m.subject}\n${m.text}---`);
-const mailer = gmailFromEnv() ?? (process.env.DEV_MAIL === "log" ? logMailer : undefined);
+const mailer = mailerFromEnv() ?? (process.env.DEV_MAIL === "log" ? logMailer : undefined);
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);

@@ -95,3 +95,13 @@ describe("email sign-in, reset and confirmation", () => {
     expect(mail.link).toBe(`https://books.example/#/join/${inv.data.token}`);
   });
 });
+
+describe("mail configuration", () => {
+  it("prefers SMTP settings, stays off without a sender for them, and falls back to Gmail or nothing", async () => {
+    const { mailerFromEnv } = await import("../src/app/mail.js");
+    expect(mailerFromEnv({})).toBeUndefined();
+    expect(mailerFromEnv({ GMAIL_USER: "a@gmail.com", GMAIL_APP_PASSWORD: "abcd efgh ijkl mnop" })).toBeTypeOf("function");
+    expect(mailerFromEnv({ SMTP_HOST: "smtp-relay.brevo.com", SMTP_USER: "x@smtp-brevo.com", SMTP_PASSWORD: "key", MAIL_FROM: "Alt-QBO <books@example.com>" })).toBeTypeOf("function");
+    expect(mailerFromEnv({ SMTP_HOST: "smtp-relay.brevo.com", SMTP_USER: "x@smtp-brevo.com", SMTP_PASSWORD: "key" })).toBeUndefined();
+  });
+});
