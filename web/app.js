@@ -558,7 +558,7 @@ const DOC = {
   invoice: { path: "invoices", title: "Invoices", one: "invoice", who: "Customer", contactKinds: ["customer", "both"], lineTypes: ["revenue", "liability"], defaultAccount: "4000",
     blurb: "Issuing an invoice posts it to receivables straight away. An issued invoice can't be edited; void it and issue a new one." },
   bill: { path: "bills", title: "Bills", one: "bill", who: "Vendor", contactKinds: ["vendor", "both"], lineTypes: ["expense", "asset"], defaultAccount: "6000",
-    blurb: "Recording a bill posts it to payables. Sales tax you pay on purchases is part of the expense, so bills don't carry a tax line." },
+    blurb: "Recording a bill posts it to payables. Sales tax a vendor charges is part of the expense. If a vendor didn't charge California tax on something taxable, such as software from 2027, tick the use tax box and Alt-QBO adds the use tax you owe the state." },
 };
 
 function docAccountOptions(kind, selected) {
@@ -578,6 +578,9 @@ const isTaxable = (category) => taxCategories().find((c) => c.id === category)?.
 /** Software (a digital product): its tax follows when the customer's access starts, so the line asks for the dates. */
 const isSoftware = (category) => taxCategories().find((c) => c.id === category)?.digitalProduct ?? false;
 const DEFAULT_KIND = "professional_service";
+/** Use tax on bills is mostly about software and SaaS from vendors that don't charge California tax. */
+const DEFAULT_PURCHASE_KIND = "prewritten_software";
+const useTaxOn = () => Boolean(document.querySelector("form[data-form=document][data-kind=bill] [name=useTax]")?.checked);
 const pct = (rate) => `${(Number(rate) * 100).toFixed(3).replace(/\.?0+$/, "")}%`;
 
 function kindOptions(selected) {
@@ -589,7 +592,7 @@ function itemOptions(selected = "") {
     .map((i) => `<option value="${i.id}" ${i.id === selected ? "selected" : ""}>${esc(i.name)}</option>`).join("")}`;
 }
 
-function docLineRow(kind, l = {}) {
+function docLineRow(kind, l = {}, useTax = useTaxOn()) {
   const tail = `
     <td><input name="quantity" class="mono" inputmode="decimal" aria-label="Quantity" value="${esc(l.quantity ?? "1")}" style="width:80px"></td>
     <td><input name="unitPrice" class="mono" inputmode="decimal" aria-label="Price" placeholder="0.00" value="${esc(l.unitPrice ?? "")}"></td>
@@ -606,9 +609,14 @@ function docLineRow(kind, l = {}) {
       ${tail}
     </tr>`;
   }
+  // A bill's line asks what was bought only when the bill adds use tax.
+  const cat = l.taxCategory ?? DEFAULT_PURCHASE_KIND;
   return `<tr>
     <td><select name="account" aria-label="Account">${docAccountOptions(kind, l.account ?? DOC[kind].defaultAccount)}</select></td>
-    <td><input name="description" aria-label="Description" value="${esc(l.description ?? "")}"></td>
+    <td><input name="description" aria-label="Description" value="${esc(l.description ?? "")}">
+      <div data-use-kind ${useTax ? "" : "hidden"} style="margin-top:6px"><select name="taxCategory" aria-label="Kind of purchase">${kindOptions(cat)}</select><div class="hash" data-taxable>${isTaxable(cat) ? "Use tax" : "No use tax"}</div>
+        <div data-period ${isSoftware(cat) ? "" : "hidden"}><label class="hash">Access from<input name="servicePeriodStart" type="date" value="${esc(l.servicePeriodStart ?? "")}"></label>
+          <label class="hash">to<input name="servicePeriodEnd" type="date" value="${esc(l.servicePeriodEnd ?? "")}"></label></div></div></td>
     ${tail}
   </tr>`;
 }
@@ -617,8 +625,15 @@ function readDocLines() {
   return [...document.querySelectorAll("#doc-lines tr")].map((tr) => {
     const v = (n) => tr.querySelector(`[name=${n}]`)?.value.trim() ?? "";
     const common = { description: v("description"), quantity: v("quantity"), unitPrice: v("unitPrice") };
-    if (!tr.querySelector("[name=taxCategory]")) return { ...common, account: v("account") };
     const software = isSoftware(v("taxCategory"));
+    if (tr.querySelector("[name=account]")) {
+      if (!useTaxOn()) return { ...common, account: v("account") };
+      return {
+        ...common, account: v("account"), taxCategory: v("taxCategory"),
+        servicePeriodStart: software ? v("servicePeriodStart") || undefined : undefined,
+        servicePeriodEnd: software ? v("servicePeriodEnd") || undefined : undefined,
+      };
+    }
     return {
       ...common, itemId: v("itemId") || undefined, taxCategory: v("taxCategory"),
       servicePeriodStart: software ? v("servicePeriodStart") || undefined : undefined,
@@ -637,6 +652,7 @@ function scheduleTaxPreview() {
 }
 
 async function runTaxPreview() {
+  if (document.querySelector("form[data-form=document][data-kind=bill]")) return runUseTaxPreview();
   const form = document.querySelector("form[data-form=document][data-kind=invoice]");
   if (!form) return;
   const d = formData(form);
@@ -665,17 +681,52 @@ async function runTaxPreview() {
   }
 }
 
+/** Asks the server what use tax this bill adds, when the vendor didn't charge California tax. */
+async function runUseTaxPreview() {
+  const form = document.querySelector("form[data-form=document][data-kind=bill]");
+  if (!form) return;
+  const on = useTaxOn();
+  form.querySelectorAll("[data-use-tax]").forEach((el) => { el.hidden = !on; });
+  form.querySelectorAll("[data-use-kind]").forEach((el) => { el.hidden = !on; });
+  const d = formData(form);
+  const seq = ++docTax.seq;
+  const show = (rate, explanation, error = "", r = {}) => {
+    if (seq !== docTax.seq) return;
+    Object.assign(docTax, { rate, explanation, error, taxable: r.taxable ?? null, taxShare: null });
+    const note = document.getElementById("doc-tax-note");
+    note.className = error ? "alert warn" : "hash";
+    note.textContent = on ? error || explanation : "";
+    const manual = form.querySelector("[data-manual]");
+    if (manual) manual.hidden = !on || !error;
+    updateDocTotals();
+  };
+  if (!on) return show("0", "");
+  const lines = readDocLines();
+  const manualTax = d.manualRate && d.manualReason ? { ratePercent: d.manualRate, reason: d.manualReason } : undefined;
+  try {
+    const r = await api(entPath("/bills/use-tax-preview"), { body: { issueDate: d.issueDate, lines, manualTax } });
+    show(r.rate, `${r.explanation} If you don't have a seller's permit, report it on a CDTFA use tax return or your California income tax return.`, "", r);
+  } catch (err) {
+    show(null, "", err.message);
+  }
+}
+
 /** Rough preview of the totals; the server's figures are the ones that post. */
 function updateDocTotals() {
   const form = document.querySelector("form[data-form=document]");
   if (!form) return;
   const rate = Number(docTax.rate ?? 0);
   let sub = 0n, tax = 0n, bad = false;
+  const bill = form.dataset.kind === "bill";
+  const useTax = bill && useTaxOn();
   // The server's answer per line wins once it has one; it knows the access dates and the customer's certificates.
   const lineTaxable = (i, cat) => docTax.taxable?.[i] ?? isTaxable(cat);
   document.querySelectorAll("#doc-lines tr").forEach((tr, i) => {
     const cat = tr.querySelector("[name=taxCategory]");
-    if (cat) {
+    if (cat && bill) {
+      tr.querySelector("[data-taxable]").textContent = lineTaxable(i, cat.value) ? "Use tax" : "No use tax";
+      tr.querySelector("[data-period]").hidden = !isSoftware(cat.value);
+    } else if (cat) {
       const share = docTax.taxShare?.[i];
       tr.querySelector("[data-taxable]").textContent = !lineTaxable(i, cat.value) ? "Not taxable" : share ? `Taxable on ${Number(share) * 100}%` : "Taxable";
       tr.querySelector("[data-period]").hidden = !isSoftware(cat.value);
@@ -685,10 +736,20 @@ function updateDocTotals() {
     if (p === null || !(q > 0)) { bad = true; tr.querySelector("[data-amount]").textContent = ""; return; }
     const amt = BigInt(Math.round(q * Number(p)));
     sub += amt;
-    if (cat && lineTaxable(i, cat.value)) tax += BigInt(Math.round(Math.round(Number(amt) * Number(docTax.taxShare?.[i] ?? 1)) * rate));
+    if (cat && (!bill || useTax) && lineTaxable(i, cat.value)) tax += BigInt(Math.round(Math.round(Number(amt) * Number(docTax.taxShare?.[i] ?? 1)) * rate));
     tr.querySelector("[data-amount]").textContent = usd(amt);
   });
   document.getElementById("doc-sub").textContent = usd(sub);
+  if (bill) {
+    // Use tax is owed to the state, not the vendor: shown below the bill's total, never in it.
+    const ut = document.getElementById("doc-use-tax");
+    if (ut) ut.textContent = useTax && docTax.rate === null ? "—" : usd(useTax ? tax : 0n);
+    const ul = document.getElementById("doc-use-tax-label");
+    if (ul) ul.textContent = useTax && docTax.rate && Number(docTax.rate) > 0 ? `Use tax you owe the state, ${pct(docTax.rate)} (not paid to the vendor)` : "Use tax you owe the state (not paid to the vendor)";
+    document.getElementById("doc-total").textContent = usd(sub);
+    document.getElementById("doc-save").disabled = bad || sub <= 0n;
+    return;
+  }
   const t = document.getElementById("doc-tax");
   if (t) t.textContent = docTax.rate === null && tax === 0n && form.dataset.kind === "invoice" && !document.getElementById("doc-tax-note").textContent.startsWith("No sales tax") ? "—" : usd(tax);
   const tl = document.getElementById("doc-tax-label");
@@ -715,9 +776,11 @@ async function docsView(id, kind) {
     kind === "invoice" ? api(entPath("/items")) : { items: [] },
   ]);
   state.items = items;
-  Object.assign(docTax, { rate: null, explanation: "", error: "" });
+  state.docContacts = contacts;
+  Object.assign(docTax, { rate: null, explanation: "", error: "", taxable: null, taxShare: null });
   const canSetRate = ["owner", "accountant"].includes(state.org.role);
   const who = contacts.filter((c) => d.contactKinds.includes(c.kind));
+  const useTaxDefault = kind === "bill" && Boolean(who[0]?.accrueUseTax);
   const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
   const issue = bookDate();
   app.innerHTML = shell(d.path, `
@@ -747,20 +810,22 @@ async function docsView(id, kind) {
           ${kind === "invoice" ? "" : `<label>Vendor's invoice no.<input name="reference" style="width:150px"></label>`}
           <label style="flex:1;min-width:200px">Memo<input name="memo"></label>
         </div>
+        ${kind === "bill" ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" name="useTax" ${useTaxDefault ? "checked" : ""}> The vendor didn't charge California sales tax: add the use tax I owe</label>` : ""}
         <div class="table-wrap"><table>
           <thead><tr>${kind === "invoice" ? `<th style="width:17%">Product or service</th><th>Description</th><th style="width:25%">Kind of sale</th>` : `<th style="width:28%">Account</th><th>Description</th>`}<th>Qty</th><th class="num" style="width:12%">Price</th><th class="num">Amount</th><th></th></tr></thead>
-          <tbody id="doc-lines">${docLineRow(kind)}</tbody>
+          <tbody id="doc-lines">${docLineRow(kind, {}, useTaxDefault)}</tbody>
           <tfoot>
             <tr><td><button type="button" class="link" data-action="add-doc-line" data-kind="${kind}">+ Add line</button></td><td colspan="${kind === "invoice" ? 4 : 3}" class="num muted">Subtotal</td><td class="num" id="doc-sub">$0.00</td><td></td></tr>
             ${kind === "invoice" ? `<tr><td colspan="5" class="num muted" id="doc-tax-label">Sales tax</td><td class="num" id="doc-tax">$0.00</td><td></td></tr>` : ""}
             <tr><td colspan="${kind === "invoice" ? 5 : 4}" class="num">Total</td><td class="num" id="doc-total">$0.00</td><td></td></tr>
+            ${kind === "bill" ? `<tr data-use-tax ${useTaxDefault ? "" : "hidden"}><td colspan="4" class="num muted" id="doc-use-tax-label">Use tax you owe the state (not paid to the vendor)</td><td class="num" id="doc-use-tax">$0.00</td><td></td></tr>` : ""}
           </tfoot>
         </table></div>
-        ${kind === "invoice" ? `<p id="doc-tax-note" class="hash" style="margin-top:8px"></p>
-          ${canSetRate ? `<div data-manual class="row" hidden>
-            <label>Set the rate by hand (%)<input name="manualRate" inputmode="decimal" placeholder="9.5" style="width:90px"></label>
-            <label style="flex:1">Why<input name="manualReason" placeholder="e.g. CDTFA lookup down; rate from the CDTFA website"></label>
-          </div>` : ""}` : ""}
+        <p id="doc-tax-note" class="hash" style="margin-top:8px"></p>
+        ${canSetRate ? `<div data-manual class="row" hidden>
+          <label>Set the rate by hand (%)<input name="manualRate" inputmode="decimal" placeholder="9.5" style="width:90px"></label>
+          <label style="flex:1">Why<input name="manualReason" placeholder="e.g. CDTFA lookup down; rate from the CDTFA website"></label>
+        </div>` : ""}
         <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button></div>
       </form>
     </div>` : ""}
@@ -796,7 +861,7 @@ async function docsView(id, kind) {
       </table></div>
     </div>`);
   updateDocTotals();
-  if (kind === "invoice" && canWrite) runTaxPreview();
+  if (canWrite && (kind === "invoice" || useTaxDefault)) runTaxPreview();
 }
 
 /** One invoice or bill as a document: what the customer sees, plus its payments. Prints cleanly. */
@@ -832,12 +897,13 @@ async function docPageView(id, kind, docId) {
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
-        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.taxable ? ` <span class="hash">taxable${l.taxableMinor !== null && l.taxableMinor !== undefined ? ` on ${usd(l.taxableMinor)}` : ""}</span>` : ""}${l.servicePeriodStart ? `<div class="hash">Access ${longDate(l.servicePeriodStart)}${l.servicePeriodEnd ? ` to ${longDate(l.servicePeriodEnd)}` : ""}</div>` : ""}</td>
+        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.taxable ? ` <span class="hash">taxable${l.taxableMinor !== null && l.taxableMinor !== undefined ? ` on ${usd(l.taxableMinor)}` : ""}</span>` : ""}${l.useTaxable ? ` <span class="hash">use tax ${usd(l.useTaxMinor)}</span>` : ""}${l.servicePeriodStart ? `<div class="hash">Access ${longDate(l.servicePeriodStart)}${l.servicePeriodEnd ? ` to ${longDate(l.servicePeriodEnd)}` : ""}</div>` : ""}</td>
           <td class="num">${esc(l.quantity)}</td><td class="num">${usd(l.unitPriceMinor)}</td><td class="num">${usd(l.amountMinor)}</td></tr>`).join("")}</tbody>
         <tfoot>
           <tr><td colspan="3" class="num muted">Subtotal</td><td class="num">${usd(x.subtotalMinor)}</td></tr>
           ${invoice && BigInt(x.taxMinor) ? `<tr><td colspan="3" class="num muted">Sales tax ${pct(x.taxRate)}</td><td class="num">${usd(x.taxMinor)}</td></tr>` : ""}
           <tr><td colspan="3" class="num">Total</td><td class="num">${usd(x.totalMinor)}</td></tr>
+          ${!invoice && BigInt(x.useTaxMinor) ? `<tr><td colspan="3" class="num muted">Use tax you owe the state, ${pct(x.useTaxRate)} (not paid to the vendor)</td><td class="num">${usd(x.useTaxMinor)}</td></tr>` : ""}
           ${BigInt(x.paidMinor) ? `<tr><td colspan="3" class="num muted">Paid</td><td class="num">${usd(-BigInt(x.paidMinor))}</td></tr><tr><td colspan="3" class="num">Balance due</td><td class="num">${usd(due)}</td></tr>` : ""}
         </tfoot>
       </table></div>
@@ -848,12 +914,22 @@ async function docPageView(id, kind, docId) {
       <h2>Behind the scenes</h2>
       <div class="table-wrap"><table>
         <thead><tr><th>Account</th><th>Line</th><th class="num">Amount</th><th class="num">Tax</th></tr></thead>
-        <tbody>${x.lines.map((l) => `<tr><td>${l.accountCode} · ${esc(l.accountName)}</td><td>${esc(l.description)}</td><td class="num">${usd(l.amountMinor)}</td><td class="num">${usd(l.taxMinor, { blankZero: true })}</td></tr>`).join("")}</tbody>
+        <tbody>${x.lines.map((l) => `<tr><td>${l.accountCode} · ${esc(l.accountName)}</td><td>${esc(l.description)}</td><td class="num">${usd(l.amountMinor)}</td><td class="num">${usd(invoice ? l.taxMinor : l.useTaxMinor, { blankZero: true })}</td></tr>`).join("")}</tbody>
       </table></div>
-      ${invoice ? `<p style="margin-top:8px">${esc(taxExplanation(x))}</p>` : ""}
+      ${invoice ? `<p style="margin-top:8px">${esc(taxExplanation(x))}</p>` : x.useTaxSource !== "none" ? `<p style="margin-top:8px">${esc(useTaxExplanation(x))}</p>` : ""}
       <p class="hash" style="margin-top:8px">Created by ${esc(x.createdBy.replace("user:", ""))}</p>
       ${x.payments.length ? `<h3>Payments</h3>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}` : ""}
     </div>`);
+}
+
+/** Why a bill has the use tax it has, from what was frozen on it. Mirrors explainUseTax on the server. */
+function useTaxExplanation(x) {
+  const at = x.useTaxAddress ? ` (${x.useTaxAddress})` : "";
+  return {
+    not_taxable: "No use tax: nothing on this bill is taxable in California.",
+    lookup: `Use tax ${pct(x.useTaxRate)} on taxable lines, the rate for ${x.useTaxJurisdiction}${at}. You owe it to the CDTFA, not the vendor; it's in sales tax payable.`,
+    manual: `Use tax ${pct(x.useTaxRate)}, set by hand: ${x.useTaxNote}. You owe it to the CDTFA, not the vendor; it's in sales tax payable.`,
+  }[x.useTaxSource] ?? "No use tax.";
 }
 
 /** Why an issued invoice has the tax it has, from what was frozen on it. Mirrors explainTax on the server. */
@@ -885,7 +961,7 @@ async function contactsView(id) {
     <div class="head"><div><h1>Customers and vendors</h1><p class="muted">The people and businesses you invoice and pay. A customer's address decides the sales tax rate on what you sell them.</p></div></div>
     <div class="panel table-wrap"><table>
       <thead><tr><th>Name</th><th>Type</th><th>Email</th><th>Address</th><th></th></tr></thead>
-      <tbody>${contacts.map((c) => `<tr><td>${esc(c.name)}${c.resalePermit ? `<div class="hash">Resale certificate · permit ${esc(c.resalePermit)}</div>` : ""}${c.directPayPermit ? `<div class="hash">Pays use tax on software directly · permit ${esc(c.directPayPermit)}</div>` : ""}${c.mpu ? `<div class="hash">Software ${esc(c.mpu.caPercent)}% used in California · certificate ${esc(c.mpu.certificateDate)}</div>` : ""}</td><td>${CONTACT_LABEL[c.kind]}</td>
+      <tbody>${contacts.map((c) => `<tr><td>${esc(c.name)}${c.resalePermit ? `<div class="hash">Resale certificate · permit ${esc(c.resalePermit)}</div>` : ""}${c.directPayPermit ? `<div class="hash">Pays use tax on software directly · permit ${esc(c.directPayPermit)}</div>` : ""}${c.mpu ? `<div class="hash">Software ${esc(c.mpu.caPercent)}% used in California · certificate ${esc(c.mpu.certificateDate)}</div>` : ""}${c.accrueUseTax ? `<div class="hash">Doesn't charge California tax · bills add use tax</div>` : ""}</td><td>${CONTACT_LABEL[c.kind]}</td>
           <td>${esc(c.email ?? "")}</td><td>${esc(oneLine(c.address)) || (c.kind === "vendor" ? "" : `<span class="muted">No address</span>`)}</td>
           <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="contact-edit" data-id="${c.id}">Edit</button>` : ""}</td></tr>
         <tr hidden data-contact-edit="${c.id}"><td colspan="5">
@@ -897,6 +973,7 @@ async function contactsView(id) {
               <label title="Past $5,000,000 of software a year from you, the buyer reports the tax (SB 122)">Direct payment permit<input name="directPayPermit" value="${esc(c.directPayPermit ?? "")}" placeholder="Only if they pay use tax directly" style="width:190px"></label>
               <label title="From the customer's multiple-points-of-use certificate">Software used in California %<input name="mpuCaPercent" inputmode="decimal" value="${esc(c.mpu?.caPercent ?? "")}" placeholder="All" style="width:80px"></label>
               <label>Certificate date<input name="mpuCertificateDate" type="date" value="${esc(c.mpu?.certificateDate ?? "")}"></label>` : ""}
+            ${c.kind !== "customer" ? `<label class="check" style="white-space:nowrap" title="Their bills then add the California use tax you owe, for example on software or SaaS from 2027"><input type="checkbox" name="accrueUseTax" ${c.accrueUseTax ? "checked" : ""}> Doesn't charge California sales tax</label>` : ""}
             <button type="submit">Save</button>
           </form></td></tr>`).join("") || `<tr><td colspan="5" class="muted">No customers or vendors yet.</td></tr>`}</tbody>
     </table></div>
@@ -1194,7 +1271,7 @@ async function reportsView(id) {
   } else if (rep.tab === "st") {
     const r = await api(entPath(`${path}?${q}`));
     const line = (label, minor, note = "") => `<tr><td>${label}${note ? `<div class="hash">${note}</div>` : ""}</td><td class="num">${usd(minor)}</td></tr>`;
-    body = `<p class="muted">The figures for your CDTFA sales and use tax return, from invoices dated in this period. Alt-QBO prepares them; you or your accountant file and pay on the CDTFA's site.</p>
+    body = `<p class="muted">The figures for your CDTFA sales and use tax return, from invoices and bills dated in this period. Alt-QBO prepares them; you or your accountant file and pay on the CDTFA's site.</p>
       <table><tbody>
         ${line("Total sales", r.totalSalesMinor, "All invoiced sales before tax")}
         ${r.nontaxable.map((n) => line(`Less nontaxable: ${esc(n.label)}`, n.amountMinor)).join("")}
@@ -1210,7 +1287,15 @@ async function reportsView(id) {
       <table><thead><tr><th>Where</th><th class="num">Rate</th><th class="num">Invoices</th><th class="num">Taxable sales</th><th class="num">Tax</th></tr></thead>
       <tbody>${r.byJurisdiction.map((j) => `<tr><td>${esc(j.jurisdiction)}</td><td class="num">${j.ratePercent}%</td><td class="num">${j.invoices}</td><td class="num">${usd(j.taxableMinor)}</td><td class="num">${usd(j.taxMinor)}</td></tr>`).join("")
         || `<tr><td colspan="5" class="muted">No taxable sales in these dates.</td></tr>`}</tbody></table>
-      <p style="margin-top:12px">Sales tax owed per the books on ${longDate(r.to)}: <strong class="mono">${usd(r.payableMinor)}</strong></p>`;
+      <h3>Use tax on purchases</h3>
+      <p class="muted">From bills where the vendor didn't charge California tax. On the return this is "purchases subject to use tax". Without a seller's permit, report it on a CDTFA use tax return or your California income tax return.</p>
+      <table><tbody>
+        ${line("Purchases subject to use tax", r.useTax.purchasesMinor)}
+        ${line("Use tax owed", r.useTax.taxMinor)}
+      </tbody></table>
+      ${r.useTax.byJurisdiction.length ? `<table><thead><tr><th>Where</th><th class="num">Rate</th><th class="num">Bills</th><th class="num">Purchases</th><th class="num">Use tax</th></tr></thead>
+      <tbody>${r.useTax.byJurisdiction.map((j) => `<tr><td>${esc(j.jurisdiction)}</td><td class="num">${j.ratePercent}%</td><td class="num">${j.bills}</td><td class="num">${usd(j.purchasesMinor)}</td><td class="num">${usd(j.taxMinor)}</td></tr>`).join("")}</tbody></table>` : ""}
+      <p style="margin-top:12px">Sales and use tax owed per the books on ${longDate(r.to)}: <strong class="mono">${usd(r.payableMinor)}</strong></p>`;
   } else if (rep.tab === "gl") {
     const gl = await api(entPath(`${path}?${q}`));
     body = rep.account === "all"
@@ -1939,6 +2024,13 @@ document.addEventListener("change", (ev) => {
     const box = t.form.querySelector("[data-new-contact]");
     box.hidden = t.value !== "__new";
     if (!box.hidden) box.querySelector("input").focus();
+    // A vendor marked as not charging California tax turns use tax on.
+    const useTax = t.form.querySelector("[name=useTax]");
+    if (useTax) useTax.checked = Boolean((state.docContacts ?? []).find((c) => c.id === t.value)?.accrueUseTax);
+  }
+  if (t.closest("form[data-form=document][data-kind=bill]") && ["contactId", "useTax", "issueDate", "taxCategory", "servicePeriodStart", "servicePeriodEnd", "manualRate", "manualReason"].includes(t.name)) {
+    updateDocTotals();
+    scheduleTaxPreview();
   }
   if (t.name === "itemId" && t.closest("#doc-lines")) fillFromItem(t.closest("tr"), t.value);
   if (t.closest("form[data-form=document][data-kind=invoice]") && ["contactId", "issueDate", "itemId", "taxCategory", "servicePeriodStart", "servicePeriodEnd", "manualRate", "manualReason"].includes(t.name)) {
@@ -2043,11 +2135,11 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "add-doc-line") {
       document.getElementById("doc-lines").insertAdjacentHTML("beforeend", docLineRow(b.dataset.kind));
       updateDocTotals();
-      if (b.dataset.kind === "invoice") scheduleTaxPreview();
+      if (b.dataset.kind === "invoice" || useTaxOn()) scheduleTaxPreview();
     } else if (a === "remove-doc-line") {
       if (document.querySelectorAll("#doc-lines tr").length > 1) b.closest("tr").remove();
       updateDocTotals();
-      if (document.getElementById("doc-tax-note")) scheduleTaxPreview();
+      if (document.querySelector("form[data-form=document][data-kind=invoice]") || useTaxOn()) scheduleTaxPreview();
     } else if (a === "doc-toggle") {
       const row = document.querySelector(`tr[data-${b.dataset.form}="${b.dataset.id}"]`);
       row.hidden = !row.hidden;
@@ -2279,7 +2371,8 @@ document.addEventListener("submit", async (ev) => {
       }
       const lines = readDocLines().filter((l) => l.unitPrice || l.itemId);
       const manualTax = d.manualRate?.trim() ? { ratePercent: d.manualRate.trim(), reason: d.manualReason ?? "" } : undefined;
-      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, idempotencyKey: crypto.randomUUID() } });
+      const useTax = k === "bill" ? useTaxOn() : undefined;
+      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, useTax, idempotencyKey: crypto.randomUUID() } });
       toast(`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`);
       await docsView(state.entity.entity.id, k);
     } else if (kind === "pay") {
@@ -2349,6 +2442,7 @@ document.addEventListener("submit", async (ev) => {
         email: d.email, address: addressOf(d), ...(d.resalePermit !== undefined ? { resalePermit: d.resalePermit } : {}),
         ...(d.directPayPermit !== undefined ? { directPayPermit: d.directPayPermit } : {}),
         ...(d.mpuCaPercent !== undefined ? { mpu: d.mpuCaPercent.trim() ? { caPercent: d.mpuCaPercent.trim(), certificateDate: d.mpuCertificateDate } : null } : {}),
+        ...(f.querySelector("[name=accrueUseTax]") ? { accrueUseTax: f.querySelector("[name=accrueUseTax]").checked } : {}),
       } });
       toast("Saved");
       await contactsView(state.entity.entity.id);

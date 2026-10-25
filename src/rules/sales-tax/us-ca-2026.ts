@@ -95,6 +95,7 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
     { ref: "CDTFA Publication 106, Combined Sales and Use Tax Rates", covers: "statewide 7.25% base rate", basis: "working-knowledge" },
     { ref: "CDTFA Regulations 1501, 1502, 1526, 1540, 1541, 1546, 1628, 1660", covers: "taxability of each category", basis: "working-knowledge" },
     { ref: "CDTFA tax rate API, services.maps.cdtfa.ca.gov/api/taxrate", covers: "combined rate for a delivery address", basis: "working-knowledge" },
+    { ref: "Rev. & Tax. Code §§6201, 6202, 6225, 7262", covers: "use tax owed by the buyer when the seller didn't collect; qualified purchasers; district use tax", basis: "working-knowledge" },
   ],
   reviewNotes: [
     "Regulation 1540: a graphic designer or commercial artist who hands over finished art in physical form, or whose design is part of a printed item they sell, owes tax on the design charge too. The 'printed_materials' category covers that; confirm the guidance shown to users is right.",
@@ -102,6 +103,7 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
     "Out-of-state delivery is treated as exempt interstate sales (Regulation 1620) only when the customer's address is outside California.",
     "Sales for resale are exempt only with a timely, good-faith resale certificate (Regulation 1668). Alt-QBO records the customer's seller's permit number but does not verify it with the CDTFA.",
     "Shipping is nontaxable only when separately stated and by common carrier or mail direct to the customer; delivery in the seller's own vehicle can be taxable (Regulation 1628). The category help says so; consider a separate 'own delivery' category.",
+    "Use tax on purchases (Rev. & Tax. Code §§6201, 6202): a bill marked as untaxed by the vendor accrues use tax on its taxable lines, using these same categories (software by the start of access), at the CDTFA rate for the business's own address (district use tax, §7262). It is added to the line's cost and credited to sales tax payable. Not built: a multiple-points-of-use split on purchases. Confirm the citations and the place-of-use default for businesses with several locations.",
     "The CDTFA rate API was checked on the deploy preview on 2026-10-25 (San Francisco 8.625%, Los Angeles 10.25%, San Diego 7.75%, Sacramento 8.75%). Spot-check addresses on district boundaries before release.",
   ],
 };
