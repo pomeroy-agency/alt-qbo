@@ -7,6 +7,7 @@ import { createPool } from "../src/db/pool.js";
 import { migrate } from "../src/db/migrate.js";
 import { handleApi } from "../src/app/api.js";
 import { mailerFromEnv, type Mailer } from "../src/app/mail.js";
+import { cdtfaRateLookup, sampleRateLookup } from "../src/app/cdtfa.js";
 
 const pool = createPool();
 await migrate(pool);
@@ -16,6 +17,8 @@ const port = Number(process.env.PORT ?? 8888);
 // DEV_MAIL=log prints emails to the console instead of sending them.
 const logMailer: Mailer = async (m) => console.log(`\n--- email to ${m.to}: ${m.subject}\n${m.text}---`);
 const mailer = mailerFromEnv() ?? (process.env.DEV_MAIL === "log" ? logMailer : undefined);
+// DEV_TAX_RATES=sample uses stand-in sales tax rates instead of asking the CDTFA.
+const taxRates = process.env.DEV_TAX_RATES === "sample" ? sampleRateLookup : cdtfaRateLookup();
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
@@ -27,7 +30,7 @@ createServer(async (req, res) => {
       headers: req.headers as Record<string, string>,
       body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
     });
-    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}` });
+    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates });
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
     return;

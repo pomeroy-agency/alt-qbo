@@ -20,7 +20,7 @@ async function business() {
   const t = <T>(fn: (tx: Tx) => Promise<T>) => withTenant(pool, org.id, fn);
   const invoice = (over: Partial<IssueDocumentInput> = {}): IssueDocumentInput => ({
     orgId: org.id, entityId: entity.id, kind: "invoice", contactId: customer!.id, issueDate: "2026-03-01", dueDate: "2026-03-31",
-    taxRateBps: 725, idempotencyKey: crypto.randomUUID(), actor: bookkeeper,
+    tax: { rate: "0.0725", source: "manual", note: "test rate" }, idempotencyKey: crypto.randomUUID(), actor: bookkeeper,
     lines: [
       { account: "4000", description: "Brand workshop", quantity: "1", unitPrice: "1200.00", taxable: false },
       { account: "4000", description: "Printed style guides", quantity: "3", unitPrice: "33.33", taxable: true },
@@ -32,10 +32,10 @@ async function business() {
 
 describe("line pricing", () => {
   it("rounds quantity x price and tax half-up to the cent", () => {
-    expect(priceLine("3", 3333n, true, 725)).toEqual({ amountMinor: 9999n, taxMinor: 725n });
-    expect(priceLine("2.5", 101n, true, 1000)).toEqual({ amountMinor: 253n, taxMinor: 25n });
-    expect(priceLine("1", 50n, true, 1000)).toEqual({ amountMinor: 50n, taxMinor: 5n });
-    expect(priceLine("1", 1000n, false, 725)).toEqual({ amountMinor: 1000n, taxMinor: 0n });
+    expect(priceLine("3", 3333n, true, "0.0725")).toEqual({ amountMinor: 9999n, taxMinor: 725n });
+    expect(priceLine("2.5", 101n, true, "0.1")).toEqual({ amountMinor: 253n, taxMinor: 25n });
+    expect(priceLine("1", 50n, true, "0.1")).toEqual({ amountMinor: 50n, taxMinor: 5n });
+    expect(priceLine("1", 1000n, false, "0.0725")).toEqual({ amountMinor: 1000n, taxMinor: 0n });
   });
 });
 
@@ -81,7 +81,7 @@ describe("invoices", () => {
 
   it("takes partial payments, refuses overpayment, and reports status", async () => {
     const b = await business();
-    const inv = await b.t((tx) => issueDocument(tx, b.invoice({ taxRateBps: 0, lines: [{ account: "4000", quantity: "1", unitPrice: "1000.00" }] })));
+    const inv = await b.t((tx) => issueDocument(tx, b.invoice({ tax: undefined, lines: [{ account: "4000", quantity: "1", unitPrice: "1000.00" }] })));
     const pay = (amount: string, date = "2026-03-10") => b.t((tx) => recordPayment(tx, {
       orgId: b.org.id, entityId: b.entity.id, documentId: inv.id, date, amount, idempotencyKey: crypto.randomUUID(), actor: bookkeeper,
     }));
@@ -118,7 +118,7 @@ describe("bills", () => {
     const b = await business();
     const bill = await b.t((tx) => issueDocument(tx, {
       orgId: b.org.id, entityId: b.entity.id, kind: "bill", contactId: b.vendor.id, issueDate: "2026-04-02", dueDate: "2026-05-02",
-      reference: "PF-778", taxRateBps: 900, idempotencyKey: "bill-1", actor: bookkeeper,
+      reference: "PF-778", idempotencyKey: "bill-1", actor: bookkeeper,
       lines: [{ account: "5000", description: "Illustration", quantity: "10", unitPrice: "85.00", taxable: true }],
     }));
     expect(bill).toMatchObject({ number: "BILL-1", reference: "PF-778", taxMinor: 0n, totalMinor: 85000n });
@@ -139,7 +139,7 @@ describe("bills", () => {
 describe("aging", () => {
   it("buckets what is still due by days past due", async () => {
     const b = await business();
-    const mk = (due: string, price: string) => b.t((tx) => issueDocument(tx, b.invoice({ issueDate: "2026-01-02", dueDate: due, taxRateBps: 0, lines: [{ account: "4000", quantity: "1", unitPrice: price }] })));
+    const mk = (due: string, price: string) => b.t((tx) => issueDocument(tx, b.invoice({ issueDate: "2026-01-02", dueDate: due, tax: undefined, lines: [{ account: "4000", quantity: "1", unitPrice: price }] })));
     await mk("2026-06-30", "100.00");
     await mk("2026-06-15", "200.00");
     await mk("2026-04-01", "300.00");
@@ -187,7 +187,7 @@ describe("database rules, bypassing the service", () => {
     await expect(b.t(async (tx) => {
       const { rows } = await insertDoc(tx, 200);
       await tx.query(
-        `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, account_id, quantity, unit_price_minor, amount_minor, tax_rate_bps, tax_minor)
+        `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, account_id, quantity, unit_price_minor, amount_minor, tax_rate, tax_minor)
          VALUES ($1, $2, $3, 1, $4, 1, 150, 150, 0, 0)`,
         [b.org.id, b.entity.id, rows[0].id, acct],
       );
@@ -196,7 +196,7 @@ describe("database rules, bypassing the service", () => {
     await expect(b.t(async (tx) => {
       const { rows } = await insertDoc(tx, 300);
       await tx.query(
-        `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, account_id, quantity, unit_price_minor, amount_minor, tax_rate_bps, tax_minor)
+        `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, account_id, quantity, unit_price_minor, amount_minor, tax_rate, tax_minor)
          VALUES ($1, $2, $3, 1, $4, 2, 100, 300, 0, 0)`,
         [b.org.id, b.entity.id, rows[0].id, acct],
       );
@@ -205,7 +205,7 @@ describe("database rules, bypassing the service", () => {
     await expect(b.t(async (tx) => {
       const { rows } = await insertDoc(tx, 400);
       await tx.query(
-        `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, account_id, quantity, unit_price_minor, amount_minor, tax_rate_bps, tax_minor)
+        `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, account_id, quantity, unit_price_minor, amount_minor, tax_rate, tax_minor)
          VALUES ($1, $2, $3, 1, $4, 1, 400, 400, 0, 0)`,
         [b.org.id, b.entity.id, rows[0].id, acct],
       );
@@ -214,7 +214,7 @@ describe("database rules, bypassing the service", () => {
 
   it("refuses a payment above what is due even when inserted directly", async () => {
     const b = await business();
-    const inv = await b.t((tx) => issueDocument(tx, b.invoice({ taxRateBps: 0, lines: [{ account: "4000", quantity: "1", unitPrice: "10.00" }] })));
+    const inv = await b.t((tx) => issueDocument(tx, b.invoice({ tax: undefined, lines: [{ account: "4000", quantity: "1", unitPrice: "10.00" }] })));
     const bank = (await b.t((tx) => tx.query("SELECT id FROM accounts WHERE entity_id = $1 AND code = '1000'", [b.entity.id]))).rows[0].id;
     await expect(b.t((tx) => tx.query(
       `INSERT INTO document_payments (org_id, entity_id, document_id, payment_date, amount_minor, bank_account_id, entry_id, idempotency_key, created_by)

@@ -13,7 +13,8 @@ export type LedgerErrorCode =
   | "FORBIDDEN"
   | "INVALID"
   | "OVERPAID"
-  | "AUDIT_CHAIN";
+  | "AUDIT_CHAIN"
+  | "TAX_LOOKUP";
 
 export class LedgerError extends Error {
   constructor(

@@ -4,7 +4,11 @@ import { appendAudit, verifyAuditChain } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type Actor, type LineInput, type PeriodStatus, type Role } from "../core/ledger.js";
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
-import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, recordPayment, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
+import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
+import {
+  cleanAddress, createItem, currentCategories, decideSalesTax, explainTax, issueInvoice, listItems, salesTaxReport, setBusinessAddress,
+  updateItem, type InvoiceLineInput, type RateLookup,
+} from "../core/sales-tax.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
 import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
@@ -32,6 +36,8 @@ export interface ApiOptions {
   mailer?: Mailer;
   /** The site's own address for links in emails. Taken from configuration, not the request, so a forged Host header can't redirect a reset link. */
   appUrl?: string;
+  /** Looks up the California sales tax rate for an address (the CDTFA in production). Without one, only an owner or accountant can issue a taxable invoice, by setting the rate by hand. */
+  taxRates?: RateLookup;
 }
 
 /** Where emailed and copied links point. */
@@ -248,7 +254,7 @@ route("GET", "/api/orgs/:org/entities/:entity", async (_req, p, ctx) =>
       "SELECT id, kind, display_name, scopes, status, created_at FROM connections WHERE entity_id = $1 ORDER BY created_at",
       [p.entity],
     )).rows;
-    return json({ entity, accounts, periods, connections });
+    return json({ entity, accounts, periods, connections, salesTaxCategories: currentCategories(entity.region) });
   }),
 );
 
@@ -398,22 +404,67 @@ route("POST", "/api/orgs/:org/entities/:entity/contacts", async (req, p, ctx) =>
   if (!["customer", "vendor", "both"].includes(kind)) throw new HttpError(400, "pick customer, vendor or both");
   const contact = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    return createContact(tx, {
-      orgId: ctx.orgId, entityId: p.entity!, kind, name: str(b.name, "name"),
-      email: typeof b.email === "string" && b.email.trim() ? str(b.email, "email") : undefined, actor: ctx.actor,
-    });
+    return createContact(tx, { orgId: ctx.orgId, entityId: p.entity!, kind, name: str(b.name, "name"), ...contactFields(b), actor: ctx.actor });
   });
   return json(contact, 201);
 });
 
-/** "7.25" (percent) to 725 basis points. */
-function taxRateBps(v: unknown): number {
-  if (v === undefined || v === null || v === "") return 0;
-  if (typeof v !== "string" || !/^\d{1,3}(\.\d{1,2})?$/.test(v.trim())) throw new HttpError(400, "tax rate must be a percentage like 7.25");
-  const bps = Math.round(Number(v.trim()) * 100);
-  if (bps > 10000) throw new HttpError(400, "tax rate cannot be over 100%");
-  return bps;
+route("POST", "/api/orgs/:org/entities/:entity/contacts/:contact", async (req, p, ctx) => {
+  const b = await body(req);
+  const contact = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return updateContact(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, contactId: p.contact!, ...contactFields(b),
+      ...(b.name !== undefined ? { name: str(b.name, "name") } : {}), actor: ctx.actor,
+    });
+  });
+  return json(contact);
+});
+
+/** The optional parts of a contact, from a request. A field left out is left alone. */
+function contactFields(b: Record<string, any>) {
+  const optional = (v: unknown, field: string, max: number) => (typeof v === "string" && v.trim() ? str(v, field, max) : null);
+  return {
+    ...(b.email !== undefined ? { email: optional(b.email, "email", 200) } : {}),
+    ...(b.address !== undefined ? { address: cleanAddress(b.address) } : {}),
+    ...(b.resalePermit !== undefined ? { resalePermit: optional(b.resalePermit, "seller's permit", 40) } : {}),
+  };
 }
+
+function invoiceLines(raw: unknown): InvoiceLineInput[] {
+  if (!Array.isArray(raw) || !raw.length) throw new HttpError(400, "add at least one line");
+  if (raw.length > 200) throw new HttpError(400, "too many lines");
+  return raw.map((l: any, i: number) => ({
+    itemId: l.itemId ? uuid(l.itemId, `line ${i + 1}: choose a product or service`) : undefined,
+    account: typeof l.account === "string" && l.account ? str(l.account, `line ${i + 1} account`, 40) : undefined,
+    description: typeof l.description === "string" ? l.description.slice(0, 300) : "",
+    quantity: str(String(l.quantity ?? "1"), `line ${i + 1} quantity`, 20),
+    unitPrice: typeof l.unitPrice === "string" && l.unitPrice.trim() ? str(l.unitPrice, `line ${i + 1} price`, 20) : undefined,
+    taxCategory: typeof l.taxCategory === "string" && l.taxCategory ? str(l.taxCategory, `line ${i + 1} kind of sale`, 40) : undefined,
+  }));
+}
+
+/** An owner's or accountant's own rate, with the reason, for when the lookup can't be used. */
+function manualTax(v: any): { ratePercent: string; reason: string } | undefined {
+  if (!v || (v.ratePercent === undefined && v.reason === undefined)) return undefined;
+  return { ratePercent: str(String(v.ratePercent ?? ""), "tax rate", 10), reason: str(v.reason, "reason for setting the rate", 300) };
+}
+
+route("POST", "/api/orgs/:org/entities/:entity/invoices/tax-preview", async (req, p, ctx) => {
+  const b = await body(req);
+  const lines = invoiceLines(b.lines);
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const items = await listItems(tx, p.entity!);
+    const categories = lines.map((l) => l.taxCategory || items.find((it) => it.id === l.itemId)?.taxCategory || "");
+    const manual = manualTax(b.manualTax);
+    const d = await decideSalesTax(tx, {
+      entityId: p.entity!, contactId: uuid(b.contactId, "choose a customer"), date: date(b.issueDate, "date"), categories,
+      lookup: ctx.opts.taxRates, manual: manual ? { ...manual, actor: ctx.actor } : undefined,
+    });
+    return json({ ...d, explanation: explainTax(d) });
+  });
+});
 
 for (const kind of ["invoice", "bill"] as DocumentKind[]) {
   const base = `/api/orgs/:org/entities/:entity/${kind}s`;
@@ -436,30 +487,29 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
 
   route("POST", base, async (req, p, ctx) => {
     const b = await body(req);
-    if (!Array.isArray(b.lines) || !b.lines.length) throw new HttpError(400, "add at least one line");
-    if (b.lines.length > 200) throw new HttpError(400, "too many lines");
-    const lines = b.lines.map((l: any, i: number) => ({
-      account: str(l.account, `line ${i + 1} account`, 40),
-      description: typeof l.description === "string" ? l.description.slice(0, 300) : "",
-      quantity: str(String(l.quantity ?? "1"), `line ${i + 1} quantity`, 20),
-      unitPrice: str(l.unitPrice, `line ${i + 1} price`, 20),
-      taxable: Boolean(l.taxable),
-    }));
+    const lines = invoiceLines(b.lines);
+    const common = {
+      orgId: ctx.orgId, entityId: p.entity!,
+      contactId: uuid(b.contactId, kind === "invoice" ? "choose a customer" : "choose a vendor"),
+      issueDate: date(b.issueDate, "date"),
+      dueDate: b.dueDate ? date(b.dueDate, "due date") : undefined,
+      memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
+      reference: typeof b.reference === "string" ? b.reference.slice(0, 60) : undefined,
+      idempotencyKey: typeof b.idempotencyKey === "string" && b.idempotencyKey ? b.idempotencyKey.slice(0, 100) : crypto.randomUUID(),
+      actor: ctx.actor,
+    };
     const doc = await tenant(
       ctx,
       async (tx) => {
         await ensureEntity(tx, p.entity!);
+        if (kind === "invoice") return issueInvoice(tx, { ...common, lines, lookup: ctx.opts.taxRates, manual: manualTax(b.manualTax) });
         return issueDocument(tx, {
-          orgId: ctx.orgId, entityId: p.entity!, kind,
-          contactId: uuid(b.contactId, kind === "invoice" ? "choose a customer" : "choose a vendor"),
-          issueDate: date(b.issueDate, "date"),
-          dueDate: b.dueDate ? date(b.dueDate, "due date") : undefined,
-          memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
-          reference: typeof b.reference === "string" ? b.reference.slice(0, 60) : undefined,
-          taxRateBps: kind === "invoice" ? taxRateBps(b.taxRate) : 0,
-          lines,
-          idempotencyKey: typeof b.idempotencyKey === "string" && b.idempotencyKey ? b.idempotencyKey.slice(0, 100) : crypto.randomUUID(),
-          actor: ctx.actor,
+          ...common, kind,
+          lines: lines.map((l, i) => {
+            if (!l.account) throw new HttpError(400, `line ${i + 1}: choose an account`);
+            if (!l.unitPrice) throw new HttpError(400, `line ${i + 1}: enter a price`);
+            return { account: l.account, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice };
+          }),
         });
       },
       { allowSoftClosed: ["owner", "admin", "accountant"].includes(ctx.role) },
@@ -722,6 +772,67 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
   });
 }
 
+// ------------------------------------------------- products and sales tax
+
+route("GET", "/api/orgs/:org/entities/:entity/items", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ items: await listItems(tx, p.entity!) });
+  }),
+);
+
+function itemFields(b: Record<string, any>) {
+  return {
+    ...(b.name !== undefined ? { name: str(b.name, "name", 120) } : {}),
+    ...(typeof b.description === "string" ? { description: b.description.slice(0, 300) } : {}),
+    ...(b.taxCategory !== undefined ? { taxCategory: str(b.taxCategory, "kind of sale", 40) } : {}),
+    ...(b.unitPrice !== undefined ? { unitPrice: String(b.unitPrice ?? "").trim().slice(0, 20) } : {}),
+    ...(typeof b.account === "string" && b.account ? { account: str(b.account, "account", 40) } : {}),
+    ...(typeof b.active === "boolean" ? { active: b.active } : {}),
+  };
+}
+
+route("POST", "/api/orgs/:org/entities/:entity/items", async (req, p, ctx) => {
+  const b = await body(req);
+  const item = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createItem(tx, { orgId: ctx.orgId, entityId: p.entity!, ...itemFields(b), actor: ctx.actor });
+  });
+  return json(item, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/items/:item", async (req, p, ctx) => {
+  const b = await body(req);
+  await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    await updateItem(tx, { orgId: ctx.orgId, entityId: p.entity!, itemId: p.item!, ...itemFields(b), actor: ctx.actor });
+  });
+  return json({ ok: true });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/reports/sales-tax", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const from = date(q.get("from"), "from"), to = date(q.get("to"), "to");
+  const r = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return salesTaxReport(tx, p.entity!, from, to);
+  });
+  if (q.get("format") !== "csv") return json(r);
+  const m = (v: bigint) => toMajor(v).toFixed(2);
+  const cell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  const lines = [
+    `Sales tax return figures,${from} to ${to}`, "Line,Amount",
+    `Total sales,${m(r.totalSalesMinor)}`,
+    ...r.nontaxable.map((n) => `${cell(`Nontaxable: ${n.label}`)},${m(n.amountMinor)}`),
+    `Sales for resale,${m(r.resaleMinor)}`, `Sales delivered outside California,${m(r.interstateMinor)}`,
+    `Taxable sales,${m(r.taxableMinor)}`, `Sales tax charged,${m(r.taxMinor)}`, "",
+    "Jurisdiction,Rate %,Invoices,Taxable sales,Tax",
+    ...r.byJurisdiction.map((j) => [cell(j.jurisdiction), j.ratePercent, String(j.invoices), m(j.taxableMinor), m(j.taxMinor)].join(",")),
+    "", `Sales tax payable on ${to},${m(r.payableMinor)}`,
+  ];
+  return csvResponse(lines.join("\n") + "\n", `sales-tax-${from}-to-${to}.csv`);
+});
+
 route("GET", "/api/orgs/:org/entities/:entity/health", async (_req, p, ctx) =>
   tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
@@ -751,6 +862,17 @@ route("POST", "/api/orgs/:org/entities/:entity/close-through", async (req, p, ct
     return closeBooksThrough(tx, { orgId: ctx.orgId, entityId: p.entity!, through: date(b.through, "through"), status, actor: ctx.actor });
   });
   return json(out);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/address", async (req, p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  const address = cleanAddress(b.address);
+  await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    await setBusinessAddress(tx, { orgId: ctx.orgId, entityId: p.entity!, address, actor: ctx.actor });
+  });
+  return json({ ok: true, address });
 });
 
 route("POST", "/api/orgs/:org/entities/:entity/settings", async (req, p, ctx) => {
