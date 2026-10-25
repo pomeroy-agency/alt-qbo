@@ -13,6 +13,7 @@ import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBan
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
 import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
 import { backupEntity } from "../core/backup.js";
+import { listRestorePoints, readRestorePoint, type BackupStore } from "../core/nightly-backups.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
@@ -44,6 +45,8 @@ export interface ApiOptions {
   appUrl?: string;
   /** Looks up the California sales tax rate for an address (the CDTFA in production). Without one, only an owner or accountant can issue a taxable invoice, by setting the rate by hand. */
   taxRates?: RateLookup;
+  /** Where the nightly encrypted backups are kept, and their key. Without it, restore points can't be downloaded. */
+  backups?: { store: BackupStore; key: Buffer };
 }
 
 /** Where emailed and copied links point. */
@@ -902,6 +905,36 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/sales-tax", async (req, p,
     "", `Sales and use tax payable on ${to},${m(r.payableMinor)}`,
   ];
   return csvResponse(lines.join("\n") + "\n", `sales-tax-${from}-to-${to}.csv`);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/backups", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ restorePoints: await listRestorePoints(tx, p.entity!), downloadable: Boolean(ctx.opts.backups) });
+  }),
+);
+
+// Downloads one nightly copy, decrypted. A POST because it is recorded in the audit log.
+route("POST", "/api/orgs/:org/entities/:entity/backups/:run/download", async (_req, p, ctx) => {
+  requireRole(ctx, ["owner", "admin", "accountant"]);
+  const backups = ctx.opts.backups;
+  if (!backups) throw new HttpError(503, "nightly backups aren't set up on this site yet");
+  const backup = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    let b;
+    try {
+      b = await readRestorePoint(tx, backups.store, backups.key, p.entity!, p.run!);
+    } catch (err) {
+      throw new HttpError(404, err instanceof Error ? err.message : "that backup isn't available");
+    }
+    await appendAudit(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.restore_point_downloaded",
+      objectType: "entity", objectId: p.entity!, after: { takenAt: b.createdAt }, context: { role: ctx.role },
+    });
+    return b;
+  });
+  const name = `alt-qbo-backup-${String(backup.entity.legal_name).toLowerCase()}-${backup.createdAt.slice(0, 10)}.json`.replace(/[^\w.-]+/g, "-");
+  return json(backup, 200, { "content-disposition": `attachment; filename="${name}"` });
 });
 
 // A POST, not a GET, because taking a backup is recorded in the audit log.

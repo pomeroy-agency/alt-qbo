@@ -1123,7 +1123,7 @@ const SOURCE_LABEL = { journal_voucher: "Journal entry", invoice: "Invoice", bil
 
 async function overviewView(id) {
   await loadEntity(id);
-  const [{ checks }, g] = await Promise.all([api(entPath("/health")), api(entPath("/glance"))]);
+  const [{ checks }, g, bk] = await Promise.all([api(entPath("/health")), api(entPath("/glance")), api(entPath("/backups")).catch(() => null)]);
   const e = state.entity.entity;
   const attn = state.entity.attention;
   const canSettings = ["owner", "admin"].includes(state.org.role);
@@ -1190,10 +1190,28 @@ async function overviewView(id) {
         <button type="submit">Save</button>
       </form>` : ""}
     </details>
-    ${["owner", "admin", "accountant"].includes(state.org.role) ? `<div class="panel row" style="justify-content:space-between">
-      <div><strong>Backup</strong><div class="muted">Save a complete copy of these books (every entry, invoice, bill, bank line and the audit log) as one file on your computer.</div></div>
-      <button class="secondary" data-action="backup">Download a backup</button>
+    ${["owner", "admin", "accountant"].includes(state.org.role) ? `<div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <div><strong>Backup</strong><div class="muted">Save a complete copy of these books (every entry, invoice, bill, bank line and the audit log) as one file on your computer.</div></div>
+        <button class="secondary" data-action="backup">Download a backup</button>
+      </div>
+      ${backupPanel(bk)}
     </div>` : ""}`);
+}
+
+/** The nightly copies: the latest one, and the last 30 days to download from. */
+function backupPanel(bk) {
+  const points = bk?.restorePoints ?? [];
+  if (!points.length) return `<p class="muted" style="margin-top:10px">Nightly backups start after the first night. Each copy is encrypted, stored apart from the database, read back and checked, and kept for 30 days.</p>`;
+  const last = points[0];
+  return `<p style="margin-top:10px">${last.verified
+      ? `<span class="pill">Checked</span> Last nightly backup ${longDate(last.date)}: read back and matched the books.`
+      : `<span class="pill bad">Problem</span> The nightly backup on ${longDate(last.date)} didn't pass its check (${esc(last.problem)}). We've been alerted.`}</p>
+    <details><summary>Restore points (${points.length})</summary><div class="table-wrap"><table>
+      <thead><tr><th>Night of</th><th>Check</th><th>Size</th><th></th></tr></thead>
+      <tbody>${points.map((r) => `<tr><td>${longDate(r.date)}</td><td>${r.verified ? "Passed" : esc(r.problem)}</td><td>${Math.max(1, Math.round(r.bytes / 1024))} KB</td>
+        <td>${r.verified && bk.downloadable ? `<button class="link" data-action="restore-point" data-id="${r.id}">Download</button>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div></details>`;
 }
 
 // ------------------------------------------------------------- reports
@@ -2284,6 +2302,15 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);
+    } else if (a === "restore-point") {
+      b.disabled = true;
+      const res = await api(entPath(`/backups/${b.dataset.id}/download`), { body: {}, raw: true });
+      if (!res.ok) throw new Error((await res.json()).error);
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "alt-qbo-backup.json";
+      const url = URL.createObjectURL(await res.blob());
+      Object.assign(document.createElement("a"), { href: url, download: name }).click();
+      URL.revokeObjectURL(url);
+      b.disabled = false;
     } else if (a === "backup") {
       b.disabled = true;
       const res = await api(entPath("/backup"), { body: {}, raw: true });
