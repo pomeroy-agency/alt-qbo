@@ -24,6 +24,7 @@ import { addConnection, createEntity, createOrganization, getEntity, type Connec
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
 import { createEmployee, listEmployees, setUiRate, updateEmployee, type EmployeeFields } from "../payroll/employees.js";
+import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { calculateSavedRun, carrySickLeave, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import {
   AuthError, SESSION_COOKIE, createSession, endSession, hashPassword, membershipRole, normaliseEmail,
@@ -913,7 +914,10 @@ route("GET", "/api/orgs/:org/entities/:entity/employees", async (_req, p, ctx) =
   tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
     const uiRate = (await tx.query("SELECT ca_ui_rate::text FROM entities WHERE id = $1", [p.entity])).rows[0]?.ca_ui_rate;
-    return json({ employees: await listEmployees(tx, p.entity!), caUiRate: uiRate ? String(Number(uiRate)) : null });
+    return json({
+      employees: await listEmployees(tx, p.entity!), caUiRate: uiRate ? String(Number(uiRate)) : null,
+      directDeposit: await getDirectDepositSettings(tx, p.entity!),
+    });
   }),
 );
 
@@ -938,13 +942,13 @@ route("POST", "/api/orgs/:org/entities/:entity/employees/:employee", async (req,
 /** The parts of an employee in a request; a field left out is left alone. Checked in payroll/employees.ts. */
 function employeeFields(b: Record<string, any>): EmployeeFields {
   const keys = ["name", "email", "address", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours",
-    "overtimeExempt", "w4", "de4", "deductions", "sickBalanceHours", "ssn", "openingYtd"] as const;
+    "overtimeExempt", "w4", "de4", "deductions", "sickBalanceHours", "ssn", "openingYtd", "directDeposit"] as const;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
   for (const k of ["name", "email", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "string") throw new HttpError(400, `${k} should be text`);
   }
-  for (const k of ["w4", "de4", "openingYtd", "address"]) {
+  for (const k of ["w4", "de4", "openingYtd", "address", "directDeposit"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "object") throw new HttpError(400, `${k} should be an object`);
   }
   return out as EmployeeFields;
@@ -959,6 +963,18 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
     await setUiRate(tx, { orgId: ctx.orgId, entityId: p.entity!, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
   });
   return json({ ok: true });
+});
+
+/** The business's bank details for direct deposit files. */
+route("POST", "/api/orgs/:org/entities/:entity/direct-deposit-settings", async (req, p, ctx) => {
+  const b = await body(req);
+  const keys = ["odfiRouting", "immediateDestination", "destinationName", "immediateOrigin", "companyId", "companyName", "accountType", "account"];
+  for (const k of keys) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
+  const saved = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return saveDirectDepositSettings(tx, { ...Object.fromEntries(keys.map((k) => [k, b[k]])), balanced: b.balanced === true, orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor });
+  });
+  return json(saved);
 });
 
 function payRunRequest(b: Record<string, any>): PayRunRequest {
@@ -1063,13 +1079,30 @@ route("GET", "/api/orgs/:org/entities/:entity/pay-runs/:run", async (_req, p, ct
         ytd: y ? { grossMinor: y.grossMinor, netPayMinor: y.netPayMinor, byTax: y.byTax, byDeduction: y.byDeduction } : null,
       };
     });
+    const directDeposit = await directDepositSummary(tx, p.entity!, pr.id);
     return new Response(toJson({
       ...pr,
+      directDeposit,
       employer: { name: ent.legal_name, ein: ent.ein, address: ent.address_line1 ? { line1: ent.address_line1, city: ent.address_city, state: ent.address_state, zip: ent.address_zip } : null },
       stubs,
     }), { headers: { "content-type": "application/json" } });
   }),
 );
+
+/** The bank file for an approved run, to upload to the business's bank. */
+route("GET", "/api/orgs/:org/entities/:entity/pay-runs/:run/direct-deposit", async (_req, p, ctx) => {
+  const file = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return directDepositFile(tx, { orgId: ctx.orgId, entityId: p.entity!, runId: uuid(p.run, "pay run not found"), actor: ctx.actor });
+  });
+  return new Response(file.text, {
+    headers: {
+      "content-type": "text/plain; charset=us-ascii",
+      "content-disposition": `attachment; filename="${file.fileName}"`,
+      "cache-control": "no-store",
+    },
+  });
+});
 
 route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_req, p, ctx) => {
   requireRole(ctx, ["owner", "admin", "approver"]);

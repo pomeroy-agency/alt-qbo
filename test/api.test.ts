@@ -499,3 +499,66 @@ describe("saved employees and pay runs", () => {
     expect(first.data.stubs[0].ytd.grossMinor).toBe("800000");
   });
 });
+
+describe("direct deposit", () => {
+  it("seals bank accounts and builds the bank file for an approved run", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    const approver = await join(s, `approver${Date.now()}${n++}@example.com`, "approver");
+    const bookkeeper = await join(s, `books${Date.now()}${n++}@example.com`, "bookkeeper");
+
+    const bad = await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, directDeposit: { routing: "121000359", account: "12345678" } } });
+    expect(bad.status).toBe(422);
+    const noAccount = await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, directDeposit: { routing: "121000358" } } });
+    expect(noAccount.status).toBe(422);
+    const m = (await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, directDeposit: { routing: "121000358", accountType: "savings", account: "0001-2345-6789" } } })).data;
+    expect(m.directDeposit).toEqual({ routing: "121000358", accountType: "savings", accountLast4: "6789" });
+    expect(JSON.stringify(m)).not.toContain("000123456789");
+    const leo = (await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, name: "Leo Park" } })).data;
+    expect(leo.directDeposit).toBe(null);
+
+    // Changing the account type keeps the account number on file.
+    const changed = await call(`${base}/employees/${m.id}`, { cookie: s.cookie, body: { directDeposit: { routing: "121000358", accountType: "checking" } } });
+    expect(changed.data.directDeposit).toEqual({ routing: "121000358", accountType: "checking", accountLast4: "6789" });
+
+    const run = (await call(`${base}/pay-runs`, { cookie: s.cookie, body: runFor([m.id, leo.id]) })).data;
+    let detail = await call(`${base}/pay-runs/${run.id}`, { cookie: s.cookie });
+    expect(detail.data.directDeposit).toMatchObject({ ready: false, problem: "the run needs to be approved first" });
+    expect((await call(`${base}/pay-runs/${run.id}/approve`, { cookie: approver.cookie, body: {} })).status).toBe(201);
+
+    detail = await call(`${base}/pay-runs/${run.id}`, { cookie: s.cookie });
+    expect(detail.data.directDeposit).toMatchObject({ ready: false, problem: "add your business's bank details for direct deposit first" });
+    expect(detail.data.directDeposit.paperChecks.map((p: any) => p.name)).toEqual(["Leo Park"]);
+
+    // Without an EIN there's no default company ID.
+    const noEin = await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { odfiRouting: "121000358", destinationName: "Bank of America" } });
+    expect(noEin.status).toBe(422);
+    expect((await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "12-3456789" } })).status).toBe(200);
+    expect((await call(`${base}/direct-deposit-settings`, { cookie: bookkeeper.cookie, body: { odfiRouting: "121000358", destinationName: "Bank of America" } })).status).toBe(403);
+    expect((await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { odfiRouting: "121000358", destinationName: "Bank of America", balanced: true } })).status).toBe(422);
+    const settings = await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { odfiRouting: "121000358", destinationName: "Bank of America" } });
+    expect(settings.data).toMatchObject({ companyId: "1123456789", immediateOrigin: "1123456789", immediateDestination: "121000358", companyName: "API Studio LLC", balanced: false });
+
+    expect((await call(`${base}/pay-runs/${run.id}/direct-deposit`, { cookie: bookkeeper.cookie })).status).toBe(403);
+    const file = await call(`${base}/pay-runs/${run.id}/direct-deposit`, { cookie: approver.cookie });
+    expect(file.status).toBe(200);
+    const lines = (file.data as string).split("\r\n").filter(Boolean);
+    expect(lines).toHaveLength(10);
+    const entry = lines[2]!;
+    expect(entry.slice(0, 12)).toBe("622121000358");
+    expect(entry.slice(12, 29).trim()).toBe("000123456789");
+    expect(entry.slice(29, 39)).toBe(String(detail.data.directDeposit.totalMinor).padStart(10, "0"));
+    expect(entry.slice(54, 76).trim()).toBe("MAYA CHEN");
+
+    // The audit log and the backup never hold the full account number.
+    const audit = JSON.stringify((await call(`/api/orgs/${s.orgId}/audit`, { cookie: s.cookie })).data.events);
+    expect(audit).toContain("pay_run.direct_deposit_downloaded");
+    expect(audit).not.toContain("000123456789");
+    expect(audit).not.toContain("dd_account_sealed");
+    const backup = await call(`${base}/backup`, { cookie: s.cookie, body: {} });
+    expect(backup.data.tables.direct_deposit_settings).toHaveLength(1);
+    expect(JSON.stringify(backup.data)).not.toContain("sealed");
+    expect(JSON.stringify(backup.data.tables.employees)).toContain("6789");
+  });
+});

@@ -7,8 +7,8 @@ import type { Actor, Role } from "./ledger.js";
 // A complete copy of one business's books in a single JSON file: every row
 // behind the ledger, invoices, bank, reconciliations, payroll and the
 // organisation's audit chain, as stored. Nothing secret goes in it: no
-// passwords, sessions, email links, connection credentials or Social
-// Security numbers.
+// passwords, sessions, email links, connection credentials, Social
+// Security numbers or bank account numbers.
 
 export const BACKUP_FORMAT = "alt-qbo-backup";
 export const BACKUP_VERSION = 1;
@@ -30,10 +30,13 @@ const TABLES: [string, string][] = [
   ["bank_lines", "SELECT * FROM bank_lines WHERE entity_id = $1 ORDER BY txn_date, created_at"],
   ["reconciliations", "SELECT * FROM reconciliations WHERE entity_id = $1 ORDER BY statement_date"],
   ["reconciliation_lines", "SELECT * FROM reconciliation_lines WHERE entity_id = $1 ORDER BY reconciliation_id, journal_line_id"],
-  // Social Security numbers stay out; only their last four digits are copied.
+  // Social Security and bank account numbers stay out; only their last four digits are copied.
   ["employees", `SELECT id, org_id, entity_id, name, email, address_line1, address_city, address_state, address_zip, hire_date, termination_date,
-     pay_type, pay_frequency, pay_rate, usual_hours, overtime_exempt, w4, de4, deductions, sick_balance_hours, ssn_last4, opening_ytd, created_at, updated_at
+     pay_type, pay_frequency, pay_rate, usual_hours, overtime_exempt, w4, de4, deductions, sick_balance_hours, ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4, created_at, updated_at
      FROM employees WHERE entity_id = $1 ORDER BY lower(name)`],
+  // Bank account numbers stay out too; only their last four digits are copied.
+  ["direct_deposit_settings", `SELECT entity_id, org_id, odfi_routing, immediate_destination, destination_name, immediate_origin, company_id, company_name,
+     balanced, account_type, account_last4, updated_at FROM direct_deposit_settings WHERE entity_id = $1`],
   ["pay_runs", "SELECT * FROM pay_runs WHERE entity_id = $1 ORDER BY created_at"],
   // Connection credentials stay out; the backup only says the connection existed.
   ["connections", "SELECT id, org_id, entity_id, kind, display_name, external_ref, scopes, status, created_at FROM connections WHERE entity_id = $1 ORDER BY created_at"],

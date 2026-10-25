@@ -5,6 +5,7 @@ import type { Actor, Role } from "../core/ledger.js";
 import { D, toMinor } from "../core/money.js";
 import { cleanSsn, seal } from "../core/pii.js";
 import { cleanAddress, type Address } from "../core/sales-tax.js";
+import { cleanAccountNumber, validRouting } from "./nacha.js";
 import type { DE4 } from "./california.js";
 import type { W4 } from "./federal.js";
 import { PERIODS_PER_YEAR, type Deduction, type DeductionKind, type PayFrequency } from "./gross-to-net.js";
@@ -46,6 +47,8 @@ export interface Employee {
   sickBalanceHours: string;
   ssnLast4: string | null;
   openingYtd: OpeningYtd | null;
+  /** Where net pay goes by direct deposit; null means a paper check. */
+  directDeposit: { routing: string; accountType: "checking" | "savings"; accountLast4: string } | null;
 }
 
 export interface EmployeeFields {
@@ -66,11 +69,13 @@ export interface EmployeeFields {
   /** Write-only: sealed on the way in, only the last four digits come back. */
   ssn?: string | null;
   openingYtd?: Partial<Record<keyof OpeningYtd, unknown>> | null;
+  /** The account number is write-only, like the SSN; leave it out to keep the one on file. */
+  directDeposit?: { routing?: unknown; accountType?: unknown; account?: unknown } | null;
 }
 
 const COLS = `id, name, email, address_line1, address_city, address_state, address_zip, hire_date::text, termination_date::text,
   pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, deductions, sick_balance_hours::text,
-  ssn_last4, opening_ytd`;
+  ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4`;
 
 function employeeOf(r: any): Employee {
   return {
@@ -81,6 +86,7 @@ function employeeOf(r: any): Employee {
     payType: r.pay_type, payFrequency: r.pay_frequency, payRate: trimZeros(r.pay_rate), usualHours: r.usual_hours ? trimZeros(r.usual_hours) : null,
     overtimeExempt: r.overtime_exempt, w4: r.w4, de4: r.de4, deductions: r.deductions,
     sickBalanceHours: trimZeros(r.sick_balance_hours), ssnLast4: r.ssn_last4, openingYtd: r.opening_ytd,
+    directDeposit: r.dd_routing ? { routing: r.dd_routing, accountType: r.dd_account_type, accountLast4: r.dd_account_last4 } : null,
   };
 }
 
@@ -225,6 +231,7 @@ function columns(f: EmployeeFields): Record<string, unknown> {
     out.ssn_last4 = ssn ? ssn.slice(5) : null;
     out.ssn_sealed = ssn ? seal(ssn) : null;
   }
+  if (f.directDeposit !== undefined) Object.assign(out, directDepositColumns(f.directDeposit));
   if (f.openingYtd !== undefined) {
     const o = cleanOpeningYtd(f.openingYtd);
     out.opening_ytd = o ? JSON.stringify(o) : null;
@@ -232,9 +239,26 @@ function columns(f: EmployeeFields): Record<string, unknown> {
   return out;
 }
 
-/** What the audit log keeps about a change: never the sealed number. */
+/** Bank details for direct deposit. Without an account number, the routing number and type change and the account on file stays. */
+export function directDepositColumns(dd: EmployeeFields["directDeposit"]): Record<string, unknown> {
+  if (dd === null) return { dd_routing: null, dd_account_type: null, dd_account_last4: null, dd_account_sealed: null };
+  const routing = typeof dd!.routing === "string" ? dd!.routing.replace(/\s/g, "") : "";
+  if (!validRouting(routing)) invalid("that routing number isn't right; it's the nine digits at the bottom left of a check");
+  const type = dd!.accountType ?? "checking";
+  if (type !== "checking" && type !== "savings") invalid("pick checking or savings");
+  const out: Record<string, unknown> = { dd_routing: routing, dd_account_type: type };
+  if (dd!.account !== undefined && dd!.account !== null && dd!.account !== "") {
+    const account = typeof dd!.account === "string" ? cleanAccountNumber(dd!.account) : null;
+    if (!account) invalid("an account number is 4 to 17 digits");
+    out.dd_account_last4 = account.slice(-4);
+    out.dd_account_sealed = seal(account);
+  }
+  return out;
+}
+
+/** What the audit log keeps about a change: never a sealed number. */
 function auditable(cols: Record<string, unknown>) {
-  const { ssn_sealed: _sealed, ...rest } = cols;
+  const { ssn_sealed: _sealed, dd_account_sealed: _account, ...rest } = cols;
   return rest;
 }
 
@@ -271,6 +295,7 @@ export async function createEmployee(
   }
   const cols = columns({ w4: {}, de4: {}, deductions: [], ...input });
   checkShape(cols);
+  if (cols.dd_routing && !cols.dd_account_sealed) invalid("enter the account number for direct deposit");
   const names = Object.keys(cols);
   const { rows } = await run(() => tx.query(
     `INSERT INTO employees (org_id, entity_id, ${names.join(", ")}) VALUES ($1, $2, ${names.map((_, i) => `$${i + 3}`).join(", ")}) RETURNING ${COLS}`,
@@ -294,6 +319,7 @@ export async function updateEmployee(
   if (!before) invalid("employee not found");
   const cols = columns(input);
   checkShape({ pay_type: before.pay_type, overtime_exempt: before.overtime_exempt, ...cols });
+  if (cols.dd_routing && !cols.dd_account_sealed && !before.dd_account_last4) invalid("enter the account number for direct deposit");
   if (!Object.keys(cols).length) return employeeOf(before);
   const { rows } = await run(() => tx.query(
     `UPDATE employees SET ${Object.keys(cols).map((k, i) => `${k} = $${i + 2}`).join(", ")}, updated_at = now() WHERE id = $1 RETURNING ${COLS}`,
