@@ -66,14 +66,42 @@ nav.side a {
 }
 nav.side a.on { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
 nav.side .label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 12px 12px 4px; }
+/* The phone menu: a grid of buttons, three to a row, with the rest under More. */
+nav.mobile { display: none; }
+.banner .short { display: none; }
 @media (max-width: 760px) {
-  .shell { grid-template-columns: 1fr; }
-  nav.side { flex-direction: row; overflow-x: auto; }
-  nav.side .label { display: none; }
-  nav.side a { white-space: nowrap; }
-  .topbar { gap: 10px; padding: 10px 16px; }
-  .topbar .who, .topbar [data-action=theme] { display: none; }
-  .wrap { padding: 16px; }
+  .shell { grid-template-columns: 1fr; gap: 12px; }
+  nav.side { display: none; }
+  nav.mobile { display: block; }
+  nav.mobile .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  nav.mobile .more-tiles { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+  nav.mobile a, nav.mobile button.more {
+    position: relative; display: flex; align-items: center; justify-content: center; min-height: 40px; padding: 6px 4px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink);
+    font: inherit; font-size: 14px; font-weight: 500; text-decoration: none; text-align: center; line-height: 1.2; cursor: pointer;
+  }
+  nav.mobile a.on, nav.mobile button.more.on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); font-weight: 600; }
+  nav.mobile button.more[aria-expanded=true] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  nav.mobile .badge { position: absolute; top: -6px; right: -4px; min-width: 18px; line-height: 18px; font-size: 11px; padding: 0 5px; }
+  .topbar { gap: 8px; padding: 8px 16px; }
+  .topbar .brand span, .topbar .who, .topbar [data-action=theme] { display: none; }
+  .topbar select { min-width: 0; flex: 1; }
+  .topbar .spacer { display: none; }
+  .topbar button { white-space: nowrap; padding: 6px 10px; }
+  .banner { padding: 6px 16px; font-size: 13px; }
+  .banner .long { display: none; }
+  .banner .short { display: inline; }
+  .wrap { padding: 12px 16px 16px; }
+  .panel { padding: 14px; }
+  h1 { font-size: 20px; }
+  .head { margin-bottom: 12px; }
+  /* Keep the overview's figures in view under the menu. */
+  .row.quick { align-items: stretch; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 100%; }
+  .row.quick .btn { padding: 8px 4px; font-size: 13px; text-align: center; line-height: 1.2; display: flex; align-items: center; justify-content: center; }
+  .cards.kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .card.kpi { padding: 10px 12px; }
+  .cards.kpis .kpi .stat { font-size: 18px; }
+  .cards.kpis .kpi .hash { font-size: 11px; }
 }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
@@ -149,7 +177,7 @@ details > summary { cursor: pointer; }
 .doc { padding: 28px; }
 .doc-title { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
 @media print {
-  .topbar, .banner, nav.side, .no-print, #toast { display: none !important; }
+  .topbar, .banner, nav.side, nav.mobile, .no-print, #toast { display: none !important; }
   .shell { display: block; }
   .wrap { max-width: none; padding: 0; }
   :root[data-theme], :root:not([data-theme]) { --bg: #fff; --panel: #fff; --ink: #000; --muted: #444; --line: #ccc; --brand: #1f5f4a; color-scheme: light; }

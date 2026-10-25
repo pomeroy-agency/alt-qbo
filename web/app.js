@@ -88,14 +88,14 @@ function topbar() {
   const t = theme();
   return `
     <header class="topbar">
-      <a class="brand" href="#/"><img src="/favicon.svg" alt="">Alt-QBO</a>
+      <a class="brand" href="#/"><img src="/favicon.svg" alt=""><span>Alt-QBO</span></a>
       ${orgs.length > 1 ? `<select data-action="switch-org" aria-label="Organisation">${orgs.map((o) => `<option value="${o.id}" ${o.id === state.orgId ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : `<span>${esc(state.org?.org?.name ?? "")}</span>`}
       <span class="spacer"></span>
       <span class="who">${esc(state.me?.user?.name)} · ${esc(state.org?.role ?? "")}</span>
       <button class="link" data-action="theme" title="Switch between light, dark and your device's setting">${{ auto: "Theme: device", dark: "Theme: dark", light: "Theme: light" }[t]}</button>
       <button class="secondary" data-action="logout">Sign out</button>
     </header>
-    <div class="banner">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</div>
+    <div class="banner"><span class="long">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</span><span class="short">Preview build: use test data only.</span></div>
     ${state.me?.emailEnabled && state.me.user && !state.me.user.emailVerified ? `<div class="banner info">Please confirm your email: we sent a link to ${esc(state.me.user.email)}. <button class="link" data-action="resend-verify">Send it again</button></div>` : ""}`;
 }
 
@@ -108,11 +108,15 @@ const ACCOUNTANT_TABS = [
   ["reconcile", "Reconcile"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"],
 ];
 
+// Shorter names for the phone menu, where buttons sit three to a row.
+const SHORT = { contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
+
 function shell(active, content) {
   const e = state.entity?.entity;
   const attn = state.entity?.attention ?? {};
-  const link = ([k, l, count, what]) => {
-    const n = count ? attn[count] : 0;
+  const count = (c) => (c ? attn[c] : 0);
+  const link = ([k, l, c, what]) => {
+    const n = count(c);
     return `<a href="#/e/${e.id}/${k}" class="${active === k ? "on" : ""}">${l}${n ? ` <span class="badge" title="${n} ${what}">${n}</span>` : ""}</a>`;
   };
   const nav = e ? `
@@ -120,6 +124,22 @@ function shell(active, content) {
     ${ENTITY_TABS.map(link).join("")}
     <div class="label">Accountant tools</div>
     ${ACCOUNTANT_TABS.map(link).join("")}` : "";
+  // On a phone the everyday pages are a grid of buttons; everything else sits under More.
+  const btn = (href, k, l, n = 0, what = "") =>
+    `<a href="${href}" class="${active === k ? "on" : ""}">${esc(l)}${n ? `<span class="badge" title="${n} ${what}">${n}</span>` : ""}</a>`;
+  const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
+  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"]];
+  const main = e ? ENTITY_TABS.map(tab) : org.map(([k, h, l]) => btn(h, k, l));
+  const more = [
+    ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
+    ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
+  ];
+  const moreOn = e && (active === "home" || active === "team" || active === "audit" || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const mobile = `
+      <nav class="mobile">
+        <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
+        ${more.length ? `<div class="tiles more-tiles" hidden>${more.join("")}</div>` : ""}
+      </nav>`;
   return `${topbar()}
     <div class="wrap shell">
       <nav class="side">
@@ -129,6 +149,7 @@ function shell(active, content) {
         <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
         <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
       </nav>
+      ${mobile}
       <main>${content}</main>
     </div>`;
 }
@@ -1007,7 +1028,7 @@ async function overviewView(id) {
   ].filter(([n]) => n);
   app.innerHTML = shell("overview", `
     <div class="head"><div><h1>${esc(e.legalName)}</h1><p class="muted">${g.closedThrough ? `Books closed through ${longDate(g.closedThrough)}.` : "Your money at a glance, as of today."}</p></div>
-      ${canWrite ? `<div class="row">
+      ${canWrite ? `<div class="row quick">
         <a class="btn" href="${go("invoices")}">New invoice</a>
         <a class="btn secondary" href="${go("bills")}">Record a bill</a>
         <a class="btn secondary" href="${go("bank")}">Import bank statement</a>
@@ -1942,10 +1963,19 @@ document.addEventListener("click", async (ev) => {
       try { localStorage.setItem("altqbo_theme", next); } catch {}
       applyTheme(next);
       b.textContent = { auto: "Theme: device", dark: "Theme: dark", light: "Theme: light" }[next];
+    } else if (a === "nav-more") {
+      const tiles = b.closest("nav").querySelector(".more-tiles");
+      tiles.hidden = !tiles.hidden;
+      b.setAttribute("aria-expanded", String(!tiles.hidden));
     } else if (a === "open-example") {
       b.disabled = true;
+      const label = b.textContent;
       b.textContent = "Setting up the example…";
-      const r = await api("/api/example", { body: {} });
+      const r = await api("/api/example", { body: {} }).catch((err) => {
+        b.disabled = false;
+        b.textContent = label;
+        throw err;
+      });
       state.me = null; state.org = null; state.orgId = r.orgId;
       try { localStorage.setItem("altqbo_org", r.orgId); } catch {}
       location.hash = `#/e/${r.entityId}/overview`;
