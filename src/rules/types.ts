@@ -49,6 +49,17 @@ export interface FederalPayrollRules {
   medicare: { employeeRate: string; employerRate: string; additionalRate: string; additionalThreshold: string };
   futa: { rate: string; wageBase: string; note: string };
   supplementalRate: string;
+  /** When the taxes reported on Form 941 and 940 must be deposited (Pub 15 sections 11 and 14). */
+  deposits: {
+    /** Lookback-period taxes above this make a semiweekly depositor. */
+    semiweeklyLookbackOver: string;
+    /** Taxes accumulated to this in a deposit period are due the next business day. */
+    nextDayAtOrAbove: string;
+    /** A quarter's Form 941 taxes under this may be paid with the return. */
+    payWithReturnUnder: string;
+    /** FUTA owed above this at a quarter's end is deposited; less carries forward. */
+    futaDepositOver: string;
+  };
   /** Inputs to Pub 15-T Worksheet 1A, annual percentage method. */
   incomeTax: {
     /** Rate thresholds on taxable income for the year, per filing status. */
@@ -75,6 +86,13 @@ export interface CaliforniaPayrollRules {
   sdi: { rate: string; wageBase: string | null };
   ui: { wageBase: string; newEmployerRate: string };
   ett: { rate: string; wageBase: string };
+  /** When PIT and SDI withholding must be deposited, by accumulated PIT; UI and ETT are quarterly. */
+  deposits: {
+    /** Accumulated PIT at or above this by a month's end is due the 15th of the next month. */
+    monthlyAtOrAbove: string;
+    /** For semiweekly and next-day federal depositors, PIT accumulated above this follows the federal timing. */
+    federalTimingOver: string;
+  };
 }
 
 export interface CaliforniaWageHourRules {

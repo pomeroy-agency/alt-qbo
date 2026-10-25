@@ -102,7 +102,7 @@ function topbar() {
 // The everyday menu stays short. Bookkeeping mechanics live under "Accountant tools".
 const ENTITY_TABS = [
   ["overview", "Overview"], ["invoices", "Invoices", "overdueInvoices", "overdue"], ["bills", "Bills", "billsDueSoon", "due within a week"],
-  ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["items", "Products and services"], ["reports", "Reports"], ["payroll", "Payroll", "payRunsToApprove", "to approve"],
+  ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["items", "Products and services"], ["reports", "Reports"], ["payroll", "Payroll", "payrollToDo", "to approve or pay"],
 ];
 const ACCOUNTANT_TABS = [
   ["reconcile", "Reconcile"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"],
@@ -252,7 +252,7 @@ async function loadEntity(id) {
   ]);
   state.entity = ent;
   state.entity.fresh = true;
-  state.entity.attention = attention;
+  state.entity.attention = { ...attention, payrollToDo: attention.payRunsToApprove + (attention.taxDepositsDue ?? 0) };
   return state.entity;
 }
 
@@ -1003,6 +1003,7 @@ async function overviewView(id) {
     [attn.overdueInvoices, `invoice${attn.overdueInvoices === 1 ? " is" : "s are"} overdue`, "invoices"],
     [attn.billsDueSoon, `bill${attn.billsDueSoon === 1 ? " is" : "s are"} due within a week`, "bills"],
     [attn.payRunsToApprove, `pay run${attn.payRunsToApprove === 1 ? "" : "s"} waiting for approval`, "payroll"],
+    [attn.taxDepositsDue, `payroll tax deposit${attn.taxDepositsDue === 1 ? " is" : "s are"} due soon or late`, "payroll"],
   ].filter(([n]) => n);
   app.innerHTML = shell("overview", `
     <div class="head"><div><h1>${esc(e.legalName)}</h1><p class="muted">${g.closedThrough ? `Books closed through ${longDate(g.closedThrough)}.` : "Your money at a glance, as of today."}</p></div>
@@ -1451,7 +1452,7 @@ function runTable(run) {
 
 async function payrollView(id) {
   await loadEntity(id);
-  const [{ employees, caUiRate, directDeposit }, { payRuns }] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs"))]);
+  const [{ employees, caUiRate, directDeposit }, { payRuns }, deposits] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs")), api(entPath("/tax-deposits"))]);
   pay.employees = employees;
   pay.caUiRate = caUiRate;
   const canSetUpBank = ["owner", "admin", "accountant"].includes(state.org.role);
@@ -1479,6 +1480,7 @@ async function payrollView(id) {
         <span class="hash">It's on the rate notice the EDD mails each December. New employers pay 3.4%.</span>
       </form>
     </div>
+    ${taxDepositsPanel(deposits, canWrite, canSetUpBank)}
     ${directDepositPanel(directDeposit, canSetUpBank)}
     ${canWrite && active.length ? `<div class="panel">
       <h2>Run payroll</h2>
@@ -1512,6 +1514,46 @@ async function payrollView(id) {
         </tr>`).join("") || `<tr><td colspan="8" class="muted">No pay runs yet.</td></tr>`}</tbody>
       </table></div>
     </div>`);
+}
+
+const DEPOSIT_STATUS = {
+  overdue: ["pill bad", "Late"], due_soon: ["pill warn", "Due soon"], upcoming: ["pill grey", "Upcoming"], paid: ["pill", "Paid"],
+};
+
+function taxDepositsPanel(t, canPay, canSet) {
+  const open = t.deposits.filter((d) => d.status !== "paid");
+  const paid = t.deposits.filter((d) => d.status === "paid");
+  const row = (d) => `<tr>
+    <td style="white-space:nowrap">${esc(d.dueDate)}</td>
+    <td><strong>${d.agency}</strong> · ${esc(d.what)}<div class="hash">${esc(d.period)}. ${esc(d.rule)}.</div>${d.note && d.status !== "paid" ? `<div class="hash">${esc(d.note)}</div>` : ""}</td>
+    <td class="num">${usd(d.status === "paid" ? d.amountMinor : d.remainingMinor)}${BigInt(d.paidMinor) && d.status !== "paid" ? `<div class="hash">${usd(d.paidMinor)} paid</div>` : ""}</td>
+    <td><span class="${DEPOSIT_STATUS[d.status][0]}">${DEPOSIT_STATUS[d.status][1]}</span>${d.payments.map((p) => `<div class="hash">Paid ${esc(p.paidDate)}${p.confirmation ? ` · ${esc(p.confirmation)}` : ""}</div>`).join("")}</td>
+    <td>${canPay && d.status !== "paid" ? `<button class="link" data-action="doc-toggle" data-form="dep-pay" data-id="${esc(d.key)}">Record payment</button>` : ""}</td>
+  </tr>
+  ${canPay && d.status !== "paid" ? `<tr hidden data-dep-pay="${esc(d.key)}"><td colspan="5">
+    <form data-form="dep-pay" data-key="${esc(d.key)}" class="row">
+      <span class="muted">Pay ${usd(d.remainingMinor)} through ${esc(d.where)} first, then record it here.</span>
+      <label>Paid on<input type="date" name="paidDate" value="${t.today}" max="${t.today}" required></label>
+      <label>From<select name="bankAccount">${bankOptions()}</select></label>
+      <label>Confirmation number (optional)<input name="confirmation" maxlength="60" style="width:160px"></label>
+      <button type="submit">Record payment</button>
+    </form></td></tr>` : ""}`;
+  return `<div class="panel">
+    <h2>Tax deposits</h2>
+    <p class="muted">What each approved pay run owes the IRS and the EDD, and when. Pay through EFTPS (or IRS Direct Pay) and EDD e-Services, then record each payment here so your books show it. Alt-QBO emails a reminder a few days before each due date.</p>
+    <form data-form="deposit-schedule" class="row" style="margin-bottom:12px">
+      <label>Federal deposit schedule<select name="federalDepositSchedule" ${canSet ? "" : "disabled"}>
+        <option value="monthly" ${t.federalSchedule === "monthly" ? "selected" : ""}>Monthly</option>
+        <option value="semiweekly" ${t.federalSchedule === "semiweekly" ? "selected" : ""}>Semiweekly</option></select></label>
+      ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+      <span class="hash">New employers are monthly. After that, you're semiweekly if your Form 941 taxes from July two years ago through last June were over $50,000. The IRS tells you which in its fall notice.</span>
+    </form>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Due</th><th>What</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody>${open.map(row).join("") || `<tr><td colspan="5" class="muted">Nothing to pay right now. Deposits show up here once a pay run is approved.</td></tr>`}</tbody>
+    </table></div>
+    ${paid.length ? `<details style="margin-top:8px"><summary>Paid this year (${paid.length})</summary><div class="table-wrap"><table><tbody>${paid.map(row).join("")}</tbody></table></div></details>` : ""}
+  </div>`;
 }
 
 function directDepositPanel(dd, canEdit) {
@@ -2136,6 +2178,15 @@ document.addEventListener("submit", async (ev) => {
       else await api(entPath("/employees"), { body });
       pay.adding = false;
       toast(f.dataset.id ? "Saved" : `${body.name} added`);
+      await payrollView(state.entity.entity.id);
+    } else if (kind === "dep-pay") {
+      const r = await api(entPath("/tax-deposits/pay"), { body: { key: f.dataset.key, paidDate: d.paidDate, bankAccount: d.bankAccount, confirmation: d.confirmation } });
+      state.entity.fresh = false;
+      toast(r.late ? "Recorded. It was paid after the due date, so a late-deposit penalty may follow" : "Payment recorded and posted to the books");
+      await payrollView(state.entity.entity.id);
+    } else if (kind === "deposit-schedule") {
+      await api(entPath("/payroll-settings"), { body: { federalDepositSchedule: d.federalDepositSchedule } });
+      toast("Deposit schedule saved");
       await payrollView(state.entity.entity.id);
     } else if (kind === "dd-settings") {
       await api(entPath("/direct-deposit-settings"), { body: {

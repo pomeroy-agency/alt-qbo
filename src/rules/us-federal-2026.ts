@@ -12,6 +12,7 @@ export const usFederal2026: FederalRulePack = {
     { ref: "IRS Publication 15-T (2026), page 11, Annual Percentage Method tables", covers: "Worksheet 1A line 1g ($12,900 MFJ, $8,600 other); all six STANDARD and Step 2 schedules, reproduced exactly in tests", basis: "published" },
     { ref: "Rev. Proc. 2025-32, section 3.01 Tables 1-4 and 3.14", covers: "2026 brackets for every filing status; standard deductions $32,200 / $24,150 / $16,100", basis: "published" },
     { ref: "SSA announcement, October 2025", covers: "Social Security wage base $184,500", basis: "published" },
+    { ref: "IRS Publication 15 (2026), section 11 and section 14 Table 4", covers: "deposit schedules: $50,000 lookback test, monthly by the 15th, semiweekly Wednesday/Friday with 3 business days after the period, $100,000 next-day rule, $2,500 payment with return, FUTA over $500 by the end of the month after the quarter; DC legal holidays", basis: "published" },
     { ref: "IRC 3101, 3111, 3301, 3102(f); Pub 15 (2026)", covers: "FICA rates, Additional Medicare 0.9% over $200,000, FUTA 0.6% net on $7,000, 22% supplemental rate", basis: "published" },
   ],
   reviewNotes: [
@@ -24,6 +25,7 @@ export const usFederal2026: FederalRulePack = {
     medicare: { employeeRate: "0.0145", employerRate: "0.0145", additionalRate: "0.009", additionalThreshold: "200000" },
     futa: { rate: "0.006", wageBase: "7000", note: "net of the 5.4% state credit; credit reduction handled on Schedule A" },
     supplementalRate: "0.22",
+    deposits: { semiweeklyLookbackOver: "50000", nextDayAtOrAbove: "100000", payWithReturnUnder: "2500", futaDepositOver: "500" },
     incomeTax: {
       brackets: {
         single_or_mfs: [

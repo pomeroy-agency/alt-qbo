@@ -25,6 +25,8 @@ import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
 import { createEmployee, listEmployees, setUiRate, updateEmployee, type EmployeeFields } from "../payroll/employees.js";
 import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
+import { pacificToday } from "../payroll/business-days.js";
+import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
 import { calculateSavedRun, carrySickLeave, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import {
   AuthError, SESSION_COOKIE, createSession, endSession, hashPassword, membershipRole, normaliseEmail,
@@ -330,7 +332,7 @@ route("POST", "/api/orgs/:org/entities/:entity/journal/:entry/reverse", async (r
     const original = await getEntry(tx, p.entry!);
     if (original.entityId !== p.entity) throw new HttpError(404, "entry not found");
     // These entries belong to a document or bank line; undoing them here would leave that record out of step.
-    const owner = { invoice: "void the invoice instead", bill: "void the bill instead", bank_line: "undo it from the Bank page instead", payment: "payments can't be reversed yet" } as Record<string, string>;
+    const owner = { invoice: "void the invoice instead", bill: "void the bill instead", bank_line: "undo it from the Bank page instead", payment: "payments can't be reversed yet", tax_deposit: "tax deposits can't be reversed yet" } as Record<string, string>;
     if (owner[original.sourceType]) throw new HttpError(409, `this entry came from a ${original.sourceType.replace("_", " ")}; ${owner[original.sourceType]}`);
     return reverseEntry(tx, {
       orgId: ctx.orgId, entryId: p.entry!, date: date(b.date, "date"), reason: str(b.reason, "reason", 300), actor: ctx.actor,
@@ -863,7 +865,11 @@ route("GET", "/api/orgs/:org/entities/:entity/glance", async (_req, p, ctx) =>
 route("GET", "/api/orgs/:org/entities/:entity/attention", async (_req, p, ctx) =>
   tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    return json(await attention(tx, p.entity!, serverToday()));
+    const today = pacificToday();
+    const year = Number(today.slice(0, 4));
+    const open = [...await taxDeposits(tx, p.entity!, year - 1, today), ...await taxDeposits(tx, p.entity!, year, today)]
+      .filter((d) => d.status === "overdue" || d.status === "due_soon");
+    return json({ ...(await attention(tx, p.entity!, serverToday())), taxDepositsDue: open.length });
   }),
 );
 
@@ -960,9 +966,48 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
   if (percent !== null && !/^\d{1,2}(\.\d{1,3})?$/.test(percent)) throw new HttpError(400, "the UI rate should be a percentage like 3.4");
   await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    await setUiRate(tx, { orgId: ctx.orgId, entityId: p.entity!, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
+    if (b.caUiRatePercent !== undefined) {
+      await setUiRate(tx, { orgId: ctx.orgId, entityId: p.entity!, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
+    }
+    if (b.federalDepositSchedule !== undefined) {
+      await setFederalDepositSchedule(tx, { orgId: ctx.orgId, entityId: p.entity!, schedule: String(b.federalDepositSchedule), actor: ctx.actor });
+    }
   });
   return json({ ok: true });
+});
+
+/** Payroll tax deposits for a year: what's due when, and what's been paid. */
+route("GET", "/api/orgs/:org/entities/:entity/tax-deposits", async (req, p, ctx) => {
+  const today = pacificToday();
+  const yearParam = new URL(req.url).searchParams.get("year");
+  const year = yearParam ? Number(yearParam) : Number(today.slice(0, 4));
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new HttpError(400, "year should be like 2026");
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const deposits = await taxDeposits(tx, p.entity!, year, today);
+    // December's deposits fall due in January, so the start of a year also shows last year's still open.
+    const carried = (await taxDeposits(tx, p.entity!, year - 1, today)).filter((d) => d.status !== "paid");
+    return new Response(toJson({ year, today, federalSchedule: await federalDepositSchedule(tx, p.entity!), deposits: [...carried, ...deposits] }), {
+      headers: { "content-type": "application/json" },
+    });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/tax-deposits/pay", async (req, p, ctx) => {
+  const b = await body(req);
+  const key = str(b.key, "deposit", 200);
+  const paidDate = date(b.paidDate, "paid date");
+  const today = pacificToday();
+  if (paidDate > today) throw new HttpError(400, "the paid date can't be in the future");
+  const paid = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return recordDepositPayment(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, key, paidDate, today,
+      bankAccount: typeof b.bankAccount === "string" ? b.bankAccount : undefined,
+      confirmation: typeof b.confirmation === "string" ? b.confirmation : undefined, actor: ctx.actor,
+    });
+  });
+  return new Response(toJson(paid), { status: 201, headers: { "content-type": "application/json" } });
 });
 
 /** The business's bank details for direct deposit files. */

@@ -38,6 +38,7 @@ const TABLES: [string, string][] = [
   ["direct_deposit_settings", `SELECT entity_id, org_id, odfi_routing, immediate_destination, destination_name, immediate_origin, company_id, company_name,
      balanced, account_type, account_last4, updated_at FROM direct_deposit_settings WHERE entity_id = $1`],
   ["pay_runs", "SELECT * FROM pay_runs WHERE entity_id = $1 ORDER BY created_at"],
+  ["tax_deposit_payments", "SELECT * FROM tax_deposit_payments WHERE entity_id = $1 ORDER BY created_at"],
   // Connection credentials stay out; the backup only says the connection existed.
   ["connections", "SELECT id, org_id, entity_id, kind, display_name, external_ref, scopes, status, created_at FROM connections WHERE entity_id = $1 ORDER BY created_at"],
 ];
