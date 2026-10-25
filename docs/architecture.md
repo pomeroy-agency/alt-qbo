@@ -27,6 +27,8 @@
 
 9. **Team (`src/app/team.ts`).** An invitation stores the email, role and a SHA-256 hash of a random link token; it expires after 14 days. Accepting needs the token and a signed-in user with the invited email, so a forwarded link is useless to anyone else. The database lets an invitation settle once (accepted or revoked, never edited or deleted), refuses acceptance by a different email or after expiry, and checks at commit that every organisation still has an owner. Invitations, role changes, removals and leaving are in the audit chain.
 
+10. **Chart of accounts (`src/core/accounts.ts`).** New accounts are added by kind (bank account, credit card, expense and so on), which fixes the type, subtype, statement line and cash-flow class; receivables, payables and payroll control accounts stay system-only. Tax lines can only be codes the entity's template already uses for its return and account type. A trigger on `accounts` refuses a statement line that doesn't suit the type, any change to code, type, subtype or system key, deleting, and deactivating a system account or one with a balance. A trigger on `journal_lines` refuses posting to an inactive account and takes a share lock on the account, so a deactivation and a posting can't cross.
+
 ## Money
 
 Amounts are `bigint` minor units with a currency everywhere outside the tax math. Rates and per-period tax math use `decimal.js` (40 digits), rounding half-up to cents only at the end of each tax. Postgres `int8` parses as `BigInt`. No floats touch money.

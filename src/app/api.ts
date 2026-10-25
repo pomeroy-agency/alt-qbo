@@ -9,6 +9,7 @@ import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBan
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
 import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
 import { toMajor } from "../core/money.js";
+import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
@@ -572,6 +573,49 @@ route("POST", "/api/orgs/:org/entities/:entity/reconciliations", async (req, p, 
     });
   });
   return json(out, 201);
+});
+
+// -------------------------------------------------------- chart of accounts
+
+route("GET", "/api/orgs/:org/entities/:entity/accounts/options", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const e = await getEntity(tx, p.entity!);
+    const rt = e.taxReturnType as Parameters<typeof taxLineOptions>[1];
+    return json({
+      kinds: ACCOUNT_KINDS.map((k) => ({ ...k, suggestedTaxLine: suggestedTaxLine(e.coaTemplate, rt, k.key) })),
+      taxLines: taxLineOptions(e.coaTemplate, rt),
+    });
+  }),
+);
+
+const taxLineOf = (v: unknown) => (v === null || v === "" ? null : str(v, "tax line", 40));
+
+route("POST", "/api/orgs/:org/entities/:entity/accounts", async (req, p, ctx) => {
+  const b = await body(req);
+  const out = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createAccount(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, code: str(b.code, "code", 6), name: str(b.name, "name", 120), kind: str(b.kind, "kind", 40),
+      taxLine: taxLineOf(b.taxLine ?? null), actor: ctx.actor,
+    });
+  });
+  return json(out, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/accounts/:account", async (req, p, ctx) => {
+  const b = await body(req);
+  await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    await updateAccount(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, accountId: p.account!,
+      name: b.name === undefined ? undefined : str(b.name, "name", 120),
+      taxLine: b.taxLine === undefined ? undefined : taxLineOf(b.taxLine),
+      active: typeof b.active === "boolean" ? b.active : undefined,
+      actor: ctx.actor,
+    });
+  });
+  return json({ ok: true });
 });
 
 // ----------------------------------------------------------------- reports
