@@ -19,6 +19,8 @@ const logMailer: Mailer = async (m) => console.log(`\n--- email to ${m.to}: ${m.
 const mailer = mailerFromEnv() ?? (process.env.DEV_MAIL === "log" ? logMailer : undefined);
 // DEV_TAX_RATES=sample uses stand-in sales tax rates instead of asking the CDTFA.
 const taxRates = process.env.DEV_TAX_RATES === "sample" ? sampleRateLookup : cdtfaRateLookup();
+// Local data only: a fixed key for sealing Social Security numbers when PII_KEY isn't set.
+process.env.PII_KEY ??= Buffer.alloc(32, 1).toString("base64");
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);

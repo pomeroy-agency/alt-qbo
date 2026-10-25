@@ -48,10 +48,12 @@ async function entity(s: { cookie: string; orgId: string }) {
   return r.data.id as string;
 }
 
-const run = {
-  periodStart: "2026-06-01", periodEnd: "2026-06-14", payDate: "2026-06-19",
-  employees: [{ name: "Maya Chen", payFrequency: "biweekly", salaryPerPeriod: "3000.00", federalStatus: "single_or_mfs", caStatus: "single", caAllowances: "1" }],
+const maya = {
+  name: "Maya Chen", hireDate: "2026-01-05", payType: "salary", payFrequency: "biweekly", payRate: "78000", overtimeExempt: true,
+  w4: { filingStatus: "single_or_mfs" }, de4: { filingStatus: "single", regularAllowances: 1 },
 };
+const runFor = (employeeIds: string[], payDate = "2026-06-19") =>
+  ({ periodStart: "2026-06-01", periodEnd: "2026-06-14", payDate, lines: employeeIds.map((employeeId) => ({ employeeId })) });
 
 describe("API", () => {
   it("requires the invite code, a real password, and a session", async () => {
@@ -97,7 +99,9 @@ describe("API", () => {
   it("enforces two-person approval for payroll and read-only access", async () => {
     const s = await signup();
     const ent = await entity(s);
-    const prepared = await call(`/api/orgs/${s.orgId}/entities/${ent}/pay-runs`, { cookie: s.cookie, body: run });
+    const emp = await call(`/api/orgs/${s.orgId}/entities/${ent}/employees`, { cookie: s.cookie, body: maya });
+    expect(emp.status).toBe(201);
+    const prepared = await call(`/api/orgs/${s.orgId}/entities/${ent}/pay-runs`, { cookie: s.cookie, body: runFor([emp.data.id]) });
     expect(prepared.status).toBe(201);
     expect(prepared.data.run.totals.netPayMinor).toBe("228358");
 
@@ -379,5 +383,119 @@ describe("simplicity API", () => {
     expect((await post("2026-02-10", "Late receipt", "10.00")).status).toBe(422);
     expect((await call(`${base}/glance`, { cookie: s.cookie })).data.closedThrough).toBe("2026-02-28");
     expect((await call(`${base}/close-through`, { cookie: s.cookie, body: { through: "2025-12-31" } })).status).toBe(422);
+  });
+});
+
+describe("saved employees and pay runs", () => {
+  async function setup() {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    const approver = await join(s, `approver${Date.now()}${n++}@example.com`, "approver");
+    const add = async (body: unknown) => {
+      const r = await call(`${base}/employees`, { cookie: s.cookie, body });
+      expect(r.status).toBe(201);
+      return r.data;
+    };
+    const prepare = async (body: unknown) => {
+      const r = await call(`${base}/pay-runs`, { cookie: s.cookie, body });
+      expect(r.status).toBe(201);
+      return r.data;
+    };
+    const approve = async (id: string) => {
+      const r = await call(`${base}/pay-runs/${id}/approve`, { cookie: approver.cookie, body: {} });
+      expect(r.data).not.toHaveProperty("error");
+      expect(r.status).toBe(201);
+      return r.data;
+    };
+    return { s, ent, base, add, prepare, approve };
+  }
+
+  it("keeps the Social Security number sealed and shows only its last four digits", async () => {
+    const { s, base, add } = await setup();
+    expect((await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, ssn: "123-45-678" } })).status).toBe(422);
+    expect((await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, ssn: "666-12-3456" } })).status).toBe(422);
+    expect((await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, payType: "hourly", payRate: "25" } })).status).toBe(422);
+    const e = await add({ ...maya, ssn: "123-45-6789", email: "Maya@Example.com", address: { line1: "1 Main St", city: "Oakland", zip: "94607" } });
+    expect(e).toMatchObject({ ssnLast4: "6789", email: "maya@example.com", status: "active", address: { state: "CA" } });
+    expect(JSON.stringify(e)).not.toContain("123456789");
+
+    const { rows } = await pool.query("SELECT ssn_sealed FROM employees WHERE id = $1", [e.id]);
+    expect(rows[0].ssn_sealed).toMatch(/^v1\./);
+    expect(rows[0].ssn_sealed).not.toContain("6789");
+    const audit = await call(`/api/orgs/${s.orgId}/audit`, { cookie: s.cookie });
+    const text = JSON.stringify(audit.data.events);
+    expect(text).toContain("employee.created");
+    expect(text).not.toContain("123456789");
+    expect(text).not.toContain("ssn_sealed");
+
+    const changed = await call(`${base}/employees/${e.id}`, { cookie: s.cookie, body: { terminationDate: "2026-09-30", payRate: "80000" } });
+    expect(changed.data).toMatchObject({ status: "terminated", payRate: "80000", ssnLast4: "6789" });
+    const list = await call(`${base}/employees`, { cookie: s.cookie });
+    expect(list.data.employees).toHaveLength(1);
+  });
+
+  it("builds runs from saved pay, and works out California overtime from daily hours", async () => {
+    const { base, s, add } = await setup();
+    const salaried = await add(maya);
+    const hourly = await add({ name: "Leo Park", hireDate: "2026-02-01", payType: "hourly", payFrequency: "biweekly", payRate: "30", usualHours: "80",
+      w4: { filingStatus: "mfj" }, de4: { filingStatus: "married", regularAllowances: 2 }, sickBalanceHours: "10",
+      deductions: [{ kind: "traditional401k", amount: "100" }, { kind: "post_tax", amount: "0" }] });
+    expect(hourly.deductions).toEqual([{ kind: "traditional401k", amount: "100", description: "401(k)" }]);
+
+    const preview = await call(`${base}/pay-runs/preview`, { cookie: s.cookie, body: {
+      ...runFor([]),
+      lines: [{ employeeId: salaried.id, bonus: "500" }, { employeeId: hourly.id, dailyHours: [10, 8, 8, 8, 8, 0, 0, 13, 8, 8, 8, 8, 0, 0] }],
+    } });
+    expect(preview.status).toBe(200);
+    const [m, l] = preview.data.paychecks;
+    expect(m.earnings.map((e: any) => [e.code, e.amountMinor])).toEqual([["SALARY", "300000"], ["BONUS", "50000"]]);
+    // Week 1: 2 hours over 8 on day one. Week 2: 4 over 8 and 1 over 12 on day one.
+    expect(l.earnings.map((e: any) => [e.code, e.hours])).toEqual([["REGULAR", "80"], ["OVERTIME", "6"], ["DOUBLE_TIME", "1"]]);
+    expect(l.deductions[0]).toMatchObject({ kind: "traditional401k", amountMinor: "10000" });
+    expect(l.sickLeave).toMatchObject({ balanceHours: "12.9" });
+
+    const late = await call(`${base}/pay-runs/preview`, { cookie: s.cookie, body: { ...runFor([salaried.id]), periodStart: "2025-12-01", periodEnd: "2025-12-14", payDate: "2025-12-19" } });
+    expect(late.status).toBe(422);
+    const twice = await call(`${base}/pay-runs/preview`, { cookie: s.cookie, body: runFor([salaried.id, salaried.id]) });
+    expect(twice.status).toBe(422);
+  });
+
+  it("stops Social Security, FUTA and UI at their wage bases using earlier pay this year", async () => {
+    const { add, prepare } = await setup();
+    const e = await add({ ...maya, payRate: "260000", openingYtd: { year: 2026, wages: "183500", federalIncomeTax: "40000", socialSecurityTax: "11377", medicareTax: "2660.75" } });
+    const { run } = await prepare(runFor([e.id]));
+    const tax = (code: string) => run.paychecks[0].taxes.find((t: any) => t.code === code);
+    // 2026 base 184,500: only 1,000 of this 10,000 paycheck is left for Social Security.
+    expect(tax("SS_EE")).toMatchObject({ taxableWagesMinor: "100000", amountMinor: "6200" });
+    expect(tax("FUTA").amountMinor).toBe("0");
+    expect(tax("CA_UI").amountMinor).toBe("0");
+    expect(tax("MEDICARE_EE").taxableWagesMinor).toBe("1000000");
+  });
+
+  it("counts runs posted after another was prepared, carries sick leave, and shows year to date on stubs", async () => {
+    const { s, base, add, prepare, approve } = await setup();
+    // 2,000 a pay period with 6,000 already paid: the FUTA base of 7,000 has 1,000 left.
+    const e = await add({ ...maya, payRate: "52000", overtimeExempt: false, ssn: "123-45-6789", openingYtd: { year: 2026, wages: "6000" } });
+    const h = await add({ name: "Leo Park", hireDate: "2026-02-01", payType: "hourly", payFrequency: "biweekly", payRate: "30", sickBalanceHours: "10" });
+    const a = await prepare({ ...runFor([e.id, h.id]), lines: [{ employeeId: e.id }, { employeeId: h.id, regularHours: "60" }] });
+    const b = await prepare({ ...runFor([e.id], "2026-07-03"), periodStart: "2026-06-15", periodEnd: "2026-06-28" });
+    const futa = (run: any) => run.paychecks[0].taxes.find((t: any) => t.code === "FUTA").taxableWagesMinor;
+    expect(futa(a.run)).toBe("100000");
+    expect(futa(b.run)).toBe("100000");
+
+    await approve(a.id);
+    await approve(b.id);
+    const runs = await call(`${base}/pay-runs`, { cookie: s.cookie });
+    expect(futa(runs.data.payRuns.find((r: any) => r.id === b.id).result)).toBe("0");
+    const leo = (await call(`${base}/employees`, { cookie: s.cookie })).data.employees.find((x: any) => x.id === h.id);
+    expect(leo.sickBalanceHours).toBe("12");
+
+    const stub = await call(`${base}/pay-runs/${b.id}`, { cookie: s.cookie });
+    expect(stub.status).toBe(200);
+    expect(stub.data.employer.name).toBe("API Studio LLC");
+    expect(stub.data.stubs[0]).toMatchObject({ ssnLast4: "6789", ytd: { grossMinor: "1000000" } });
+    const first = await call(`${base}/pay-runs/${a.id}`, { cookie: s.cookie });
+    expect(first.data.stubs[0].ytd.grossMinor).toBe("800000");
   });
 });

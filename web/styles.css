@@ -155,3 +155,9 @@ details > summary { cursor: pointer; }
   :root[data-theme], :root:not([data-theme]) { --bg: #fff; --panel: #fff; --ink: #000; --muted: #444; --line: #ccc; --brand: #1f5f4a; color-scheme: light; }
   .panel { border: none; }
 }
+
+.stub table { margin-top: 4px; }
+@media print {
+  .stub { break-after: page; }
+  .stub:last-child { break-after: auto; }
+}

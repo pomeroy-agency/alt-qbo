@@ -1280,53 +1280,135 @@ function updateRecon() {
 
 // --------------------------------------------------------------- payroll
 
-let employees = [];
-function blankEmployee(i) {
-  return { name: i === 0 ? "Maya Chen" : "", payType: "salary", payFrequency: "biweekly", salaryPerPeriod: i === 0 ? "3000.00" : "", hourlyRate: "", regularHours: "", overtimeHours: "", doubleTimeHours: "", useDaily: false, dailyHours: ["", "", "", "", "", "", ""], federalStatus: "single_or_mfs", step2Checked: false, caStatus: "single", caAllowances: "1", k401: "", section125: "", overtimeExempt: true };
+const FREQ_LABEL = { weekly: "Weekly", biweekly: "Every two weeks", semimonthly: "Twice a month", monthly: "Monthly" };
+const FREQ_DAYS = { weekly: 7, biweekly: 14, semimonthly: 15, monthly: 30 };
+const DEDUCTION_LABEL = { traditional401k: "401(k)", section125: "Health premium (pre-tax)", post_tax: "After-tax deduction" };
+const pay = { employees: [], caUiRate: null, adding: false };
+
+/** Hours to two decimals at most: 2.6667 reads as 2.67. */
+const hrs = (h) => String(Math.round(Number(h) * 100) / 100);
+
+function payLabel(e) {
+  return e.payType === "salary" ? `${usd(Math.round(Number(e.payRate) * 100))} a year` : `${usd(Math.round(Number(e.payRate) * 100))} an hour`;
 }
 
-function employeeCard(e, i) {
-  const sel = (name, opts, v) => `<select data-emp="${i}" data-field="${name}">${opts.map(([k, l]) => `<option value="${k}" ${k === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
-  const inp = (name, v, ph = "", extra = "") => `<input data-emp="${i}" data-field="${name}" value="${esc(v)}" placeholder="${ph}" ${extra}>`;
-  return `<div class="emp">
-    <div class="row" style="justify-content:space-between;margin-bottom:8px"><strong>Employee ${i + 1}</strong>${employees.length > 1 ? `<button class="link" data-action="remove-emp" data-i="${i}">Remove</button>` : ""}</div>
+function employeeForm(e = null) {
+  const v = (x) => esc(x ?? "");
+  const sel = (name, opts, cur) => `<select name="${name}">${opts.map(([k, l]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+  const ded = (kind) => e?.deductions.find((d) => d.kind === kind)?.amount ?? "";
+  const o = e?.openingYtd ?? {};
+  const hourly = e?.payType === "hourly";
+  return `<form data-form="employee" ${e ? `data-id="${e.id}"` : ""}>
     <div class="grid">
-      <label>Name${inp("name", e.name, "Full name")}</label>
-      <label>Pay frequency${sel("payFrequency", [["weekly", "Weekly"], ["biweekly", "Every two weeks"], ["semimonthly", "Twice a month"], ["monthly", "Monthly"]], e.payFrequency)}</label>
-      <label>Pay type${sel("payType", [["salary", "Salary"], ["hourly", "Hourly"]], e.payType)}</label>
-      ${e.payType === "salary" ? `
-        <label>Salary per period ($)${inp("salaryPerPeriod", e.salaryPerPeriod, "3000.00", 'inputmode="decimal"')}</label>
-        <label class="check"><input type="checkbox" data-emp="${i}" data-field="overtimeExempt" ${e.overtimeExempt ? "checked" : ""}> Exempt from overtime</label>` : `
-        <label>Hourly rate ($)${inp("hourlyRate", e.hourlyRate, "25.00", 'inputmode="decimal"')}</label>
-        <label class="check"><input type="checkbox" data-emp="${i}" data-field="useDaily" ${e.useDaily ? "checked" : ""}> Enter daily hours (CA overtime)</label>
-        ${e.useDaily ? "" : `
-        <label>Regular hours${inp("regularHours", e.regularHours, "80")}</label>
-        <label>Overtime hours${inp("overtimeHours", e.overtimeHours, "0")}</label>
-        <label>Double-time hours${inp("doubleTimeHours", e.doubleTimeHours, "0")}</label>`}`}
-      <label>Federal filing status (W-4)${sel("federalStatus", [["single_or_mfs", "Single or married filing separately"], ["mfj", "Married filing jointly"], ["hoh", "Head of household"]], e.federalStatus)}</label>
-      <label class="check"><input type="checkbox" data-emp="${i}" data-field="step2Checked" ${e.step2Checked ? "checked" : ""}> W-4 Step 2 box checked</label>
-      <label>California status (DE 4)${sel("caStatus", [["single", "Single or dual income married"], ["married", "Married (one income)"], ["hoh", "Head of household"]], e.caStatus)}</label>
-      <label>DE 4 allowances${inp("caAllowances", e.caAllowances, "1")}</label>
-      <label>401(k) per period ($)${inp("k401", e.k401, "0.00")}</label>
-      <label>Section 125 per period ($)${inp("section125", e.section125, "0.00")}</label>
+      <label>Name<input name="name" value="${v(e?.name)}" required></label>
+      <label>Email (optional)<input name="email" type="email" value="${v(e?.email)}"></label>
+      <label>Hire date<input type="date" name="hireDate" value="${v(e?.hireDate ?? bookDate())}" required></label>
+      ${e ? `<label>Last day (if they've left)<input type="date" name="terminationDate" value="${v(e.terminationDate)}"></label>` : ""}
+      <label>Pay type${sel("payType", [["salary", "Salary"], ["hourly", "Hourly"]], e?.payType ?? "salary")}</label>
+      <label><span data-pay-label>${hourly ? "Hourly rate ($)" : "Annual salary ($)"}</span><input name="payRate" value="${v(e?.payRate)}" inputmode="decimal" required placeholder="${hourly ? "25.00" : "65000"}"></label>
+      <label>How often they're paid${sel("payFrequency", Object.entries(FREQ_LABEL), e?.payFrequency ?? "biweekly")}</label>
+      <label data-only="hourly" ${hourly ? "" : "hidden"}>Usual hours each pay period<input name="usualHours" value="${v(e?.usualHours)}" inputmode="decimal" placeholder="80"></label>
+      <label class="check" data-only="salary" ${hourly ? "hidden" : ""}><input type="checkbox" name="overtimeExempt" ${e ? (e.overtimeExempt ? "checked" : "") : "checked"}> Exempt from overtime</label>
+      <label>Social Security number<input name="ssn" autocomplete="off" inputmode="numeric" placeholder="${e?.ssnLast4 ? `On file, ends ${e.ssnLast4}` : "123-45-6789"}"></label>
     </div>
-    ${e.payType === "hourly" && e.useDaily ? `<h3>Hours each day of the workweek</h3><div class="row">${e.dailyHours.map((h, d) => `<label>Day ${d + 1}<input style="width:70px" data-emp="${i}" data-field="daily" data-day="${d}" value="${esc(h)}" inputmode="decimal"></label>`).join("")}</div>` : ""}
-  </div>`;
+    <h3>Home address <span class="muted">(for the W-2)</span></h3>
+    <div class="row">
+      <label>Street<input name="line1" value="${v(e?.address?.line1)}"></label>
+      <label>City<input name="city" value="${v(e?.address?.city)}" style="width:140px"></label>
+      <label>State<input name="state" value="${v(e?.address?.state ?? "CA")}" maxlength="2" style="width:56px"></label>
+      <label>ZIP<input name="zip" value="${v(e?.address?.zip)}" inputmode="numeric" style="width:90px"></label>
+    </div>
+    <h3>Tax forms</h3>
+    <div class="grid">
+      <label>W-4 filing status${sel("w4Status", [["single_or_mfs", "Single or married filing separately"], ["mfj", "Married filing jointly"], ["hoh", "Head of household"]], e?.w4.filingStatus ?? "single_or_mfs")}</label>
+      <label class="check"><input type="checkbox" name="w4Step2" ${e?.w4.step2Checked ? "checked" : ""}> W-4 step 2 box checked</label>
+      <label>W-4 step 3 credits ($ a year)<input name="w4Step3" value="${v(e?.w4.step3Credits)}" inputmode="decimal" placeholder="0"></label>
+      <label>W-4 step 4(a) other income ($ a year)<input name="w4Step4a" value="${v(e?.w4.step4aOtherIncome)}" inputmode="decimal" placeholder="0"></label>
+      <label>W-4 step 4(b) deductions ($ a year)<input name="w4Step4b" value="${v(e?.w4.step4bDeductions)}" inputmode="decimal" placeholder="0"></label>
+      <label>W-4 step 4(c) extra each paycheck ($)<input name="w4Step4c" value="${v(e?.w4.step4cExtraWithholding)}" inputmode="decimal" placeholder="0"></label>
+      <label>DE 4 filing status${sel("de4Status", [["single", "Single or married with two incomes"], ["married", "Married, one income"], ["hoh", "Head of household"]], e?.de4.filingStatus ?? "single")}</label>
+      <label>DE 4 allowances<input name="de4Allowances" value="${v(e?.de4.regularAllowances ?? 1)}" inputmode="numeric"></label>
+      <label>DE 4 extra each paycheck ($)<input name="de4Extra" value="${v(e?.de4.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
+    </div>
+    <h3>Taken from each paycheck</h3>
+    <div class="grid">
+      <label>401(k) ($)<input name="k401" value="${v(ded("traditional401k"))}" inputmode="decimal" placeholder="0"></label>
+      <label>Health premium, pre-tax ($)<input name="section125" value="${v(ded("section125"))}" inputmode="decimal" placeholder="0"></label>
+      <label>After-tax deduction ($)<input name="postTax" value="${v(ded("post_tax"))}" inputmode="decimal" placeholder="0"></label>
+      <label data-only="hourly" ${hourly ? "" : "hidden"}>Sick leave balance (hours)<input name="sickBalanceHours" value="${v(e?.sickBalanceHours ?? "0")}" inputmode="decimal"></label>
+    </div>
+    <details ${o.wages ? "open" : ""}><summary>Paid earlier this year, before Alt-QBO</summary>
+      <p class="hash">If you switched from another payroll service mid-year, enter this year's totals so far. They keep Social Security and unemployment taxes from going over their yearly limits, and they go on the W-2.</p>
+      <div class="grid">
+        <label>Year<input name="ytdYear" value="${v(o.year ?? bookDate().slice(0, 4))}" inputmode="numeric"></label>
+        <label>Wages ($)<input name="ytdWages" value="${v(o.wages)}" inputmode="decimal" placeholder="0"></label>
+        <label>Federal income tax withheld ($)<input name="ytdFit" value="${v(o.federalIncomeTax)}" inputmode="decimal" placeholder="0"></label>
+        <label>Social Security withheld ($)<input name="ytdSs" value="${v(o.socialSecurityTax)}" inputmode="decimal" placeholder="0"></label>
+        <label>Medicare withheld ($)<input name="ytdMed" value="${v(o.medicareTax)}" inputmode="decimal" placeholder="0"></label>
+        <label>CA income tax withheld ($)<input name="ytdPit" value="${v(o.caIncomeTax)}" inputmode="decimal" placeholder="0"></label>
+        <label>CA SDI withheld ($)<input name="ytdSdi" value="${v(o.caSdi)}" inputmode="decimal" placeholder="0"></label>
+      </div>
+    </details>
+    <div class="row" style="margin-top:12px"><button type="submit">${e ? "Save" : "Add employee"}</button>
+      <button type="button" class="secondary" data-action="${e ? "doc-toggle" : "emp-cancel"}" ${e ? `data-form="emp-edit" data-id="${e.id}"` : ""}>Cancel</button></div>
+  </form>`;
 }
 
-function payrollBody() {
+/** The API body for an employee form. */
+function employeeBody(f) {
+  const d = formData(f);
+  const body = {
+    name: d.name, email: d.email, hireDate: d.hireDate, payType: d.payType, payRate: d.payRate.replace(/[$,\s]/g, ""), payFrequency: d.payFrequency,
+    usualHours: d.payType === "hourly" ? d.usualHours : "", overtimeExempt: d.payType === "salary" && f.querySelector("[name=overtimeExempt]").checked,
+    address: addressOf(d),
+    w4: { filingStatus: d.w4Status, step2Checked: f.querySelector("[name=w4Step2]").checked, step3Credits: d.w4Step3, step4aOtherIncome: d.w4Step4a, step4bDeductions: d.w4Step4b, step4cExtraWithholding: d.w4Step4c },
+    de4: { filingStatus: d.de4Status, regularAllowances: d.de4Allowances, additionalWithholding: d.de4Extra },
+    deductions: [{ kind: "traditional401k", amount: d.k401 }, { kind: "section125", amount: d.section125 }, { kind: "post_tax", amount: d.postTax }],
+    openingYtd: d.ytdWages ? { year: d.ytdYear, wages: d.ytdWages, federalIncomeTax: d.ytdFit, socialSecurityTax: d.ytdSs, medicareTax: d.ytdMed, caIncomeTax: d.ytdPit, caSdi: d.ytdSdi } : null,
+  };
+  if (d.payType === "hourly") body.sickBalanceHours = d.sickBalanceHours || "0";
+  if (d.terminationDate !== undefined) body.terminationDate = d.terminationDate;
+  if (d.ssn.trim()) body.ssn = d.ssn.trim();
+  return body;
+}
+
+/** Where the next pay period starts: the day after the last one, or two weeks back from today. */
+function nextPeriod(payRuns) {
+  const freq = pay.employees.find((e) => e.status === "active")?.payFrequency ?? "biweekly";
+  const last = payRuns.map((r) => r.result.periodEnd).sort().at(-1);
+  const start = last ? plusDays(last, 1) : plusDays(bookDate(), -(FREQ_DAYS[freq] - 1));
+  const end = plusDays(start, FREQ_DAYS[freq] - 1);
+  return { start, end, payDate: plusDays(end, 5) };
+}
+
+function runLine(e) {
+  const hours = (name, v = "") => `<input data-line="${name}" value="${esc(v)}" inputmode="decimal" style="width:64px" placeholder="0">`;
+  return `<tr data-emp-line="${e.id}">
+    <td style="white-space:nowrap"><label class="check" style="flex-direction:row;align-items:center;justify-content:flex-start;gap:6px"><input type="checkbox" data-line="include" checked> ${esc(e.name)}</label><div class="hash">${payLabel(e)}</div></td>
+    ${e.payType === "hourly" ? `<td>${hours("regularHours", e.usualHours ?? "")}</td><td>${hours("overtimeHours")}</td><td>${hours("doubleTimeHours")}</td>
+      <td><button class="link" data-action="daily-toggle" data-id="${e.id}">Daily hours</button></td>` : `<td colspan="4" class="muted">Salary: ${usd(Math.round(Number(e.payRate) * 100 / { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 }[e.payFrequency]))} this period</td>`}
+    <td>${hours("bonus")}</td><td>${hours("reimbursement")}</td>
+  </tr>
+  ${e.payType === "hourly" ? `<tr hidden data-daily="${e.id}"><td colspan="7">
+    <p class="hash">Hours each day, two workweeks. California overtime is worked out from these: over 8 in a day, over 40 in a week, and the seventh day in a row.</p>
+    <div class="row">${Array.from({ length: 14 }, (_, d) => `<label>${d < 7 ? "Wk 1" : "Wk 2"} day ${(d % 7) + 1}<input data-day="${d}" style="width:56px" inputmode="decimal"></label>`).join("")}</div>
+  </td></tr>` : ""}`;
+}
+
+function payRunBody() {
+  const lines = [...document.querySelectorAll("[data-emp-line]")].flatMap((row) => {
+    if (!row.querySelector("[data-line=include]").checked) return [];
+    const val = (k) => row.querySelector(`[data-line=${k}]`)?.value.trim() ?? "";
+    const line = { employeeId: row.dataset.empLine, regularHours: val("regularHours"), overtimeHours: val("overtimeHours"), doubleTimeHours: val("doubleTimeHours"), bonus: val("bonus"), reimbursement: val("reimbursement") };
+    const daily = document.querySelector(`tr[data-daily="${row.dataset.empLine}"]`);
+    if (daily && !daily.hidden) line.dailyHours = [...daily.querySelectorAll("[data-day]")].map((i) => i.value.trim() || "0");
+    return [line];
+  });
   return {
     periodStart: document.querySelector("[name=periodStart]").value,
     periodEnd: document.querySelector("[name=periodEnd]").value,
     payDate: document.querySelector("[name=payDate]").value,
-    caUiRate: document.querySelector("[name=caUiRate]").value.trim() ? String(Number(document.querySelector("[name=caUiRate]").value) / 100) : "",
-    employees: employees.map((e) => ({
-      ...e,
-      salaryPerPeriod: e.payType === "salary" ? e.salaryPerPeriod : "",
-      hourlyRate: e.payType === "hourly" ? e.hourlyRate : "",
-      overtimeExempt: e.payType === "salary" && e.overtimeExempt,
-      dailyHours: e.payType === "hourly" && e.useDaily ? e.dailyHours : undefined,
-    })),
+    lines,
   };
 }
 
@@ -1340,7 +1422,7 @@ function runTable(run) {
     ${issues.map(([k, m]) => `<div class="alert ${k}">${k === "bad" ? "Must fix before approval: " : ""}${esc(m)}</div>`).join("")}
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th class="num">Gross</th>${ee.map((c) => `<th class="num">${TAX_LABEL[c]}</th>`).join("")}<th class="num">Deductions</th><th class="num">Net pay</th></tr></thead>
-      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${e.code.toLowerCase().replace("_", " ")}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.sickLeave ? `<div class="hash">sick leave +${p.sickLeave.accruedHours}h, balance ${p.sickLeave.balanceHours}h</div>` : ""}</td>
+      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${e.code.toLowerCase().replace("_", " ")}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.sickLeave ? `<div class="hash">sick leave +${hrs(p.sickLeave.accruedHours)}h, balance ${hrs(p.sickLeave.balanceHours)}h</div>` : ""}</td>
         <td class="num">${usd(p.grossMinor)}</td>${ee.map((c) => `<td class="num">${amt(p, c)}</td>`).join("")}
         <td class="num">${usd(p.deductions.reduce((s, d) => s + BigInt(d.amountMinor), 0n))}</td><td class="num"><strong>${usd(p.netPayMinor)}</strong></td></tr>`).join("")}</tbody>
     </table></div>
@@ -1358,44 +1440,106 @@ function runTable(run) {
     <p class="hash" style="margin-top:8px">Rules used: ${run.rulePacks.map(esc).join(", ")}</p>`;
 }
 
-async function payrollView(id, preview = null) {
+async function payrollView(id) {
   await loadEntity(id);
-  if (!employees.length) employees = [blankEmployee(0)];
-  const { payRuns } = await api(entPath("/pay-runs"));
+  const [{ employees, caUiRate }, { payRuns }] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs"))]);
+  pay.employees = employees;
+  pay.caUiRate = caUiRate;
   const me = `user:${state.me.user.email}`;
   const canApprove = ["owner", "admin", "approver"].includes(state.org.role);
+  const canWrite = ["owner", "admin", "bookkeeper", "accountant"].includes(state.org.role);
+  const active = employees.filter((e) => e.status === "active");
+  const next = nextPeriod(payRuns);
   app.innerHTML = shell("payroll", `
-    <div class="head"><div><h1>Payroll</h1><p class="muted">Alt-QBO calculates pay, taxes and deductions and posts them to the books. You pay employees from your own bank and file and pay taxes with the IRS and EDD yourself.</p></div></div>
+    <div class="head"><div><h1>Payroll</h1><p class="muted">Alt-QBO works out pay, taxes and deductions, makes pay stubs and posts payroll to the books. You pay employees from your own bank and file and pay the taxes with the IRS and EDD yourself.</p></div></div>
     <div class="panel">
-      <h2>New pay run</h2>
-      <div class="row" style="margin-bottom:12px">
-        <label>Period start<input type="date" name="periodStart" value="2026-06-01"></label>
-        <label>Period end<input type="date" name="periodEnd" value="2026-06-14"></label>
-        <label>Pay date<input type="date" name="payDate" value="2026-06-19"></label>
-        <label>Your CA UI rate (%)<input name="caUiRate" placeholder="3.4 (new employer)" style="width:170px"></label>
-      </div>
-      <div id="emps">${employees.map(employeeCard).join("")}</div>
-      <div class="row">
-        <button class="secondary" data-action="add-emp">+ Add employee</button>
-        <button data-action="preview-run">Calculate</button>
-        <button data-action="save-run" ${preview && !preview.blockers.length ? "" : "disabled"}>Send for approval</button>
-      </div>
-      <div id="preview" style="margin-top:16px">${preview ? runTable(preview) : ""}</div>
+      <div class="row" style="justify-content:space-between"><h2>Employees</h2>${canWrite && !pay.adding ? `<button data-action="emp-add">+ Add employee</button>` : ""}</div>
+      ${pay.adding ? `<div class="emp">${employeeForm()}</div>` : ""}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Name</th><th>Pay</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">SSN ends ${e.ssnLast4}</div>` : `<div class="hash">No SSN on file yet</div>`}</td>
+            <td>${payLabel(e)}${e.payType === "salary" && !e.overtimeExempt ? `<div class="hash">gets overtime</div>` : ""}</td><td>${FREQ_LABEL[e.payFrequency]}</td>
+            <td>${e.status === "active" ? `<span class="pill">Active</span>` : `<span class="pill grey">Left ${e.terminationDate}</span>`}</td>
+            <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="emp-edit" data-id="${e.id}">Edit</button>` : ""}</td></tr>
+          ${canWrite ? `<tr hidden data-emp-edit="${e.id}"><td colspan="5">${employeeForm(e)}</td></tr>` : ""}`).join("") || `<tr><td colspan="5" class="muted">No employees yet. Add the people you pay to run payroll.</td></tr>`}</tbody>
+      </table></div>
+      <form data-form="ui-rate" class="row" style="margin-top:12px">
+        <label>Your California UI rate (%)<input name="caUiRatePercent" value="${caUiRate ? esc(String(Number(caUiRate) * 100)) : ""}" placeholder="3.4 (new employer)" style="width:170px" ${canWrite ? "" : "disabled"}></label>
+        ${canWrite ? `<button type="submit" class="secondary">Save rate</button>` : ""}
+        <span class="hash">It's on the rate notice the EDD mails each December. New employers pay 3.4%.</span>
+      </form>
     </div>
+    ${canWrite && active.length ? `<div class="panel">
+      <h2>Run payroll</h2>
+      <div class="row" style="margin-bottom:12px">
+        <label>Period start<input type="date" name="periodStart" value="${next.start}"></label>
+        <label>Period end<input type="date" name="periodEnd" value="${next.end}"></label>
+        <label>Pay date<input type="date" name="payDate" value="${next.payDate}"></label>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Employee</th><th>Hours</th><th>Overtime</th><th>Double time</th><th></th><th>Bonus ($)</th><th>Reimbursement ($)</th></tr></thead>
+        <tbody id="run-lines">${active.map(runLine).join("")}</tbody>
+      </table></div>
+      <div class="row" style="margin-top:12px">
+        <button data-action="preview-run">Calculate</button>
+        <button data-action="save-run" disabled>Send for approval</button>
+      </div>
+      <div id="preview" style="margin-top:16px"></div>
+    </div>` : ""}
     <div class="panel">
       <h2>Pay runs</h2>
       <p class="muted">A pay run posts to the books only after someone other than its preparer approves it.</p>
       <div class="table-wrap"><table>
-        <thead><tr><th>Created</th><th>Pay date</th><th>Employees</th><th class="num">Gross</th><th class="num">Net</th><th>Prepared by</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Pay date</th><th>Period</th><th>Employees</th><th class="num">Gross</th><th class="num">Net</th><th>Prepared by</th><th>Status</th><th></th></tr></thead>
         <tbody>${payRuns.map((r) => `<tr>
-          <td>${r.created_at.slice(0, 10)}</td><td>${r.result.payDate}</td><td>${r.result.paychecks.length}</td>
+          <td><a href="#/e/${id}/payroll/run/${r.id}">${r.result.payDate}</a></td><td>${r.result.periodStart} to ${r.result.periodEnd}</td><td>${r.result.paychecks.length}</td>
           <td class="num">${usd(r.result.totals.grossMinor)}</td><td class="num">${usd(r.result.totals.netPayMinor)}</td>
           <td>${esc(r.prepared_by.replace("user:", ""))}</td>
           <td><span class="${STATUS_PILL[r.status]}">${STATUS_LABEL[r.status]}</span>${r.approved_by ? `<div class="hash">by ${esc(r.approved_by.replace("user:", ""))}</div>` : ""}</td>
-          <td>${r.status === "prepared" && canApprove ? (r.prepared_by === me ? `<span class="muted">Needs another approver</span>` : `<button data-action="approve-run" data-id="${r.id}">Approve and post</button>`) : ""}</td>
+          <td><a href="#/e/${id}/payroll/run/${r.id}">Pay stubs</a>
+            ${r.status === "prepared" && canApprove ? (r.prepared_by === me ? `<div class="muted">Needs another approver</div>` : `<div><button data-action="approve-run" data-id="${r.id}">Approve and post</button></div>`) : ""}</td>
         </tr>`).join("") || `<tr><td colspan="8" class="muted">No pay runs yet.</td></tr>`}</tbody>
       </table></div>
     </div>`);
+}
+
+function stubCard(r, c, s) {
+  const y = s?.ytd ?? { grossMinor: 0, netPayMinor: 0, byTax: {}, byDeduction: {} };
+  const eeTaxes = c.taxes.filter((t) => t.paidBy === "employee");
+  const hours = c.earnings.reduce((n, e) => n + Number(e.hours ?? 0), 0);
+  const addr = (a) => (a ? `${esc(a.line1)}<br>${esc(a.city)}, ${esc(a.state)} ${esc(a.zip)}` : "");
+  return `<div class="panel stub">
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <div><strong>${esc(r.employer.name)}</strong><div class="hash">${addr(r.employer.address) || "Add the business address on the Overview page"}</div></div>
+      <div style="text-align:right"><strong>Pay stub</strong><div class="hash">Pay date ${r.result.payDate}<br>Period ${r.result.periodStart} to ${r.result.periodEnd}</div></div>
+    </div>
+    <div class="row" style="margin:12px 0"><div><strong>${esc(c.name)}</strong><div class="hash">${s?.ssnLast4 ? `SSN xxx-xx-${s.ssnLast4}` : `Employee ID ${esc(c.employeeId.slice(0, 8))}`}${s?.address ? `<br>${addr(s.address)}` : ""}</div></div></div>
+    <table>
+      <thead><tr><th>Earnings</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">This period</th><th class="num">Year to date</th></tr></thead>
+      <tbody>${c.earnings.map((e) => `<tr><td>${e.code.charAt(0) + e.code.slice(1).toLowerCase().replace("_", " ")}</td><td class="num">${e.hours ?? ""}</td><td class="num">${e.rate ? `$${Number(e.rate).toFixed(2)}` : ""}</td><td class="num">${usd(e.amountMinor)}</td><td></td></tr>`).join("")}
+        <tr><td><strong>Gross pay</strong></td><td class="num">${hours || ""}</td><td></td><td class="num"><strong>${usd(c.grossMinor)}</strong></td><td class="num">${usd(y.grossMinor)}</td></tr></tbody>
+      <thead><tr><th colspan="3">Taxes withheld</th><th class="num"></th><th class="num"></th></tr></thead>
+      <tbody>${eeTaxes.map((t) => `<tr><td colspan="3">${TAX_LABEL[t.code]}</td><td class="num">${usd(t.amountMinor)}</td><td class="num">${usd(y.byTax[t.code] ?? 0)}</td></tr>`).join("")}</tbody>
+      ${c.deductions.length ? `<thead><tr><th colspan="5">Deductions</th></tr></thead><tbody>${c.deductions.map((d) => `<tr><td colspan="3">${esc(d.description)}</td><td class="num">${usd(d.amountMinor)}</td><td class="num">${usd(y.byDeduction[d.kind] ?? 0)}</td></tr>`).join("")}</tbody>` : ""}
+      <tbody>${BigInt(c.reimbursementMinor) ? `<tr><td colspan="3">Expense reimbursement (not taxed)</td><td class="num">${usd(c.reimbursementMinor)}</td><td></td></tr>` : ""}
+        <tr><td colspan="3"><strong>Net pay</strong></td><td class="num"><strong>${usd(c.netPayMinor)}</strong></td><td class="num">${usd(y.netPayMinor)}</td></tr></tbody>
+    </table>
+    ${c.sickLeave ? `<p class="hash">Paid sick leave: ${hrs(c.sickLeave.accruedHours)} hours earned this period, ${hrs(c.sickLeave.balanceHours)} hours available.</p>` : ""}
+  </div>`;
+}
+
+async function payRunView(id, runId) {
+  await loadEntity(id);
+  const r = await api(entPath(`/pay-runs/${runId}`));
+  const stubs = new Map(r.stubs.map((s) => [s.employeeId, s]));
+  const me = `user:${state.me.user.email}`;
+  const canApprove = ["owner", "admin", "approver"].includes(state.org.role) && r.status === "prepared" && r.prepared_by !== me;
+  app.innerHTML = shell("payroll", `
+    <div class="head no-print"><div><p><a href="#/e/${id}/payroll">&larr; Payroll</a></p><h1>Pay run for ${r.result.payDate}</h1>
+      <p class="muted"><span class="${STATUS_PILL[r.status]}">${STATUS_LABEL[r.status]}</span> ${r.result.paychecks.length} employee${r.result.paychecks.length === 1 ? "" : "s"}, net pay ${usd(r.result.totals.netPayMinor)}.
+      ${r.status === "prepared" ? "These stubs are drafts until the run is approved." : ""}</p></div>
+      <div class="row"><button class="secondary" data-action="print">Print pay stubs</button>${canApprove ? `<button data-action="approve-run" data-id="${r.id}">Approve and post</button>` : ""}</div></div>
+    ${r.result.paychecks.map((c) => stubCard(r, c, stubs.get(c.employeeId))).join("")}`);
 }
 
 // ------------------------------------------------------------- org views
@@ -1533,6 +1677,7 @@ async function route() {
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
       if (parts[2] === "reports" && REPORTS.some(([k]) => k === parts[3])) rep.tab = parts[3];
+      if (parts[2] === "payroll" && parts[3] === "run" && parts[4]) return await payRunView(parts[1], parts[4]);
       if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
       const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
@@ -1555,18 +1700,22 @@ document.addEventListener("input", (ev) => {
   if (t.closest("form[data-form=document]")) updateDocTotals();
   if (t.dataset.rc !== undefined) updateRecon();
   if (t.dataset.custom && t.form) t.form.elements.namedItem(t.dataset.custom).value = "custom";
-  if (t.dataset.emp !== undefined) {
-    const e = employees[Number(t.dataset.emp)];
-    if (t.dataset.field === "daily") e.dailyHours[Number(t.dataset.day)] = t.value;
-    else if (t.type === "checkbox") e[t.dataset.field] = t.checked;
-    else e[t.dataset.field] = t.value;
-    if (["payType", "useDaily"].includes(t.dataset.field)) document.getElementById("emps").innerHTML = employees.map(employeeCard).join("");
+  if (t.closest("#run-lines") || ["periodStart", "periodEnd", "payDate"].includes(t.name)) {
     const save = document.querySelector("[data-action=save-run]");
     if (save) save.disabled = true;
   }
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.name === "payType" && t.closest("form[data-form=employee]")) {
+    const hourly = t.value === "hourly";
+    t.form.querySelectorAll("[data-only]").forEach((el) => { el.hidden = el.dataset.only !== t.value; });
+    t.form.querySelector("[data-pay-label]").textContent = hourly ? "Hourly rate ($)" : "Annual salary ($)";
+  }
+  if (t.closest("#run-lines")) {
+    const save = document.querySelector("[data-action=save-run]");
+    if (save) save.disabled = true;
+  }
   if (t.dataset.autosubmit !== undefined && t.form) t.form.requestSubmit();
   if (t.name === "contactId" && t.closest("form[data-form=document]")) {
     const box = t.form.querySelector("[data-new-contact]");
@@ -1760,28 +1909,35 @@ document.addEventListener("click", async (ev) => {
       const link = Object.assign(document.createElement("a"), { href: url, download: `trial-balance-tax-lines-${b.dataset.asof}.csv` });
       link.click();
       URL.revokeObjectURL(url);
-    } else if (a === "add-emp") {
-      employees.push(blankEmployee(employees.length));
-      document.getElementById("emps").innerHTML = employees.map(employeeCard).join("");
-    } else if (a === "remove-emp") {
-      employees.splice(Number(b.dataset.i), 1);
-      document.getElementById("emps").innerHTML = employees.map(employeeCard).join("");
+    } else if (a === "emp-add" || a === "emp-cancel") {
+      pay.adding = a === "emp-add";
+      await payrollView(state.entity.entity.id);
+      if (pay.adding) document.querySelector("form[data-form=employee] [name=name]").focus();
+    } else if (a === "daily-toggle") {
+      const row = document.querySelector(`tr[data-daily="${b.dataset.id}"]`);
+      row.hidden = !row.hidden;
+      const line = document.querySelector(`tr[data-emp-line="${b.dataset.id}"]`);
+      line.querySelectorAll("[data-line$=Hours]").forEach((i) => { i.disabled = !row.hidden; });
+      document.querySelector("[data-action=save-run]").disabled = true;
     } else if (a === "preview-run") {
       b.disabled = true;
-      const run = await api(entPath("/pay-runs/preview"), { body: payrollBody() });
+      const run = await api(entPath("/pay-runs/preview"), { body: payRunBody() });
       document.getElementById("preview").innerHTML = runTable(run);
       document.querySelector("[data-action=save-run]").disabled = run.blockers.length > 0;
       b.disabled = false;
     } else if (a === "save-run") {
       b.disabled = true;
-      await api(entPath("/pay-runs"), { body: payrollBody() });
+      const saved = await api(entPath("/pay-runs"), { body: payRunBody() });
       toast("Pay run sent for approval");
-      await payrollView(state.entity.entity.id);
+      location.hash = `#/e/${state.entity.entity.id}/payroll/run/${saved.id}`;
     } else if (a === "approve-run") {
       b.disabled = true;
       await api(entPath(`/pay-runs/${b.dataset.id}/approve`), { body: {} });
-      toast("Pay run approved and posted to the journal");
-      await payrollView(state.entity.entity.id);
+      state.entity.fresh = false;
+      toast("Pay run approved and posted to the books");
+      await route();
+    } else if (a === "print") {
+      window.print();
     }
   } catch (err) {
     toast(err.message);
@@ -1906,6 +2062,17 @@ document.addEventListener("submit", async (ev) => {
       await api(entPath(`/bank-lines/${f.dataset.id}/undo`), { body: { date: bookDate(), reason: d.reason } });
       toast("Undone; the reversal is in the journal");
       await bankView(state.entity.entity.id);
+    } else if (kind === "employee") {
+      const body = employeeBody(f);
+      if (f.dataset.id) await api(entPath(`/employees/${f.dataset.id}`), { body });
+      else await api(entPath("/employees"), { body });
+      pay.adding = false;
+      toast(f.dataset.id ? "Saved" : `${body.name} added`);
+      await payrollView(state.entity.entity.id);
+    } else if (kind === "ui-rate") {
+      await api(entPath("/payroll-settings"), { body: { caUiRatePercent: d.caUiRatePercent } });
+      toast("UI rate saved");
+      await payrollView(state.entity.entity.id);
     } else if (kind === "contact") {
       await api(entPath("/contacts"), { body: { name: d.name, kind: d.kind, email: d.email, address: addressOf(d) } });
       toast(`${d.name} added`);

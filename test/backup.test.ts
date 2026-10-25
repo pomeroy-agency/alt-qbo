@@ -30,7 +30,7 @@ describe("backup", () => {
     expect(r.headers.get("content-disposition")).toMatch(/attachment; filename="alt-qbo-backup-sunset-design-studio-llc-\d{4}-\d{2}-\d{2}\.json"/);
     const b = r.data;
     expect(b).toMatchObject({ format: "alt-qbo-backup", version: 1, organization: { id: orgId } });
-    expect(b.counts).toMatchObject({ contacts: 6, items: 2, bank_lines: 5 });
+    expect(b.counts).toMatchObject({ contacts: 6, items: 2, bank_lines: 5, employees: 2 });
     expect(b.counts.documents).toBeGreaterThan(10);
     expect(b.tables.journal_lines.length).toBeGreaterThan(b.tables.journal_entries.length);
     expect(b.audit.verification).toMatchObject({ ok: true });
@@ -39,7 +39,7 @@ describe("backup", () => {
 
     // Nothing secret in the file.
     const text = JSON.stringify(b);
-    for (const secret of ["password_hash", "token_hash", "token_ref"]) expect(text).not.toContain(secret);
+    for (const secret of ["password_hash", "token_hash", "token_ref", "ssn_sealed"]) expect(text).not.toContain(secret);
 
     // An edited file is caught.
     b.tables.journal_lines[0].debit_minor = "999999";

@@ -2,6 +2,7 @@ import type pg from "pg";
 import { withSystem, withTenant } from "../db/pool.js";
 import { importBankCsv } from "../core/bank.js";
 import { createContact, issueDocument, recordPayment } from "../core/documents.js";
+import { createEmployee } from "../payroll/employees.js";
 import { createItem, issueInvoice, setBusinessAddress, type InvoiceLineInput } from "../core/sales-tax.js";
 import { postJournal, type Actor } from "../core/ledger.js";
 import { createEntity, createOrganization } from "../core/tenancy.js";
@@ -76,6 +77,17 @@ export async function createExampleBusiness(pool: pg.Pool, user: { id: string; e
     const ad = await bill(adobe, "2026-03-15", "2026-03-15", "6500", "Creative Cloud, annual", "659.88");
     await pay(ad.id, "2026-03-15", ad.totalMinor);
     await bill(printer, "2026-10-12", "2026-11-11", "5000", "Brochure printing for Mission Dental", "410.00", "BAP-7781");
+
+    // Two people to run payroll for: a salaried designer and an hourly assistant.
+    await createEmployee(tx, {
+      ...base, name: "Maya Chen", email: "maya@sunsetdesign.example", hireDate: "2026-01-05", payType: "salary", payFrequency: "biweekly",
+      payRate: "78000", overtimeExempt: true, w4: { filingStatus: "single_or_mfs" }, de4: { filingStatus: "single", regularAllowances: 1 },
+      deductions: [{ kind: "traditional401k", amount: "150.00" }, { kind: "section125", amount: "100.00", description: "Medical premium" }],
+    });
+    await createEmployee(tx, {
+      ...base, name: "Jordan Alvarez", hireDate: "2026-03-02", payType: "hourly", payFrequency: "biweekly", payRate: "24.00", usualHours: "60",
+      w4: { filingStatus: "mfj" }, de4: { filingStatus: "married", regularAllowances: 2 }, sickBalanceHours: "6",
+    });
 
     await importBankCsv(tx, {
       ...base, bankAccount: "1000", fileName: "example-statement.csv",

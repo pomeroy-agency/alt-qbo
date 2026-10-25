@@ -15,16 +15,16 @@ import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedge
 import { backupEntity } from "../core/backup.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
-import { toMajor } from "../core/money.js";
+import { D, toMajor } from "../core/money.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
 import type { Mailer } from "./mail.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
-import { approveAndPostPayRun, calculatePayRun, type PayRunInput } from "../payroll/pay-run.js";
-import { splitCaliforniaWeek } from "../payroll/hours.js";
-import { usCalifornia2026 } from "../rules/us-ca-2026.js";
+import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
+import { createEmployee, listEmployees, setUiRate, updateEmployee, type EmployeeFields } from "../payroll/employees.js";
+import { calculateSavedRun, carrySickLeave, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import {
   AuthError, SESSION_COOKIE, createSession, endSession, hashPassword, membershipRole, normaliseEmail,
   sessionUser, verifyPassword, type SessionUser,
@@ -907,82 +907,118 @@ route("POST", "/api/orgs/:org/entities/:entity/settings", async (req, p, ctx) =>
 
 // ----------------------------------------------------------------- payroll
 
-function payRunInput(b: Record<string, any>): PayRunInput {
-  if (!Array.isArray(b.employees) || b.employees.length === 0) throw new HttpError(400, "add at least one employee");
-  if (b.employees.length > 200) throw new HttpError(400, "too many employees in one run");
+const toJson = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x));
+
+route("GET", "/api/orgs/:org/entities/:entity/employees", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const uiRate = (await tx.query("SELECT ca_ui_rate::text FROM entities WHERE id = $1", [p.entity])).rows[0]?.ca_ui_rate;
+    return json({ employees: await listEmployees(tx, p.entity!), caUiRate: uiRate ? String(Number(uiRate)) : null });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/employees", async (req, p, ctx) => {
+  const b = await body(req);
+  const employee = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createEmployee(tx, { orgId: ctx.orgId, entityId: p.entity!, ...employeeFields(b), actor: ctx.actor });
+  });
+  return json(employee, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/employees/:employee", async (req, p, ctx) => {
+  const b = await body(req);
+  const employee = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return updateEmployee(tx, { orgId: ctx.orgId, entityId: p.entity!, employeeId: uuid(p.employee, "employee not found"), ...employeeFields(b), actor: ctx.actor });
+  });
+  return json(employee);
+});
+
+/** The parts of an employee in a request; a field left out is left alone. Checked in payroll/employees.ts. */
+function employeeFields(b: Record<string, any>): EmployeeFields {
+  const keys = ["name", "email", "address", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours",
+    "overtimeExempt", "w4", "de4", "deductions", "sickBalanceHours", "ssn", "openingYtd"] as const;
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
+  for (const k of ["name", "email", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn"]) {
+    if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "string") throw new HttpError(400, `${k} should be text`);
+  }
+  for (const k of ["w4", "de4", "openingYtd", "address"]) {
+    if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "object") throw new HttpError(400, `${k} should be an object`);
+  }
+  return out as EmployeeFields;
+}
+
+route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p, ctx) => {
+  const b = await body(req);
+  const percent = typeof b.caUiRatePercent === "string" && b.caUiRatePercent.trim() ? b.caUiRatePercent.trim() : null;
+  if (percent !== null && !/^\d{1,2}(\.\d{1,3})?$/.test(percent)) throw new HttpError(400, "the UI rate should be a percentage like 3.4");
+  await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    await setUiRate(tx, { orgId: ctx.orgId, entityId: p.entity!, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
+  });
+  return json({ ok: true });
+});
+
+function payRunRequest(b: Record<string, any>): PayRunRequest {
+  if (!Array.isArray(b.lines)) throw new HttpError(400, "pick the employees to pay");
+  if (b.lines.length > 500) throw new HttpError(400, "too many employees in one run");
   const amount = (v: unknown, field: string) => {
     if (v === undefined || v === null || v === "") return undefined;
-    if (typeof v !== "string" || !/^\d+(\.\d{1,4})?$/.test(v)) throw new HttpError(400, `${field} must be a number like 25.00`);
-    return v;
+    if (typeof v !== "string" || !/^\d{1,7}(\.\d{1,4})?$/.test(v.trim())) throw new HttpError(400, `${field} must be a number like 25.00`);
+    return v.trim();
   };
   return {
-    payRunId: crypto.randomUUID(),
-    kind: "regular",
     periodStart: date(b.periodStart, "period start"),
     periodEnd: date(b.periodEnd, "period end"),
     payDate: date(b.payDate, "pay date"),
-    place: { country: "US", region: "CA" },
-    employer: { caUiRate: amount(b.caUiRate, "UI rate") },
-    live: false,
-    employees: b.employees.map((e: any, i: number) => {
-      const n = `employee ${i + 1}`;
-      let hours = { regular: amount(e.regularHours, `${n} hours`), overtime: amount(e.overtimeHours, `${n} overtime`), doubleTime: amount(e.doubleTimeHours, `${n} double time`) };
-      if (Array.isArray(e.dailyHours) && e.dailyHours.length === 7) {
-        let s;
-        try {
-          s = splitCaliforniaWeek(e.dailyHours.map((h: unknown) => Number(h) || 0), usCalifornia2026.wageHour);
-        } catch (err) {
-          throw new HttpError(400, `${n}: ${(err as Error).message}`);
-        }
-        hours = { regular: s.regular, overtime: s.overtime, doubleTime: s.doubleTime };
+    lines: b.lines.map((l: any, i: number) => {
+      const n = `line ${i + 1}`;
+      if (Array.isArray(l.dailyHours) && l.dailyHours.some((h: unknown) => h !== "" && h !== null && !Number.isFinite(Number(h)))) {
+        throw new HttpError(400, `${n}: daily hours must be numbers`);
       }
-      const status = ["single_or_mfs", "mfj", "hoh"].includes(e.federalStatus) ? e.federalStatus : "single_or_mfs";
-      const caStatus = ["single", "married", "hoh"].includes(e.caStatus) ? e.caStatus : "single";
-      const deductions = [];
-      if (amount(e.k401, `${n} 401(k)`)) deductions.push({ kind: "traditional401k" as const, amount: e.k401, description: "401(k)" });
-      if (amount(e.section125, `${n} section 125`)) deductions.push({ kind: "section125" as const, amount: e.section125, description: "Section 125" });
       return {
-        employeeId: `emp-${i + 1}`,
-        name: str(e.name, `${n} name`, 100),
-        payFrequency: ["weekly", "biweekly", "semimonthly", "monthly"].includes(e.payFrequency) ? e.payFrequency : "biweekly",
-        hourlyRate: amount(e.hourlyRate, `${n} hourly rate`),
-        regularHours: hours.regular,
-        overtimeHours: hours.overtime,
-        doubleTimeHours: hours.doubleTime,
-        salaryPerPeriod: amount(e.salaryPerPeriod, `${n} salary`),
-        overtimeExempt: Boolean(e.overtimeExempt),
-        bonus: amount(e.bonus, `${n} bonus`),
-        w4: { filingStatus: status, step2Checked: Boolean(e.step2Checked), step4cExtraWithholding: amount(e.extraFederal, `${n} extra withholding`) },
-        de4: { filingStatus: caStatus, regularAllowances: Math.max(0, Math.min(20, Number(e.caAllowances) || 0)) },
-        deductions,
-        // Accrual is driven by hours worked, so it applies to hourly staff here.
-        sickLeave: e.hourlyRate ? { balanceHours: amount(e.sickBalance, `${n} sick balance`) ?? "0" } : undefined,
+        employeeId: uuid(l.employeeId, `${n}: employee not found`),
+        regularHours: amount(l.regularHours, `${n} hours`),
+        overtimeHours: amount(l.overtimeHours, `${n} overtime`),
+        doubleTimeHours: amount(l.doubleTimeHours, `${n} double time`),
+        dailyHours: Array.isArray(l.dailyHours) ? l.dailyHours.map((h: unknown) => String(h ?? "")) : undefined,
+        bonus: amount(l.bonus, `${n} bonus`),
+        commission: amount(l.commission, `${n} commission`),
+        reimbursement: amount(l.reimbursement, `${n} reimbursement`),
       };
     }),
   };
 }
 
-route("POST", "/api/orgs/:org/entities/:entity/pay-runs/preview", async (req, _p, _ctx) => {
-  return json(calculatePayRun(payRunInput(await body(req))));
+route("POST", "/api/orgs/:org/entities/:entity/pay-runs/preview", async (req, p, ctx) => {
+  const request = payRunRequest(await body(req));
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const input = await payRunInputFromEmployees(tx, p.entity!, request, crypto.randomUUID());
+    return json(await calculateSavedRun(tx, p.entity!, input));
+  });
 });
 
 route("POST", "/api/orgs/:org/entities/:entity/pay-runs", async (req, p, ctx) => {
   requireRole(ctx, ["owner", "admin", "bookkeeper", "accountant"]);
-  const input = payRunInput(await body(req));
-  const run = calculatePayRun(input);
+  const request = payRunRequest(await body(req));
   const saved = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    const { rows } = await tx.query(
-      `INSERT INTO pay_runs (id, org_id, entity_id, input, result, prepared_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [input.payRunId, ctx.orgId, p.entity, JSON.stringify(input), JSON.stringify(run, (_k, v) => (typeof v === "bigint" ? v.toString() : v)), ctx.actor.id],
+    const input = await payRunInputFromEmployees(tx, p.entity!, request, crypto.randomUUID());
+    const run = await calculateSavedRun(tx, p.entity!, input);
+    await tx.query(
+      `INSERT INTO pay_runs (id, org_id, entity_id, input, result, prepared_by, pay_date) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [input.payRunId, ctx.orgId, p.entity, toJson(input), toJson(run), ctx.actor.id, input.payDate],
     );
     await appendAudit(tx, {
       orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "pay_run.prepared",
-      objectType: "pay_run", objectId: rows[0].id, after: { totals: run.totals, rulePacks: run.rulePacks },
+      objectType: "pay_run", objectId: input.payRunId, after: { totals: run.totals, rulePacks: run.rulePacks },
     });
-    return rows[0];
+    return { id: input.payRunId, run };
   });
-  return json({ id: saved.id, run }, 201);
+  return json(saved, 201);
 });
 
 route("GET", "/api/orgs/:org/entities/:entity/pay-runs", async (_req, p, ctx) =>
@@ -996,23 +1032,64 @@ route("GET", "/api/orgs/:org/entities/:entity/pay-runs", async (_req, p, ctx) =>
   }),
 );
 
+/** One run with what its pay stubs need: the business, each employee and their year to date through this run. */
+route("GET", "/api/orgs/:org/entities/:entity/pay-runs/:run", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    const { rows } = await tx.query(
+      "SELECT id, status, prepared_by, approved_by, entry_id, created_at, result, pay_date::text FROM pay_runs WHERE id = $1 AND entity_id = $2",
+      [uuid(p.run, "pay run not found"), p.entity],
+    );
+    const pr = rows[0];
+    if (!pr) throw new HttpError(404, "pay run not found");
+    const ent = (await tx.query("SELECT legal_name, ein, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const people = new Map((await listEmployees(tx, p.entity!)).map((e) => [e.id, e]));
+    // A posted run's stubs show the year through this run; a prepared one adds itself to what's posted so far.
+    const ytd = await yearToDate(tx, p.entity!, pr.pay_date ?? pr.result.payDate, pr.status === "posted" ? { throughRunId: pr.id } : {});
+    if (pr.status !== "posted") {
+      for (const c of pr.result.paychecks) {
+        const y = ytd.get(c.employeeId) ?? { grossMinor: 0n, netPayMinor: 0n, byTax: {}, byDeduction: {} } as any;
+        y.grossMinor += BigInt(c.grossMinor);
+        y.netPayMinor += BigInt(c.netPayMinor);
+        for (const t of c.taxes) y.byTax[t.code] = (y.byTax[t.code] ?? 0n) + BigInt(t.amountMinor);
+        for (const d of c.deductions) y.byDeduction[d.kind] = (y.byDeduction[d.kind] ?? 0n) + BigInt(d.amountMinor);
+        ytd.set(c.employeeId, y);
+      }
+    }
+    const stubs = pr.result.paychecks.map((c: any) => {
+      const e = people.get(c.employeeId);
+      const y = ytd.get(c.employeeId);
+      return {
+        employeeId: c.employeeId, ssnLast4: e?.ssnLast4 ?? null, address: e?.address ?? null, payType: e?.payType ?? null,
+        ytd: y ? { grossMinor: y.grossMinor, netPayMinor: y.netPayMinor, byTax: y.byTax, byDeduction: y.byDeduction } : null,
+      };
+    });
+    return new Response(toJson({
+      ...pr,
+      employer: { name: ent.legal_name, ein: ent.ein, address: ent.address_line1 ? { line1: ent.address_line1, city: ent.address_city, state: ent.address_state, zip: ent.address_zip } : null },
+      stubs,
+    }), { headers: { "content-type": "application/json" } });
+  }),
+);
+
 route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_req, p, ctx) => {
   requireRole(ctx, ["owner", "admin", "approver"]);
   const entry = await tenant(ctx, async (tx) => {
     const { rows } = await tx.query(
       "SELECT input, prepared_by, status FROM pay_runs WHERE id = $1 AND entity_id = $2 FOR UPDATE",
-      [p.run, p.entity],
+      [uuid(p.run, "pay run not found"), p.entity],
     );
     const pr = rows[0];
     if (!pr) throw new HttpError(404, "pay run not found");
     if (pr.status !== "prepared") throw new HttpError(409, `pay run is already ${pr.status}`);
-    // Recalculate from the saved input so the posted figures can't be tampered with in transit.
-    const run = calculatePayRun(pr.input as PayRunInput);
+    // Recalculate from the saved input, with year-to-date wages as they stand now, so the
+    // posted figures can't be tampered with in transit and caps count every earlier run.
+    const run = await calculateSavedRun(tx, p.entity!, pr.input as PayRunInput);
     const posted = await approveAndPostPayRun(tx, {
       orgId: ctx.orgId, entityId: p.entity!, run,
       preparedBy: { id: pr.prepared_by, role: "bookkeeper" }, approvedBy: ctx.actor,
     });
-    await tx.query("UPDATE pay_runs SET status = 'posted', approved_by = $2, entry_id = $3 WHERE id = $1", [p.run, ctx.actor.id, posted.id]);
+    await tx.query("UPDATE pay_runs SET status = 'posted', approved_by = $2, entry_id = $3, result = $4 WHERE id = $1", [p.run, ctx.actor.id, posted.id, toJson(run)]);
+    await carrySickLeave(tx, p.entity!, run.paychecks);
     return posted;
   });
   return json(entry, 201);

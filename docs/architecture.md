@@ -45,10 +45,13 @@ Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields
 
 14. **Backup (`src/core/backup.ts`).** A backup is the entity's rows from every bookkeeping table, read in one transaction so they are consistent, plus the whole organisation's audit events and their verification. The download is appended to the audit chain first, so the file contains its own record. A SHA-256 over the canonical JSON of the entity, tables and events lets `verifyBackup` spot a changed or damaged file. Restoring from a backup is not built yet.
 
+15. **Employees and pay runs (`src/payroll/employees.ts`, `src/payroll/runs.ts`).** Employees keep their pay (annual salary or hourly rate), W-4 and DE 4 choices, per-paycheck deductions, sick leave balance and any wages paid earlier in the year before Alt-QBO. A pay run copies these into its saved input when prepared, so later edits never change it. Year-to-date wages are summed from posted runs (and the earlier-in-the-year figures) every time a run is calculated, including again at approval, so a run approved after another one posts still stops Social Security, FUTA and UI at their wage bases. Approval also moves each hourly employee's sick leave balance forward. Social Security numbers are sealed with AES-256-GCM under `PII_KEY` (32 bytes, base64, set on the server, never in the database); the database, audit log and backups only ever see the last four digits. Pay stubs show what Labor Code 226 asks for: the employer's name and address, the last four of the SSN or an employee ID, the period, hours and rates, gross, each deduction, net pay and sick leave available.
+
 ## Not in Phase 0 yet
 
 - Multi-currency functional amounts and revaluation (lines carry a currency and balance per currency today).
-- Persisted employees, pay runs, NACHA files, deposit schedules and prepared forms (941, 940, DE 9, DE 9C, W-2, DE 34).
+- NACHA files, deposit schedules and prepared forms (941, 940, DE 9, DE 9C, W-2, DE 34).
+- Sick leave used, final paychecks, voiding a posted pay run.
 - HTTP API, authentication, MFA; roles are passed in by the caller.
 - City minimum wages, regular-rate overtime for bonuses, supplemental-rate withholding.
 - Sales tax outside California, use tax on purchases, prepayments.
