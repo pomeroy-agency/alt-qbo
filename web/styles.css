@@ -56,6 +56,7 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 .topbar .spacer { flex: 1; }
 .topbar .who { color: var(--muted); font-size: 14px; }
 .banner { background: var(--warn-bg); color: var(--warn-ink); padding: 8px 20px; font-size: 14px; }
+.banner.info { background: var(--brand-soft); color: var(--ink); }
 .wrap { max-width: 1180px; margin: 0 auto; padding: 20px; }
 .shell { display: grid; grid-template-columns: 210px 1fr; gap: 20px; }
 .shell > main { min-width: 0; }

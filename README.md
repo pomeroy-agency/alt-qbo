@@ -9,6 +9,7 @@ This repository holds **Phase 0**: the core every module builds on.
 | Periods | same | Monthly periods per entity: open, soft-closed (accountants only), locked (nobody). Reopening needs an owner or accountant and a reason, and is flagged in the audit log |
 | Multi-tenancy | `src/core/tenancy.ts`, `src/db/pool.ts` | Organisations own entities; Postgres row-level security hides every other tenant's rows |
 | Team | `src/app/team.ts`, `netlify/database/migrations/20261025000004_invitations.sql` | Invite by email with a role; the person joins by signing up or signing in with that email through a one-time link, so nobody sets passwords for anyone else. Change roles, remove members, leave. Admins can't touch owners, and an organisation always keeps an owner |
+| Email | `src/app/mail.ts`, `src/app/email-auth.ts`, `netlify/database/migrations/20261025000006_email.sql` | Sent through a Gmail or Google Workspace account ([setup](docs/email-setup.md)): sign-in links, password reset (signs out every other session), email confirmation, and team invitations. Links are one-time, short-lived, stored only as hashes, limited to five per person per hour, and point at the configured site address. Forms never reveal whether an account exists |
 | Audit log | `src/core/audit.ts` | Append-only, one SHA-256 hash chain per organisation, written in the same transaction as the change; `verifyAuditChain` detects edits and deletions |
 | Jurisdiction engine | `src/rules/` | Versioned, effective-dated, frozen rule packs: US federal 2026 and California 2026. The principal place of business sets framework, currency, chart of accounts, retention |
 | Chart of accounts | `src/rules/coa/us-service.ts`, `src/core/accounts.ts` | Service-business template; every account mapped to a statement line, a cash-flow class and tax-line codes for Schedule C, 1065, 1120S and 1120. Add accounts by kind, rename, remap tax lines (only codes the template uses for the entity's return), deactivate at a zero balance. The database keeps statement lines matched to type, codes and kinds fixed, system accounts on, and nothing posting to an inactive account |
@@ -36,7 +37,7 @@ DATABASE_URL=postgres://... npm run migrate
 DATABASE_URL=postgres://... npm run demo
 ```
 
-Set `TEST_DATABASE_ADMIN_URL` if your test server is elsewhere.
+Set `TEST_DATABASE_ADMIN_URL` if your test server is elsewhere. `DEV_MAIL=log npm run dev` prints emails to the console instead of sending them.
 
 ## Rule packs are drafts
 
