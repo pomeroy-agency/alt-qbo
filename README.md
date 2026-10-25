@@ -12,6 +12,7 @@ This repository holds **Phase 0**: the core every module builds on.
 | Jurisdiction engine | `src/rules/` | Versioned, effective-dated, frozen rule packs: US federal 2026 and California 2026. The principal place of business sets framework, currency, chart of accounts, retention |
 | Chart of accounts | `src/rules/coa/us-service.ts` | Service-business template; every account mapped to a statement line, a cash-flow class and tax-line codes for Schedule C, 1065, 1120S and 1120 |
 | Payroll (calculate only) | `src/payroll/` | California workweek overtime, gross-to-net (FIT, FICA, Additional Medicare, FUTA, CA PIT Method B, SDI, UI, ETT), sick-leave accrual, minimum-wage and exempt-salary blockers, two-person approval, posting to the ledger |
+| Invoices and bills | `src/core/documents.ts`, `netlify/database/migrations/20261025000001_receivables_payables.sql` | Customers and vendors; invoices with user-entered sales tax and bills, each posted to receivables or payables when issued; partial payments; void by reversal; aging. The database checks line math, totals, the posting entry, and refuses edits and overpayments |
 | Tax export | `src/core/reports.ts` | Trial balance by tax line as CSV for Intuit tax software; an unmapped account blocks the export, not the books |
 
 Payroll **never moves money or files returns**. It calculates and prepares; the client or their accountant pays and files.
