@@ -6,6 +6,7 @@ import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type 
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
 import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, recordPayment, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
+import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, calculatePayRun, type PayRunInput } from "../payroll/pay-run.js";
@@ -534,6 +535,37 @@ route("POST", "/api/orgs/:org/entities/:entity/bank-lines/:line/undo", async (re
     return undoBankLine(tx, { orgId: ctx.orgId, entityId: p.entity!, lineId: p.line!, date: date(b.date, "date"), reason: str(b.reason, "reason", 300), actor: ctx.actor });
   }, writeOpts(ctx));
   return json(line);
+});
+
+// ---------------------------------------------------------- reconciliation
+
+route("GET", "/api/orgs/:org/entities/:entity/reconciliations", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const account = str(q.get("account") ?? "", "account", 40);
+  const statementDate = q.get("statementDate");
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({
+      history: await listReconciliations(tx, p.entity!, account),
+      ...(statementDate ? await reconciliationItems(tx, { entityId: p.entity!, bankAccount: account, statementDate: date(statementDate, "statement date") }) : {}),
+    });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/reconciliations", async (req, p, ctx) => {
+  const b = await body(req);
+  if (!Array.isArray(b.clearedLineIds) || b.clearedLineIds.length > 5000) throw new HttpError(400, "send the ticked lines");
+  const ids = b.clearedLineIds.map((x: unknown) => uuid(x, "invalid line id"));
+  const balance = str(b.statementBalance, "statement balance", 20);
+  if (!/^-?[\d,]+(\.\d{1,2})?$/.test(balance)) throw new HttpError(400, "statement balance must be an amount like 12345.67");
+  const out = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return completeReconciliation(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, bankAccount: str(b.bankAccount, "bank account", 40),
+      statementDate: date(b.statementDate, "statement date"), statementBalance: balance, clearedLineIds: ids, actor: ctx.actor,
+    });
+  });
+  return json(out, 201);
 });
 
 // ----------------------------------------------------------------- payroll

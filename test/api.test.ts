@@ -183,3 +183,20 @@ describe("bank API", () => {
     expect((await call(`${base}/bank-lines/${crypto.randomUUID()}/exclude`, { cookie: s.cookie, method: "POST" })).status).toBe(404);
   });
 });
+
+describe("reconciliation API", () => {
+  it("lists open items and completes at zero difference", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    await call(`${base}/journal`, { cookie: s.cookie, body: { date: "2026-03-01", lines: [{ account: "1000", debit: "100.00" }, { account: "3000", credit: "100.00" }] } });
+    const open = await call(`${base}/reconciliations?account=1000&statementDate=2026-03-31`, { cookie: s.cookie });
+    expect(open.data.items).toHaveLength(1);
+    const ids = open.data.items.map((i: any) => i.lineId);
+    const off = await call(`${base}/reconciliations`, { cookie: s.cookie, body: { bankAccount: "1000", statementDate: "2026-03-31", statementBalance: "99.00", clearedLineIds: ids } });
+    expect(off.status).toBe(422);
+    const ok = await call(`${base}/reconciliations`, { cookie: s.cookie, body: { bankAccount: "1000", statementDate: "2026-03-31", statementBalance: "100.00", clearedLineIds: ids } });
+    expect(ok.status).toBe(201);
+    expect((await call(`${base}/reconciliations?account=1000`, { cookie: s.cookie })).data.history).toHaveLength(1);
+  });
+});

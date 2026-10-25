@@ -21,6 +21,8 @@
 
 6. **Bank feed (`src/core/bank.ts`).** Statement lines are imported into `bank_lines` with a dedupe key per bank account (date, amount, description and which repeat it is in the file), so overlapping statements import safely and the database refuses the same line twice. Imported lines never change. A recorded line must point at an entry that moves exactly its amount through that bank account; a categorised line returns to review only after its entry is reversed, and a line that paid an invoice or bill stays recorded. The journal's reverse action refuses entries owned by invoices, bills, payments and bank lines, so those records can't drift from the ledger.
 
+7. **Reconciliation (`src/core/reconcile.ts`).** A completed reconciliation records the statement date and balance, the beginning balance and the cleared journal lines. The database requires each one to start from the previous statement's ending balance, to be dated after it, and (at commit) for beginning + cleared lines = statement balance. A journal line can be cleared only once, only on its own bank account and only if dated on or before the statement. Reconciliations are append-only.
+
 ## Money
 
 Amounts are `bigint` minor units with a currency everywhere outside the tax math. Rates and per-period tax math use `decimal.js` (40 digits), rounding half-up to cents only at the end of each tax. Postgres `int8` parses as `BigInt`. No floats touch money.
