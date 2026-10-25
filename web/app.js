@@ -1330,6 +1330,12 @@ function employeeForm(e = null) {
       <label>DE 4 allowances<input name="de4Allowances" value="${v(e?.de4.regularAllowances ?? 1)}" inputmode="numeric"></label>
       <label>DE 4 extra each paycheck ($)<input name="de4Extra" value="${v(e?.de4.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
     </div>
+    <h3>Direct deposit <span class="muted">(leave blank for a paper check)</span></h3>
+    <div class="row">
+      <label>Routing number<input name="ddRouting" value="${v(e?.directDeposit?.routing)}" inputmode="numeric" maxlength="9" placeholder="9 digits" style="width:120px"></label>
+      <label>Account number<input name="ddAccount" autocomplete="off" inputmode="numeric" placeholder="${e?.directDeposit ? `On file, ends ${e.directDeposit.accountLast4}` : "From their voided check"}"></label>
+      <label>Type${sel("ddType", [["checking", "Checking"], ["savings", "Savings"]], e?.directDeposit?.accountType ?? "checking")}</label>
+    </div>
     <h3>Taken from each paycheck</h3>
     <div class="grid">
       <label>401(k) ($)<input name="k401" value="${v(ded("traditional401k"))}" inputmode="decimal" placeholder="0"></label>
@@ -1369,6 +1375,9 @@ function employeeBody(f) {
   if (d.payType === "hourly") body.sickBalanceHours = d.sickBalanceHours || "0";
   if (d.terminationDate !== undefined) body.terminationDate = d.terminationDate;
   if (d.ssn.trim()) body.ssn = d.ssn.trim();
+  const routing = d.ddRouting.replace(/\s/g, "");
+  if (routing) body.directDeposit = { routing, accountType: d.ddType, ...(d.ddAccount.trim() ? { account: d.ddAccount.trim() } : {}) };
+  else if (f.dataset.id && f.querySelector("[name=ddAccount]").placeholder.startsWith("On file")) body.directDeposit = null;
   return body;
 }
 
@@ -1442,9 +1451,10 @@ function runTable(run) {
 
 async function payrollView(id) {
   await loadEntity(id);
-  const [{ employees, caUiRate }, { payRuns }] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs"))]);
+  const [{ employees, caUiRate, directDeposit }, { payRuns }] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs"))]);
   pay.employees = employees;
   pay.caUiRate = caUiRate;
+  const canSetUpBank = ["owner", "admin", "accountant"].includes(state.org.role);
   const me = `user:${state.me.user.email}`;
   const canApprove = ["owner", "admin", "approver"].includes(state.org.role);
   const canWrite = ["owner", "admin", "bookkeeper", "accountant"].includes(state.org.role);
@@ -1457,7 +1467,7 @@ async function payrollView(id) {
       ${pay.adding ? `<div class="emp">${employeeForm()}</div>` : ""}
       <div class="table-wrap"><table>
         <thead><tr><th>Name</th><th>Pay</th><th>Paid</th><th>Status</th><th></th></tr></thead>
-        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">SSN ends ${e.ssnLast4}</div>` : `<div class="hash">No SSN on file yet</div>`}</td>
+        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">SSN ends ${e.ssnLast4}</div>` : `<div class="hash">No SSN on file yet</div>`}<div class="hash">${e.directDeposit ? `Direct deposit to ${e.directDeposit.accountType} ending ${esc(e.directDeposit.accountLast4)}` : "Paid by check"}</div></td>
             <td>${payLabel(e)}${e.payType === "salary" && !e.overtimeExempt ? `<div class="hash">gets overtime</div>` : ""}</td><td>${FREQ_LABEL[e.payFrequency]}</td>
             <td>${e.status === "active" ? `<span class="pill">Active</span>` : `<span class="pill grey">Left ${e.terminationDate}</span>`}</td>
             <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="emp-edit" data-id="${e.id}">Edit</button>` : ""}</td></tr>
@@ -1469,6 +1479,7 @@ async function payrollView(id) {
         <span class="hash">It's on the rate notice the EDD mails each December. New employers pay 3.4%.</span>
       </form>
     </div>
+    ${directDepositPanel(directDeposit, canSetUpBank)}
     ${canWrite && active.length ? `<div class="panel">
       <h2>Run payroll</h2>
       <div class="row" style="margin-bottom:12px">
@@ -1501,6 +1512,52 @@ async function payrollView(id) {
         </tr>`).join("") || `<tr><td colspan="8" class="muted">No pay runs yet.</td></tr>`}</tbody>
       </table></div>
     </div>`);
+}
+
+function directDepositPanel(dd, canEdit) {
+  const v = (x) => esc(x ?? "");
+  return `<div class="panel">
+    <div class="row" style="justify-content:space-between"><h2>Direct deposit</h2>${dd ? `<span class="pill">Set up</span>` : ""}</div>
+    <p class="muted">After a pay run is approved, download its bank file and upload it to your bank's ACH or direct-deposit page. Your bank moves the money; Alt-QBO never does.
+      Ask your bank for ACH origination if it isn't turned on; they'll give you the details below.</p>
+    ${dd ? `<p>${esc(dd.destinationName)}, routing ${esc(dd.odfiRouting)}, company ID ${esc(dd.companyId)}, shown to employees as <strong>${esc(dd.companyName)}</strong>.${dd.balanced ? ` Balanced file, taken from account ending ${esc(dd.accountLast4)}.` : ""}</p>` : ""}
+    ${canEdit ? `<details ${dd ? "" : "open"}><summary>${dd ? "Change bank details" : "Add your bank details"}</summary>
+      <form data-form="dd-settings">
+        <div class="grid">
+          <label>Your bank's name<input name="destinationName" value="${v(dd?.destinationName)}" maxlength="23" required placeholder="Bank of America"></label>
+          <label>Your business account's routing number<input name="odfiRouting" value="${v(dd?.odfiRouting)}" inputmode="numeric" maxlength="9" required placeholder="9 digits"></label>
+          <label>Name on employees' bank statements<input name="companyName" value="${v(dd?.companyName ?? (state.entity.entity.legalName ?? "").slice(0, 16))}" maxlength="16"></label>
+        </div>
+        <details><summary>Details from your bank (only if they gave you different ones)</summary>
+          <p class="hash">Most banks use "1" followed by your EIN for both IDs, and their own routing number as the destination. Leave these blank to use that.</p>
+          <div class="grid">
+            <label>Company ID<input name="companyId" value="${v(dd?.companyId)}" maxlength="10"></label>
+            <label>Immediate origin<input name="immediateOrigin" value="${v(dd?.immediateOrigin)}" maxlength="10"></label>
+            <label>Immediate destination<input name="immediateDestination" value="${v(dd?.immediateDestination)}" maxlength="9"></label>
+            <label class="check"><input type="checkbox" name="balanced" ${dd?.balanced ? "checked" : ""}> My bank wants a balanced file (adds a debit from my account)</label>
+            <label>Business account number (balanced files only)<input name="account" autocomplete="off" placeholder="${dd?.accountLast4 ? `On file, ends ${esc(dd.accountLast4)}` : ""}"></label>
+            <label>Account type<select name="accountType"><option value="checking">Checking</option><option value="savings" ${dd?.accountType === "savings" ? "selected" : ""}>Savings</option></select></label>
+          </div>
+        </details>
+        <div class="row" style="margin-top:12px"><button type="submit" class="secondary">Save bank details</button></div>
+      </form></details>` : ""}
+  </div>`;
+}
+
+/** Who gets a deposit and who gets a check, with the download, once a run is posted. */
+function payEmployeesPanel(r) {
+  const dd = r.directDeposit;
+  if (!dd || r.status !== "posted") return "";
+  const canDownload = ["owner", "admin", "approver", "accountant"].includes(state.org.role);
+  return `<div class="panel no-print">
+    <h2>Pay your employees</h2>
+    ${dd.warnings.map((w) => `<div class="alert warn">${esc(w)}</div>`).join("")}
+    ${dd.deposits.length ? `<p>Direct deposit, ${usd(dd.totalMinor)} in all:</p><ul>${dd.deposits.map((d) => `<li>${esc(d.name)}: ${usd(d.amountMinor)} to ${d.accountType} ending ${esc(d.accountLast4)}</li>`).join("")}</ul>` : ""}
+    ${dd.paperChecks.length ? `<p>Write a paper check for:</p><ul>${dd.paperChecks.map((c) => `<li>${esc(c.name)}: ${usd(c.amountMinor)}</li>`).join("")}</ul>` : ""}
+    ${dd.ready && canDownload ? `<div class="row"><button data-action="dd-download" data-id="${r.id}">Download direct deposit file</button>
+      <span class="muted">Upload it to your bank at least two business days before ${esc(r.result.payDate)} so the money lands on time.</span></div>`
+      : dd.problem && dd.deposits.length ? `<p class="muted">To make the bank file, ${esc(dd.problem)}${dd.problem.startsWith("add") ? ` on the <a href="#/e/${state.entity.entity.id}/payroll">Payroll page</a>` : ""}.</p>` : ""}
+  </div>`;
 }
 
 function stubCard(r, c, s) {
@@ -1539,6 +1596,7 @@ async function payRunView(id, runId) {
       <p class="muted"><span class="${STATUS_PILL[r.status]}">${STATUS_LABEL[r.status]}</span> ${r.result.paychecks.length} employee${r.result.paychecks.length === 1 ? "" : "s"}, net pay ${usd(r.result.totals.netPayMinor)}.
       ${r.status === "prepared" ? "These stubs are drafts until the run is approved." : ""}</p></div>
       <div class="row"><button class="secondary" data-action="print">Print pay stubs</button>${canApprove ? `<button data-action="approve-run" data-id="${r.id}">Approve and post</button>` : ""}</div></div>
+    ${payEmployeesPanel(r)}
     ${r.result.paychecks.map((c) => stubCard(r, c, stubs.get(c.employeeId))).join("")}`);
 }
 
@@ -1781,6 +1839,16 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "journal-clear") {
       jr.q = "";
       await journalView(state.entity.entity.id);
+    } else if (a === "dd-download") {
+      b.disabled = true;
+      const res = await api(entPath(`/pay-runs/${b.dataset.id}/direct-deposit`), { raw: true });
+      if (!res.ok) throw new Error((await res.json()).error);
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "direct-deposit.ach";
+      const url = URL.createObjectURL(await res.blob());
+      Object.assign(document.createElement("a"), { href: url, download: name }).click();
+      URL.revokeObjectURL(url);
+      b.disabled = false;
+      toast("Bank file downloaded. Upload it on your bank's ACH page, then delete it from this computer");
     } else if (a === "print") {
       window.print();
     } else if (a === "logout") {
@@ -2068,6 +2136,14 @@ document.addEventListener("submit", async (ev) => {
       else await api(entPath("/employees"), { body });
       pay.adding = false;
       toast(f.dataset.id ? "Saved" : `${body.name} added`);
+      await payrollView(state.entity.entity.id);
+    } else if (kind === "dd-settings") {
+      await api(entPath("/direct-deposit-settings"), { body: {
+        destinationName: d.destinationName, odfiRouting: d.odfiRouting.replace(/\s/g, ""), companyName: d.companyName,
+        companyId: d.companyId, immediateOrigin: d.immediateOrigin, immediateDestination: d.immediateDestination,
+        balanced: f.querySelector("[name=balanced]").checked, accountType: d.accountType, ...(d.account.trim() ? { account: d.account.trim() } : {}),
+      } });
+      toast("Bank details saved");
       await payrollView(state.entity.entity.id);
     } else if (kind === "ui-rate") {
       await api(entPath("/payroll-settings"), { body: { caUiRatePercent: d.caUiRatePercent } });

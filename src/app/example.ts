@@ -83,6 +83,8 @@ export async function createExampleBusiness(pool: pg.Pool, user: { id: string; e
       ...base, name: "Maya Chen", email: "maya@sunsetdesign.example", hireDate: "2026-01-05", payType: "salary", payFrequency: "biweekly",
       payRate: "78000", overtimeExempt: true, w4: { filingStatus: "single_or_mfs" }, de4: { filingStatus: "single", regularAllowances: 1 },
       deductions: [{ kind: "traditional401k", amount: "150.00" }, { kind: "section125", amount: "100.00", description: "Medical premium" }],
+      // A made-up account at a real routing number, so the direct deposit file can be tried out.
+      directDeposit: { routing: "121000358", accountType: "checking", account: "000123456789" },
     });
     await createEmployee(tx, {
       ...base, name: "Jordan Alvarez", hireDate: "2026-03-02", payType: "hourly", payFrequency: "biweekly", payRate: "24.00", usualHours: "60",

@@ -47,10 +47,13 @@ Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields
 
 15. **Employees and pay runs (`src/payroll/employees.ts`, `src/payroll/runs.ts`).** Employees keep their pay (annual salary or hourly rate), W-4 and DE 4 choices, per-paycheck deductions, sick leave balance and any wages paid earlier in the year before Alt-QBO. A pay run copies these into its saved input when prepared, so later edits never change it. Year-to-date wages are summed from posted runs (and the earlier-in-the-year figures) every time a run is calculated, including again at approval, so a run approved after another one posts still stops Social Security, FUTA and UI at their wage bases. Approval also moves each hourly employee's sick leave balance forward. Social Security numbers are sealed with AES-256-GCM under `PII_KEY` (32 bytes, base64, set on the server, never in the database); the database, audit log and backups only ever see the last four digits. Pay stubs show what Labor Code 226 asks for: the employer's name and address, the last four of the SSN or an employee ID, the period, hours and rates, gross, each deduction, net pay and sick leave available.
 
+16. **Direct deposit (`src/payroll/nacha.ts`, `src/payroll/direct-deposit.ts`).** Each employee may have one checking or savings account; the business stores what its bank gives it for ACH origination (routing number, company ID and immediate origin, which default to "1" and the EIN). Account numbers are sealed under `PII_KEY` like SSNs, and only their last four digits reach the database's readable columns, the audit log and backups. For a posted run, `directDepositFile` builds a NACHA file with one PPD batch of credits (transaction codes 22 and 32) dated the pay date, plus an offsetting debit from the business account when the bank wants a balanced file. Routing numbers are checked with the ABA check digit; records are 94 characters, padded to blocks of ten. Employees without an account are listed for a paper check. The business uploads the file to its own bank; Alt-QBO never moves money. Only owners, admins, approvers and accountants can download the file, and each download is in the audit chain.
+
 ## Not in Phase 0 yet
 
 - Multi-currency functional amounts and revaluation (lines carry a currency and balance per currency today).
-- NACHA files, deposit schedules and prepared forms (941, 940, DE 9, DE 9C, W-2, DE 34).
+- Deposit schedules and prepared forms (941, 940, DE 9, DE 9C, W-2, W-3).
+- Splitting a paycheck across several bank accounts, prenote (zero-dollar test) entries, and bank holidays when checking the pay date.
 - Sick leave used, final paychecks, voiding a posted pay run.
 - HTTP API, authentication, MFA; roles are passed in by the caller.
 - City minimum wages, regular-rate overtime for bonuses, supplemental-rate withholding.
