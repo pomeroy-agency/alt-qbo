@@ -5,6 +5,7 @@ import { LedgerError } from "../core/errors.js";
 import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type Actor, type LineInput, type PeriodStatus, type Role } from "../core/ledger.js";
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
 import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, recordPayment, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
+import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, calculatePayRun, type PayRunInput } from "../payroll/pay-run.js";
@@ -275,6 +276,9 @@ route("POST", "/api/orgs/:org/entities/:entity/journal/:entry/reverse", async (r
     await ensureEntity(tx, p.entity!);
     const original = await getEntry(tx, p.entry!);
     if (original.entityId !== p.entity) throw new HttpError(404, "entry not found");
+    // These entries belong to a document or bank line; undoing them here would leave that record out of step.
+    const owner = { invoice: "void the invoice instead", bill: "void the bill instead", bank_line: "undo it from the Bank page instead", payment: "payments can't be reversed yet" } as Record<string, string>;
+    if (owner[original.sourceType]) throw new HttpError(409, `this entry came from a ${original.sourceType.replace("_", " ")}; ${owner[original.sourceType]}`);
     return reverseEntry(tx, {
       orgId: ctx.orgId, entryId: p.entry!, date: date(b.date, "date"), reason: str(b.reason, "reason", 300), actor: ctx.actor,
     });
@@ -457,6 +461,80 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
     return json(doc);
   });
 }
+
+// -------------------------------------------------------------------- bank
+
+const writeOpts = (ctx: Ctx) => ({ allowSoftClosed: ["owner", "admin", "accountant"].includes(ctx.role) });
+
+route("GET", "/api/orgs/:org/entities/:entity/bank-lines", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const status = q.get("status") as BankLineStatus | null;
+  if (status && !["new", "posted", "excluded"].includes(status)) throw new HttpError(400, "unknown status");
+  const account = q.get("account");
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ lines: await listBankLines(tx, { entityId: p.entity!, bankAccount: account ? account.slice(0, 40) : undefined, status: status ?? undefined }) });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-imports", async (req, p, ctx) => {
+  const b = await body(req);
+  if (typeof b.csv !== "string" || !b.csv.trim()) throw new HttpError(400, "choose a CSV file");
+  if (b.csv.length > MAX_CSV_BYTES) throw new HttpError(413, "the file is larger than 2 MB; split it");
+  const out = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return importBankCsv(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, bankAccount: str(b.bankAccount, "bank account", 40), csv: b.csv,
+      fileName: typeof b.fileName === "string" ? b.fileName.slice(0, 200) : "", actor: ctx.actor,
+    });
+  });
+  return json(out, 201);
+});
+
+async function ensureLine(tx: Tx, entityId: string, lineId: string) {
+  const { rows } = await tx.query("SELECT 1 FROM bank_lines WHERE id = $1 AND entity_id = $2", [lineId, entityId]);
+  if (!rows[0]) throw new HttpError(404, "bank line not found");
+}
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-lines/:line/categorize", async (req, p, ctx) => {
+  const b = await body(req);
+  const line = await tenant(ctx, async (tx) => {
+    await ensureLine(tx, p.entity!, p.line!);
+    return categorizeBankLine(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, lineId: p.line!, account: str(b.account, "account", 40),
+      memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : undefined, actor: ctx.actor,
+    });
+  }, writeOpts(ctx));
+  return json(line);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-lines/:line/match", async (req, p, ctx) => {
+  const b = await body(req);
+  const line = await tenant(ctx, async (tx) => {
+    await ensureLine(tx, p.entity!, p.line!);
+    return matchBankLine(tx, { orgId: ctx.orgId, entityId: p.entity!, lineId: p.line!, documentId: uuid(b.documentId, "choose an invoice or bill"), actor: ctx.actor });
+  }, writeOpts(ctx));
+  return json(line);
+});
+
+for (const [action, excluded] of [["exclude", true], ["restore", false]] as const) {
+  route("POST", `/api/orgs/:org/entities/:entity/bank-lines/:line/${action}`, async (_req, p, ctx) => {
+    const line = await tenant(ctx, async (tx) => {
+      await ensureLine(tx, p.entity!, p.line!);
+      return setBankLineExcluded(tx, { orgId: ctx.orgId, entityId: p.entity!, lineId: p.line!, excluded, actor: ctx.actor });
+    });
+    return json(line);
+  });
+}
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-lines/:line/undo", async (req, p, ctx) => {
+  const b = await body(req);
+  const line = await tenant(ctx, async (tx) => {
+    await ensureLine(tx, p.entity!, p.line!);
+    return undoBankLine(tx, { orgId: ctx.orgId, entityId: p.entity!, lineId: p.line!, date: date(b.date, "date"), reason: str(b.reason, "reason", 300), actor: ctx.actor });
+  }, writeOpts(ctx));
+  return json(line);
+});
 
 // ----------------------------------------------------------------- payroll
 

@@ -19,6 +19,8 @@
 
 5. **Invoices and bills (`src/core/documents.ts`).** Ported from the Ledgerline prototype, where these rules ran only in the browser. Triggers on `documents`, `document_lines` and `document_payments` enforce: line amount = quantity x price and tax = rate on taxable lines (rounded half-up); totals = sum of lines; at commit, a document must have a posting entry that carries its total to receivables or payables; an issued document only changes by voiding, which must point at the reversal of its entry and is refused once payments exist; a payment can't exceed the amount due and must be backed by its own entry. Invoice and bill numbers are gapless per entity.
 
+6. **Bank feed (`src/core/bank.ts`).** Statement lines are imported into `bank_lines` with a dedupe key per bank account (date, amount, description and which repeat it is in the file), so overlapping statements import safely and the database refuses the same line twice. Imported lines never change. A recorded line must point at an entry that moves exactly its amount through that bank account; a categorised line returns to review only after its entry is reversed, and a line that paid an invoice or bill stays recorded. The journal's reverse action refuses entries owned by invoices, bills, payments and bank lines, so those records can't drift from the ledger.
+
 ## Money
 
 Amounts are `bigint` minor units with a currency everywhere outside the tax math. Rates and per-period tax math use `decimal.js` (40 digits), rounding half-up to cents only at the end of each tax. Postgres `int8` parses as `BigInt`. No floats touch money.

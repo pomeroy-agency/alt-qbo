@@ -86,7 +86,7 @@ function topbar() {
 }
 
 const ENTITY_TABS = [
-  ["invoices", "Invoices"], ["bills", "Bills"], ["contacts", "Customers and vendors"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
+  ["invoices", "Invoices"], ["bills", "Bills"], ["bank", "Bank"], ["contacts", "Customers and vendors"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
   ["accounts", "Chart of accounts"], ["connections", "Connections"],
 ];
 
@@ -539,6 +539,73 @@ async function contactsView(id) {
       </form></div>` : ""}`);
 }
 
+// -------------------------------------------------------------------- bank
+
+const bankUi = { account: null, status: "new" };
+
+async function bankView(id) {
+  await loadEntity(id);
+  const banks = state.entity.accounts.filter((a) => a.is_active && a.subtype === "bank");
+  if (!banks.some((a) => a.code === bankUi.account)) bankUi.account = banks[0]?.code ?? null;
+  const q = `?account=${encodeURIComponent(bankUi.account ?? "")}&status=${bankUi.status}`;
+  const [{ lines }, inv, bills] = await Promise.all([
+    api(entPath(`/bank-lines${q}`)),
+    bankUi.status === "new" ? api(entPath("/invoices")) : { documents: [] },
+    bankUi.status === "new" ? api(entPath("/bills")) : { documents: [] },
+  ]);
+  const open = (docs) => docs.filter((d) => d.status !== "void" && d.dueMinor !== "0");
+  const openInv = open(inv.documents), openBills = open(bills.documents);
+  const cats = state.entity.accounts.filter((a) => a.is_active && a.code !== bankUi.account && !["accounts_receivable", "accounts_payable"].includes(a.system_key));
+  const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  const choice = (l) => {
+    const deposit = BigInt(l.amountMinor) > 0n;
+    const docs = deposit ? openInv : openBills;
+    const s = l.suggestion;
+    const pick = s ? (s.kind === "account" ? `acct:${s.account}` : `doc:${s.documentId}`) : "";
+    return `<select data-line-choice="${l.id}" aria-label="Record as">
+      <option value="">Choose…</option>
+      ${docs.length ? `<optgroup label="${deposit ? "Payment of an invoice" : "Payment of a bill"}">${docs.map((d) => `<option value="doc:${d.id}" ${pick === `doc:${d.id}` ? "selected" : ""}>${esc(d.number)} · ${esc(d.contactName)} · ${usd(d.dueMinor)} due</option>`).join("")}</optgroup>` : ""}
+      <optgroup label="Category">${cats.map((a) => `<option value="acct:${a.code}" ${pick === `acct:${a.code}` ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("")}</optgroup>
+    </select>${s ? `<div class="hash">Suggested: ${esc(s.label)}</div>` : ""}`;
+  };
+  const tab = (k, l) => `<button class="${bankUi.status === k ? "" : "secondary"}" data-action="bank-status" data-status="${k}">${l}</button>`;
+  app.innerHTML = shell("bank", `
+    <div class="head"><div><h1>Bank</h1><p class="muted">Import statements as CSV, then record each line: match it to an invoice or bill, give it a category, or exclude it. Live bank connections come later.</p></div></div>
+    ${banks.length ? "" : `<div class="alert warn">This business has no active bank account in its chart of accounts.</div>`}
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <label>Bank account<select data-action="bank-account">${banks.map((a) => `<option value="${a.code}" ${a.code === bankUi.account ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>
+        <div class="row">${tab("new", "To review")}${tab("posted", "Recorded")}${tab("excluded", "Excluded")}</div>
+      </div>
+    </div>
+    ${canWrite && banks.length ? `<div class="panel">
+      <h2>Import a statement</h2>
+      <p class="muted">Download a CSV from your bank. It needs a date, a description, and either an Amount column or separate withdrawal and deposit columns. Lines already imported are skipped.</p>
+      <form data-form="bank-import" class="row">
+        <label>CSV file<input type="file" name="file" accept=".csv,text/csv"></label>
+        <label style="flex:1;min-width:240px">or paste it here<textarea name="csv" rows="2" placeholder="Date,Description,Amount"></textarea></label>
+        <button type="submit">Import</button>
+      </form>
+    </div>` : ""}
+    <div class="panel">
+      <div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th style="width:38%">${bankUi.status === "new" ? "Record as" : bankUi.status === "posted" ? "Recorded as" : ""}</th><th></th></tr></thead>
+        <tbody>${lines.map((l) => {
+          const amt = BigInt(l.amountMinor);
+          const amount = `<td class="num" style="color:${amt > 0n ? "var(--good-ink)" : "inherit"}">${usd(l.amountMinor)}</td>`;
+          if (l.status === "new") return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}
+            <td>${canWrite ? choice(l) : ""}</td>
+            <td>${canWrite ? `<div class="row"><button data-action="bank-record" data-id="${l.id}">Record</button><button class="link" data-action="bank-exclude" data-id="${l.id}">Exclude</button></div>` : ""}</td></tr>`;
+          if (l.status === "posted") return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}
+            <td>${l.documentNumber ? `Payment · ${esc(l.documentNumber)}` : `${esc(l.categoryAccount)} · ${esc(state.entity.accounts.find((a) => a.code === l.categoryAccount)?.name ?? "")}`}<div class="hash">by ${esc((l.decidedBy ?? "").replace("user:", ""))}</div></td>
+            <td>${canWrite && !l.documentNumber ? `<form data-form="bank-undo" data-id="${l.id}" class="row"><input name="reason" placeholder="Reason" required style="width:140px"><button class="secondary" type="submit">Undo</button></form>` : ""}</td></tr>`;
+          return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}<td></td>
+            <td>${canWrite ? `<button class="secondary" data-action="bank-restore" data-id="${l.id}">Restore</button>` : ""}</td></tr>`;
+        }).join("") || `<tr><td colspan="5" class="muted">${bankUi.status === "new" ? "Nothing to review. Import a statement to get started." : "Nothing here."}</td></tr>`}</tbody>
+      </table></div>
+    </div>`);
+}
+
 // --------------------------------------------------------------- payroll
 
 let employees = [];
@@ -716,7 +783,7 @@ async function route() {
     }
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
-      const view = { invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "journal"] ?? journalView;
+      const view = { invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, bank: bankView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "journal"] ?? journalView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
@@ -751,6 +818,10 @@ document.addEventListener("change", (ev) => {
     const box = t.form.querySelector("[data-new-contact]");
     box.hidden = t.value !== "__new";
     if (!box.hidden) box.querySelector("input").focus();
+  }
+  if (t.dataset.action === "bank-account") {
+    bankUi.account = t.value;
+    bankView(state.entity.entity.id).catch((err) => toast(err.message));
   }
   if (t.dataset.action === "switch-org") {
     state.orgId = t.value;
@@ -793,6 +864,22 @@ document.addEventListener("click", async (ev) => {
         const kind = location.hash.includes("/bills") ? "bills" : "invoices";
         document.getElementById(`detail-${b.dataset.id}`).innerHTML = docDetail(await api(entPath(`/${kind}/${b.dataset.id}`)));
       }
+    } else if (a === "bank-status") {
+      bankUi.status = b.dataset.status;
+      await bankView(state.entity.entity.id);
+    } else if (a === "bank-record") {
+      const v = document.querySelector(`[data-line-choice="${b.dataset.id}"]`).value;
+      if (!v) throw new Error("Choose what this line is first");
+      b.disabled = true;
+      const [k, ref] = [v.slice(0, v.indexOf(":")), v.slice(v.indexOf(":") + 1)];
+      await api(entPath(`/bank-lines/${b.dataset.id}/${k === "doc" ? "match" : "categorize"}`), { body: k === "doc" ? { documentId: ref } : { account: ref } });
+      toast("Recorded and posted");
+      await bankView(state.entity.entity.id);
+    } else if (a === "bank-exclude" || a === "bank-restore") {
+      b.disabled = true;
+      await api(entPath(`/bank-lines/${b.dataset.id}/${a === "bank-exclude" ? "exclude" : "restore"}`), { method: "POST" });
+      toast(a === "bank-exclude" ? "Excluded. It won't post to the books." : "Restored to the review list");
+      await bankView(state.entity.entity.id);
     } else if (a === "show-reverse") {
       const f = document.querySelector(`form[data-form=reverse][data-id="${b.dataset.id}"]`);
       f.hidden = !f.hidden;
@@ -903,6 +990,18 @@ document.addEventListener("submit", async (ev) => {
       const doc = await api(entPath(`/${DOC[k].path}/${f.dataset.id}/void`), { body: d });
       toast(`${doc.number} voided; the reversal is in the journal`);
       await docsView(state.entity.entity.id, k);
+    } else if (kind === "bank-import") {
+      const file = f.querySelector("[name=file]").files[0];
+      const csv = file ? await file.text() : d.csv;
+      if (!csv?.trim()) throw new Error("Choose a CSV file or paste one");
+      const r = await api(entPath("/bank-imports"), { body: { bankAccount: bankUi.account, csv, fileName: file?.name ?? "pasted" } });
+      toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
+      bankUi.status = "new";
+      await bankView(state.entity.entity.id);
+    } else if (kind === "bank-undo") {
+      await api(entPath(`/bank-lines/${f.dataset.id}/undo`), { body: { date: bookDate(), reason: d.reason } });
+      toast("Undone; the reversal is in the journal");
+      await bankView(state.entity.entity.id);
     } else if (kind === "contact") {
       await api(entPath("/contacts"), { body: d });
       toast(`${d.name} added`);
