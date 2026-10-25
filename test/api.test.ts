@@ -31,6 +31,15 @@ async function signup(orgName = "Test Co") {
   return { cookie: r.cookie!, email, orgId: me.data.orgs[0].id as string };
 }
 
+/** Invites an email and has that person sign up through the link. Returns their session. */
+async function join(s: { cookie: string; orgId: string }, email: string, role: string, password = "member-pass-12") {
+  const inv = await call(`/api/orgs/${s.orgId}/invitations`, { cookie: s.cookie, body: { email, role } });
+  expect(inv.status).toBe(201);
+  const r = await call("/api/auth/signup", { body: { name: email.split("@")[0], email, password, inviteToken: inv.data.token } });
+  expect(r.status).toBe(201);
+  return { cookie: r.cookie!, email, token: inv.data.token as string };
+}
+
 async function entity(s: { cookie: string; orgId: string }) {
   const r = await call(`/api/orgs/${s.orgId}/entities`, {
     cookie: s.cookie, body: { legalName: "API Studio LLC", entityType: "llc_single", region: "CA", firstFiscalYear: 2026 },
@@ -96,8 +105,7 @@ describe("API", () => {
     expect(self.status).toBe(403);
 
     const approverEmail = `approver${Date.now()}@example.com`;
-    expect((await call(`/api/orgs/${s.orgId}/members`, { cookie: s.cookie, body: { name: "Ava", email: approverEmail, password: "approver-pass-1", role: "approver" } })).status).toBe(201);
-    const ava = await call("/api/auth/login", { body: { email: approverEmail, password: "approver-pass-1" } });
+    const ava = await join(s, approverEmail, "approver");
     const approved = await call(`/api/orgs/${s.orgId}/entities/${ent}/pay-runs/${prepared.data.id}/approve`, { cookie: ava.cookie, body: {} });
     expect(approved.status).toBe(201);
     expect(approved.data.sourceType).toBe("pay_run");
@@ -105,8 +113,7 @@ describe("API", () => {
     expect(again.status).toBe(409);
 
     const viewerEmail = `viewer${Date.now()}@example.com`;
-    await call(`/api/orgs/${s.orgId}/members`, { cookie: s.cookie, body: { name: "Vic", email: viewerEmail, password: "viewer-pass-12", role: "read_only" } });
-    const vic = await call("/api/auth/login", { body: { email: viewerEmail, password: "viewer-pass-12" } });
+    const vic = await join(s, viewerEmail, "read_only");
     const denied = await call(`/api/orgs/${s.orgId}/entities/${ent}/journal`, {
       cookie: vic.cookie, body: { date: "2026-02-01", lines: [{ account: "1000", debit: "1.00" }, { account: "3000", credit: "1.00" }] },
     });
@@ -220,5 +227,101 @@ describe("reports API", () => {
     expect((await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "12-34" } })).status).toBe(400);
     expect((await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "123456789" } })).data.ein).toBe("12-3456789");
     expect((await call(`${base}/health`, { cookie: s.cookie })).data.checks.find((c: any) => c.key === "ein").ok).toBe(true);
+  });
+});
+
+describe("team API", () => {
+  const uniq = (p: string) => `${p}${Date.now()}${n++}@example.com`;
+
+  it("joins by invitation link with the invited email only, once", async () => {
+    const owner = await signup();
+    const email = uniq("bea");
+    const inv = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email: email.toUpperCase(), role: "bookkeeper" } });
+    expect(inv.status).toBe(201);
+    expect(inv.data.link).toMatch(/\/#\/join\//);
+    expect((await call(`/api/invitations/${inv.data.token}`)).data).toMatchObject({ orgName: "Test Co", email, role: "bookkeeper", status: "pending" });
+    expect((await call(`/api/invitations/${"x".repeat(32)}`)).status).toBe(404);
+
+    // Someone else can't use the link, by signing up or by accepting while signed in.
+    const wrong = await call("/api/auth/signup", { body: { name: "Mallory", email: uniq("mallory"), password: "long-enough-pw", inviteToken: inv.data.token } });
+    expect(wrong.status).toBe(403);
+    const other = await signup("Other Co");
+    expect((await call(`/api/invitations/${inv.data.token}/accept`, { cookie: other.cookie, body: {} })).status).toBe(403);
+
+    const bea = await call("/api/auth/signup", { body: { name: "Bea", email, password: "long-enough-pw", inviteToken: inv.data.token } });
+    expect(bea.status).toBe(201);
+    const me = await call("/api/me", { cookie: bea.cookie });
+    expect(me.data.orgs).toEqual([{ id: owner.orgId, name: "Test Co", role: "bookkeeper" }]);
+    expect((await call(`/api/invitations/${inv.data.token}`)).data.status).toBe("accepted");
+    expect((await call(`/api/invitations/${inv.data.token}/accept`, { cookie: bea.cookie, body: {} })).status).toBe(422);
+    const team = await call(`/api/orgs/${owner.orgId}/members`, { cookie: owner.cookie });
+    expect(team.data.members.map((m: any) => m.role)).toEqual(["owner", "bookkeeper"]);
+    expect(team.data.invitations).toEqual([]);
+  });
+
+  it("lets an existing user accept by signing in, and revoked links stop working", async () => {
+    const owner = await signup();
+    const existing = await signup("Their Own Co");
+    const inv = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email: existing.email, role: "accountant" } });
+    const login = await call("/api/auth/login", { body: { email: existing.email, password: "long-enough-pw", inviteToken: inv.data.token } });
+    expect(login.status).toBe(200);
+    expect((await call("/api/me", { cookie: login.cookie })).data.orgs.map((o: any) => o.role)).toEqual(["owner", "accountant"]);
+    expect((await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email: existing.email, role: "admin" } })).status).toBe(422);
+
+    const email = uniq("gone");
+    const revoked = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email, role: "read_only" } });
+    expect((await call(`/api/orgs/${owner.orgId}/members`, { cookie: owner.cookie })).data.invitations).toHaveLength(1);
+    expect((await call(`/api/orgs/${owner.orgId}/invitations/${revoked.data.id}/revoke`, { cookie: owner.cookie, body: {} })).status).toBe(200);
+    expect((await call("/api/auth/signup", { body: { name: "Gone", email, password: "long-enough-pw", inviteToken: revoked.data.token } })).status).toBe(422);
+    // Re-inviting replaces the old link.
+    const first = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email, role: "read_only" } });
+    const second = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email, role: "approver" } });
+    expect((await call(`/api/invitations/${first.data.token}`)).data.status).toBe("revoked");
+    expect((await call(`/api/invitations/${second.data.token}`)).data).toMatchObject({ status: "pending", role: "approver" });
+  });
+
+  it("changes roles, removes members, and always keeps an owner", async () => {
+    const owner = await signup();
+    const ownerId = (await call("/api/me", { cookie: owner.cookie })).data.user.id;
+    const admin = await join(owner, uniq("adam"), "admin");
+    const book = await join(owner, uniq("bo"), "bookkeeper");
+    const ids = Object.fromEntries((await call(`/api/orgs/${owner.orgId}/members`, { cookie: owner.cookie })).data.members.map((m: any) => [m.role, m.userId]));
+    const roleOf = async (id: string) => (await call(`/api/orgs/${owner.orgId}/members`, { cookie: owner.cookie })).data.members.find((m: any) => m.userId === id)?.role;
+
+    // Non-managers can't see invitations or manage anyone.
+    expect((await call(`/api/orgs/${owner.orgId}/members`, { cookie: book.cookie })).data.invitations).toEqual([]);
+    expect((await call(`/api/orgs/${owner.orgId}/members/${ids.admin}/role`, { cookie: book.cookie, body: { role: "read_only" } })).status).toBe(403);
+    expect((await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: book.cookie, body: { email: uniq("x"), role: "admin" } })).status).toBe(403);
+    // Admins manage everyone but owners, and can't make owners.
+    expect((await call(`/api/orgs/${owner.orgId}/members/${ids.bookkeeper}/role`, { cookie: admin.cookie, body: { role: "accountant" } })).status).toBe(200);
+    expect(await roleOf(ids.bookkeeper)).toBe("accountant");
+    expect((await call(`/api/orgs/${owner.orgId}/members/${ids.bookkeeper}/role`, { cookie: admin.cookie, body: { role: "owner" } })).status).toBe(403);
+    expect((await call(`/api/orgs/${owner.orgId}/members/${ownerId}/remove`, { cookie: admin.cookie, body: {} })).status).toBe(403);
+
+    // The only owner can't step down or leave; after handing over ownership they can.
+    expect((await call(`/api/orgs/${owner.orgId}/members/${ownerId}/role`, { cookie: owner.cookie, body: { role: "admin" } })).status).toBe(422);
+    expect((await call(`/api/orgs/${owner.orgId}/leave`, { cookie: owner.cookie, body: {} })).status).toBe(422);
+    expect((await call(`/api/orgs/${owner.orgId}/members/${ids.admin}/role`, { cookie: owner.cookie, body: { role: "owner" } })).status).toBe(200);
+    expect((await call(`/api/orgs/${owner.orgId}/leave`, { cookie: owner.cookie, body: {} })).status).toBe(200);
+    expect((await call(`/api/orgs/${owner.orgId}`, { cookie: owner.cookie })).status).toBe(404);
+
+    // A removed member loses access at once.
+    expect((await call(`/api/orgs/${owner.orgId}/members/${ids.bookkeeper}/remove`, { cookie: admin.cookie, body: {} })).status).toBe(200);
+    expect((await call(`/api/orgs/${owner.orgId}`, { cookie: book.cookie })).status).toBe(404);
+    const audit = await call(`/api/orgs/${owner.orgId}/audit`, { cookie: admin.cookie });
+    expect(audit.data.events.map((e: any) => e.action)).toEqual(expect.arrayContaining(["member.invited", "member.joined", "member.role_changed", "member.left", "member.removed"]));
+    expect(audit.data.verification.ok).toBe(true);
+  });
+
+  it("holds in the database: invitations settle once, and an organisation keeps an owner", async () => {
+    const owner = await signup();
+    const inv = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email: uniq("z"), role: "bookkeeper" } });
+    await call(`/api/orgs/${owner.orgId}/invitations/${inv.data.id}/revoke`, { cookie: owner.cookie, body: {} });
+    await expect(pool.query("UPDATE invitations SET revoked_at = NULL WHERE id = $1", [inv.data.id])).rejects.toThrow(/IMMUTABLE/);
+    await expect(pool.query("DELETE FROM invitations WHERE id = $1", [inv.data.id])).rejects.toThrow(/IMMUTABLE/);
+    const live = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email: uniq("y"), role: "admin" } });
+    await expect(pool.query("UPDATE invitations SET role = 'admin', expires_at = now() + interval '1 year' WHERE id = $1", [live.data.id])).rejects.toThrow(/IMMUTABLE/);
+    await expect(pool.query("UPDATE invitations SET role = 'owner' WHERE id = $1", [live.data.id])).rejects.toThrow(/check constraint|IMMUTABLE/);
+    await expect(pool.query("DELETE FROM memberships WHERE org_id = $1", [owner.orgId])).rejects.toThrow(/at least one owner/);
   });
 });

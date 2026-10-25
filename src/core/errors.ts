@@ -27,7 +27,7 @@ export class LedgerError extends Error {
 
 const DB_CODES: LedgerErrorCode[] = [
   "UNBALANCED", "IMMUTABLE", "PERIOD_LOCKED", "PERIOD_SOFT_CLOSED", "PERIOD_MISMATCH", "PERIOD_OVERLAP", "AUDIT_CHAIN",
-  "OVERPAID", "INVALID",
+  "OVERPAID", "INVALID", "FORBIDDEN",
 ];
 
 /** Turns a database-raised rule violation ("CODE: detail") into a LedgerError; rethrows anything else. */

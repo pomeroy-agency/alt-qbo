@@ -25,6 +25,8 @@
 
 8. **Reports and books health (`src/core/statements.ts`).** Every report is a query over posted journal lines grouped by each account's statement line, so reports can't disagree with the trial balance. The balance sheet doesn't depend on a closing entry: income before the fiscal year start shows as prior years' earnings and income since as current year earnings. The health check reads the same data and only reports; it never changes the books.
 
+9. **Team (`src/app/team.ts`).** An invitation stores the email, role and a SHA-256 hash of a random link token; it expires after 14 days. Accepting needs the token and a signed-in user with the invited email, so a forwarded link is useless to anyone else. The database lets an invitation settle once (accepted or revoked, never edited or deleted), refuses acceptance by a different email or after expiry, and checks at commit that every organisation still has an owner. Invitations, role changes, removals and leaving are in the audit chain.
+
 ## Money
 
 Amounts are `bigint` minor units with a currency everywhere outside the tax math. Rates and per-period tax math use `decimal.js` (40 digits), rounding half-up to cents only at the end of each tax. Postgres `int8` parses as `BigInt`. No floats touch money.
