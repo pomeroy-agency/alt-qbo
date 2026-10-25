@@ -2,7 +2,7 @@ import type { Tx } from "../db/pool.js";
 import { latestSalesTaxRules, salesTaxRules, type SalesTaxRulePack } from "../rules/sales-tax/us-ca-2026.js";
 import { appendAudit } from "./audit.js";
 import { LedgerError, translateDbError } from "./errors.js";
-import { issueDocument, type DocumentDetail, type DocumentLineInput, type DocumentTax, type IssueDocumentInput } from "./documents.js";
+import { issueDocument, type DocumentDetail, type DocumentLineInput, type DocumentTax, type DocumentUseTax, type IssueDocumentInput } from "./documents.js";
 import type { Actor, Role } from "./ledger.js";
 import { D, parseMoney } from "./money.js";
 
@@ -207,12 +207,7 @@ export async function decideSalesTax(
   });
 
   if (input.manual) {
-    if (!CAN_SET_RATE.includes(input.manual.actor.role)) throw new LedgerError("FORBIDDEN", "only an owner or accountant can set the sales tax rate by hand");
-    if (!input.manual.reason.trim()) throw new LedgerError("INVALID", "say why the rate is being set by hand");
-    if (!/^\d{1,2}(\.\d{1,3})?$/.test(input.manual.ratePercent.trim())) throw new LedgerError("INVALID", "enter the rate as a percentage like 8.625");
-    const rate = new D(input.manual.ratePercent.trim()).div(100);
-    if (rate.gt(pack.maxCombinedRate)) throw new LedgerError("INVALID", `no California rate is that high (the top is under ${new D(pack.maxCombinedRate).mul(100)}%)`);
-    return decision("manual", rate.toFixed(5), { jurisdiction: "Set by hand", note: [input.manual.reason.trim().slice(0, 300), ...notes].join(". ") });
+    return decision("manual", manualRate(pack, input.manual, "sales tax"), { jurisdiction: "Set by hand", note: [input.manual.reason.trim().slice(0, 300), ...notes].join(". ") });
   }
   if (!taxable.some(Boolean)) {
     return exemptions.includes("direct_pay") ? decision("direct_pay", "0.00000", { note: directPayNote }) : decision("not_taxable");
@@ -225,18 +220,34 @@ export async function decideSalesTax(
     throw new LedgerError("INVALID", `add ${contact.name}'s address, or your business address, so Alt-QBO can work out the sales tax rate`);
   }
   if (delivery.state !== ent.region) return decision("out_of_state", "0.00000", { jurisdiction: `Delivered to ${delivery.state}` });
-  if (!input.lookup) throw new LedgerError("TAX_LOOKUP", "the sales tax rate lookup isn't available right now; an owner or accountant can set the rate by hand");
+  const found = await lookupRate(pack, delivery, input.lookup);
+  return decision("lookup", found.rate, { jurisdiction: found.jurisdiction });
+}
+
+/** An owner's or accountant's own rate, checked. Returns the fraction with five decimals. */
+function manualRate(pack: SalesTaxRulePack, manual: { ratePercent: string; reason: string; actor: Actor }, what: string): string {
+  if (!CAN_SET_RATE.includes(manual.actor.role)) throw new LedgerError("FORBIDDEN", `only an owner or accountant can set the ${what} rate by hand`);
+  if (!manual.reason.trim()) throw new LedgerError("INVALID", "say why the rate is being set by hand");
+  if (!/^\d{1,2}(\.\d{1,3})?$/.test(manual.ratePercent.trim())) throw new LedgerError("INVALID", "enter the rate as a percentage like 8.625");
+  const rate = new D(manual.ratePercent.trim()).div(100);
+  if (rate.gt(pack.maxCombinedRate)) throw new LedgerError("INVALID", `no California rate is that high (the top is under ${new D(pack.maxCombinedRate).mul(100)}%)`);
+  return rate.toFixed(5);
+}
+
+/** The CDTFA's combined rate for an address, refused when it can't be right for the state. */
+async function lookupRate(pack: SalesTaxRulePack, address: Address, lookup?: RateLookup): Promise<{ rate: string; jurisdiction: string }> {
+  if (!lookup) throw new LedgerError("TAX_LOOKUP", "the sales tax rate lookup isn't available right now; an owner or accountant can set the rate by hand");
   let found: Awaited<ReturnType<RateLookup>>;
   try {
-    found = await input.lookup(delivery);
+    found = await lookup(address);
   } catch (err) {
-    throw new LedgerError("TAX_LOOKUP", `couldn't find the sales tax rate for ${formatAddress(delivery)} (${(err as Error).message}). Check the address, or have an owner or accountant set the rate by hand`);
+    throw new LedgerError("TAX_LOOKUP", `couldn't find the sales tax rate for ${formatAddress(address)} (${(err as Error).message}). Check the address, or have an owner or accountant set the rate by hand`);
   }
   const rate = new D(found.rate);
   if (rate.lt(pack.statewideRate) || rate.gt(pack.maxCombinedRate)) {
-    throw new LedgerError("TAX_LOOKUP", `the rate lookup gave ${rate.mul(100)}% for ${formatAddress(delivery)}, which can't be right for California; have an owner or accountant set it by hand`);
+    throw new LedgerError("TAX_LOOKUP", `the rate lookup gave ${rate.mul(100)}% for ${formatAddress(address)}, which can't be right for California; have an owner or accountant set it by hand`);
   }
-  return decision("lookup", rate.toFixed(5), { jurisdiction: found.jurisdiction.slice(0, 200) });
+  return { rate: rate.toFixed(5), jurisdiction: found.jurisdiction.slice(0, 200) };
 }
 
 /** Warns when a customer's software billing this year nears the $5,000,000 direct-payment line and no permit is on file. */
@@ -339,6 +350,110 @@ export async function issueInvoice(tx: Tx, input: IssueInvoiceInput): Promise<Do
   }
   const { lookup: _l, manual: _m, ...rest } = input;
   return issueDocument(tx, { ...rest, kind: "invoice", tax, lines: lines.map((l, i) => ({ ...l, ...taxed[i] })) });
+}
+
+// ------------------------------------------------------------ use tax on bills
+
+export interface UseTaxDecision {
+  /** Fraction with five decimals ("0.08625"). */
+  rate: string;
+  source: DocumentUseTax["source"];
+  jurisdiction: string | null;
+  address: string | null;
+  note: string | null;
+  /** Whether the business owes use tax on each line, in order. */
+  taxable: boolean[];
+  rules: string | null;
+}
+
+/**
+ * Decides the California use tax a business owes on a bill whose vendor
+ * didn't charge California tax: each line's kind decides whether it is
+ * taxable (software by the start of access, as on invoices), and the rate is
+ * the one for the business's own address, where it uses what it bought.
+ * Only when the vendor didn't charge the tax: a bill that already carries
+ * California tax is recorded without this.
+ */
+export async function decideUseTax(
+  tx: Tx,
+  input: {
+    entityId: string; date: string; categories: string[]; lines?: TaxLineInfo[]; lookup?: RateLookup;
+    manual?: { ratePercent: string; reason: string; actor: Actor };
+  },
+): Promise<UseTaxDecision> {
+  const ent = (await tx.query("SELECT region, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1", [input.entityId])).rows[0];
+  if (!ent) throw new LedgerError("INVALID", "entity not found");
+  const pack = rulesFor(ent.region, input.date);
+  const { lines, rules } = lineRules(ent.region, input.date, input.categories, input.lines);
+  const taxable = lines.map((l) => l.taxable);
+  const where = addressOf(ent);
+  const decision = (source: UseTaxDecision["source"], rate = "0.00000", extra: Partial<UseTaxDecision> = {}): UseTaxDecision => ({
+    rate, source, jurisdiction: null, address: where ? formatAddress(where) : null, note: null, taxable, rules, ...extra,
+  });
+  if (!taxable.some(Boolean)) return decision("not_taxable");
+  if (input.manual) {
+    return decision("manual", manualRate(pack, input.manual, "use tax"), { jurisdiction: "Set by hand", note: input.manual.reason.trim().slice(0, 300) });
+  }
+  if (!where) throw new LedgerError("INVALID", "add your business address first: use tax is worked out where your business uses what it bought");
+  if (where.state !== ent.region) {
+    throw new LedgerError("INVALID", `your business address is in ${where.state}; Alt-QBO works out California use tax for things used at a California address. An owner or accountant can set the rate by hand`);
+  }
+  const found = await lookupRate(pack, where, input.lookup);
+  return decision("lookup", found.rate, { jurisdiction: found.jurisdiction });
+}
+
+/** One line a person can read: why this bill has the use tax it has. */
+export function explainUseTax(t: Pick<UseTaxDecision, "rate" | "source" | "jurisdiction" | "address" | "note">): string {
+  const pct = `${new D(t.rate).mul(100).toFixed(3).replace(/\.?0+$/, "")}%`;
+  switch (t.source) {
+    case "not_taxable": return "No use tax: nothing on this bill is taxable in California.";
+    case "lookup": return `Use tax ${pct} on taxable lines, the rate for ${t.jurisdiction}${t.address ? ` (${t.address})` : ""}. You owe it to the CDTFA, not the vendor.`;
+    case "manual": return `Use tax ${pct}, set by hand: ${t.note}. You owe it to the CDTFA, not the vendor.`;
+    default: return "No use tax.";
+  }
+}
+
+export interface RecordBillInput extends Omit<IssueDocumentInput, "kind" | "tax" | "useTax"> {
+  /** Add use tax because the vendor didn't charge California tax. Left out, the vendor's setting decides. */
+  useTax?: boolean;
+  lookup?: RateLookup;
+  manual?: { ratePercent: string; reason: string };
+}
+
+/**
+ * Records a bill, with California use tax when the vendor didn't charge
+ * California tax. A retry with the same idempotency key replays the original
+ * bill without looking the rate up again.
+ */
+export async function recordBill(tx: Tx, input: RecordBillInput): Promise<DocumentDetail> {
+  const { lookup, manual: manualInput, useTax: wanted, ...rest } = input;
+  const vendor = (await tx.query("SELECT accrue_use_tax FROM contacts WHERE id = $1 AND entity_id = $2", [input.contactId, input.entityId])).rows[0];
+  if (!(wanted ?? vendor?.accrue_use_tax)) return issueDocument(tx, { ...rest, kind: "bill" });
+  const manual = manualInput ? { ...manualInput, actor: input.actor } : undefined;
+  const key = `bill:${input.idempotencyKey}`;
+  const prior = (await tx.query(
+    "SELECT use_tax_rate::text AS rate, use_tax_source, use_tax_jurisdiction, use_tax_address, use_tax_note FROM documents WHERE entity_id = $1 AND idempotency_key = $2",
+    [input.entityId, key],
+  )).rows[0];
+  let useTax: DocumentUseTax;
+  let taxable: boolean[];
+  if (prior && prior.use_tax_source !== "none" && !manual) {
+    // A retry: the lines as they were taxed the first time, so the replay matches.
+    useTax = { rate: prior.rate, source: prior.use_tax_source, jurisdiction: prior.use_tax_jurisdiction, address: prior.use_tax_address, note: prior.use_tax_note };
+    const { rows } = await tx.query(
+      `SELECT l.use_taxable FROM document_lines l JOIN documents d ON d.id = l.document_id WHERE d.entity_id = $1 AND d.idempotency_key = $2 ORDER BY l.line_no`,
+      [input.entityId, key],
+    );
+    taxable = rows.map((r) => r.use_taxable);
+  } else {
+    const d = await decideUseTax(tx, {
+      entityId: input.entityId, date: input.issueDate, categories: input.lines.map((l) => l.taxCategory ?? ""),
+      lines: input.lines.map((l) => ({ periodStart: l.servicePeriodStart, periodEnd: l.servicePeriodEnd })), lookup, manual,
+    });
+    useTax = { rate: d.rate, source: d.source, jurisdiction: d.jurisdiction, address: d.address, note: d.note };
+    taxable = d.taxable;
+  }
+  return issueDocument(tx, { ...rest, kind: "bill", useTax, lines: input.lines.map((l, i) => ({ ...l, useTaxable: taxable[i] })) });
 }
 
 // ------------------------------------------------------ products and services
@@ -456,14 +571,21 @@ export interface SalesTaxReport {
   taxableMinor: bigint;
   taxMinor: bigint;
   byJurisdiction: { jurisdiction: string; ratePercent: string; taxableMinor: bigint; taxMinor: bigint; invoices: number }[];
-  /** Balance owed on the sales tax payable account at the end of the period. */
+  /** California use tax the business owes on bills dated in the period, where the vendor didn't charge tax. */
+  useTax: {
+    /** The return's "purchases subject to use tax" line. */
+    purchasesMinor: bigint;
+    taxMinor: bigint;
+    byJurisdiction: { jurisdiction: string; ratePercent: string; purchasesMinor: bigint; taxMinor: bigint; bills: number }[];
+  };
+  /** Balance owed on the sales tax payable account at the end of the period: sales tax and use tax. */
   payableMinor: bigint;
 }
 
 /**
- * Figures for the CDTFA return (CDTFA-401), accrual basis: invoices dated in
- * the period and not voided by its end. Prepares; filing and paying stay
- * with the business or its accountant.
+ * Figures for the CDTFA return (CDTFA-401), accrual basis: invoices, and
+ * bills that accrued use tax, dated in the period and not voided by its end.
+ * Prepares; filing and paying stay with the business or its accountant.
  */
 export async function salesTaxReport(tx: Tx, entityId: string, from: string, to: string): Promise<SalesTaxReport> {
   if (from > to) throw new LedgerError("INVALID", "the start date is after the end date");
@@ -476,7 +598,7 @@ export async function salesTaxReport(tx: Tx, entityId: string, from: string, to:
         AND NOT (d.status = 'void' AND d.void_date <= $3)`,
     [entityId, from, to],
   );
-  const r: SalesTaxReport = { from, to, totalSalesMinor: 0n, nontaxable: [], resaleMinor: 0n, interstateMinor: 0n, directPayMinor: 0n, outsideCaUseMinor: 0n, taxableMinor: 0n, taxMinor: 0n, byJurisdiction: [], payableMinor: 0n };
+  const r: SalesTaxReport = { from, to, totalSalesMinor: 0n, nontaxable: [], resaleMinor: 0n, interstateMinor: 0n, directPayMinor: 0n, outsideCaUseMinor: 0n, taxableMinor: 0n, taxMinor: 0n, byJurisdiction: [], useTax: { purchasesMinor: 0n, taxMinor: 0n, byJurisdiction: [] }, payableMinor: 0n };
   const nontaxable = new Map<string, bigint>();
   const juris = new Map<string, SalesTaxReport["byJurisdiction"][number] & { docs: Set<string> }>();
   for (const l of rows) {
@@ -502,6 +624,25 @@ export async function salesTaxReport(tx: Tx, entityId: string, from: string, to:
   }
   r.nontaxable = [...nontaxable].map(([category, amountMinor]) => ({ category, label: pack?.categories[category]?.label ?? "Not categorised", amountMinor }));
   r.byJurisdiction = [...juris.values()].map(({ docs, ...j }) => ({ ...j, invoices: docs.size })).sort((a, b) => a.jurisdiction.localeCompare(b.jurisdiction));
+  const bills = await tx.query(
+    `SELECT d.id, CASE WHEN d.use_tax_source = 'manual' THEN 'Set by hand' || coalesce(' for ' || d.use_tax_address, '') ELSE coalesce(d.use_tax_jurisdiction, '') END AS jurisdiction,
+            d.use_tax_rate, l.amount_minor, l.use_tax_minor
+       FROM documents d JOIN document_lines l ON l.document_id = d.id
+      WHERE d.entity_id = $1 AND d.kind = 'bill' AND l.use_taxable AND d.issue_date BETWEEN $2 AND $3
+        AND NOT (d.status = 'void' AND d.void_date <= $3)`,
+    [entityId, from, to],
+  );
+  const useJuris = new Map<string, SalesTaxReport["useTax"]["byJurisdiction"][number] & { docs: Set<string> }>();
+  for (const l of bills.rows) {
+    r.useTax.purchasesMinor += l.amount_minor as bigint;
+    r.useTax.taxMinor += l.use_tax_minor as bigint;
+    const pct = new D(l.use_tax_rate).mul(100).toFixed(3).replace(/\.?0+$/, "");
+    const key = `${l.jurisdiction}|${pct}`;
+    const j = useJuris.get(key) ?? { jurisdiction: l.jurisdiction, ratePercent: pct, purchasesMinor: 0n, taxMinor: 0n, bills: 0, docs: new Set() };
+    j.purchasesMinor += l.amount_minor as bigint; j.taxMinor += l.use_tax_minor as bigint; j.docs.add(l.id);
+    useJuris.set(key, j);
+  }
+  r.useTax.byJurisdiction = [...useJuris.values()].map(({ docs, ...j }) => ({ ...j, bills: docs.size })).sort((a, b) => a.jurisdiction.localeCompare(b.jurisdiction));
   r.payableMinor = (await tx.query(
     `SELECT coalesce(sum(l.credit_minor - l.debit_minor), 0)::bigint AS b
        FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id JOIN accounts a ON a.id = l.account_id

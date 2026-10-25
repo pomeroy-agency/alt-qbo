@@ -86,6 +86,25 @@ How the app applies it (`src/core/sales-tax.ts`):
 - **Multiple points of use.** An owner or accountant can record the California share and date from a customer's certificate (proposed Reg. 1600.2). Software lines are taxed on that share only; the rest shows on the return figures as software used outside California. Recheck when 1600.2 is adopted.
 - **Release.** Keep the pack in draft until OAL approves CDTFA's emergency regulations and the adopted text is read.
 
+### Use tax on purchases (both packs; added 2026-10-25)
+
+When a vendor doesn't charge California tax on something taxable, the business owes use tax on it. The case SB 122 makes common: software and SaaS bought from vendors that don't collect California tax, from January 1, 2027.
+
+How the app applies it (`decideUseTax` and `recordBill` in `src/core/sales-tax.ts`):
+- **When.** A bill accrues use tax when the person ticks "The vendor didn't charge California sales tax", which defaults to on for vendors marked that way. Alt-QBO doesn't decide whether the vendor should have charged tax.
+- **What.** Each line's kind decides taxability under the same pack as invoices, and software follows the start of the access period with the same split rule. So software bought for 2027 access accrues use tax and software for 2026 access doesn't.
+- **Rate.** The CDTFA rate for the business's own address, where it uses what it bought. That includes district use tax, on the reading that the business uses the purchase in the district where it is located. An owner or accountant can set the rate by hand.
+- **Books.** The use tax is added to the cost of the line (its expense or asset account) and credited to sales tax payable. It is never owed to the vendor, so payables and the bill total don't include it.
+- **Return figures.** Bills that accrued use tax show as "purchases subject to use tax", with the use tax by tax area. That is the use tax line on the CDTFA-401.
+
+| Point | Reading used | Source | Check |
+|---|---|---|---|
+| Buyer owes use tax when the seller didn't collect | yes, on property (from 2027, software) stored, used or consumed in California | Rev. & Tax. Code §§6201, 6202 | ✅ Greg accepted 2026-10-25 (recheck the text when ca.gov can be reached) |
+| District use tax follows the place of use | the business's own address | Rev. & Tax. Code §7262; Reg. 1823 | ✅ Greg accepted 2026-10-25: business address; revisit if multi-location clients need it |
+| Software with users inside and outside California | taxed in full; no multiple-points-of-use split on purchases yet | proposed Reg. 1600.2 | ✅ Greg accepted 2026-10-25: accrue in full (conservative); revisit when 1600.2 is adopted |
+| Where it's reported | the CDTFA-401 for seller's permit holders. Without a permit: a CDTFA use tax return for qualified purchasers (generally $100,000+ gross receipts), otherwise the California income tax return | Rev. & Tax. Code §6225 (qualified purchasers) | ✅ Greg accepted 2026-10-25 (recheck the threshold when ca.gov can be reached) |
+| Resale, and items used outside California | not accrued: the person leaves the box unticked or picks a non-taxable kind | Reg. 1668 | ✅ by design |
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. Alt-QBO doesn't file them.

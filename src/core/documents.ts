@@ -51,9 +51,11 @@ export interface Contact {
   directPayPermit: string | null;
   /** Multiple-points-of-use certificate: the share of the buyer's software use that is in California. */
   mpu: { caPercent: string; certificateDate: string } | null;
+  /** A vendor that doesn't charge California sales tax: its bills add use tax by default. */
+  accrueUseTax: boolean;
 }
 
-const CONTACT_COLS = "id, kind, name, email, address_line1, address_city, address_state, address_zip, resale_permit, direct_pay_permit, mpu_ca_percent::text AS mpu_ca_percent, mpu_certificate_date";
+const CONTACT_COLS = "id, kind, name, email, address_line1, address_city, address_state, address_zip, resale_permit, direct_pay_permit, mpu_ca_percent::text AS mpu_ca_percent, mpu_certificate_date, accrue_use_tax";
 
 function contactOf(r: any): Contact {
   return {
@@ -62,6 +64,7 @@ function contactOf(r: any): Contact {
     resalePermit: r.resale_permit,
     directPayPermit: r.direct_pay_permit,
     mpu: r.mpu_ca_percent !== null ? { caPercent: new D(r.mpu_ca_percent).toString(), certificateDate: r.mpu_certificate_date } : null,
+    accrueUseTax: r.accrue_use_tax,
   };
 }
 
@@ -78,6 +81,7 @@ interface ContactFields {
   directPayPermit?: string | null;
   /** Owners and accountants only. caPercent is 0 to 100, up to two decimals. */
   mpu?: { caPercent: string; certificateDate: string } | null;
+  accrueUseTax?: boolean;
 }
 
 function contactColumns(f: ContactFields): Record<string, unknown> {
@@ -104,6 +108,7 @@ function contactColumns(f: ContactFields): Record<string, unknown> {
     out.mpu_ca_percent = f.mpu ? new D(f.mpu.caPercent.trim()).toFixed(2) : null;
     out.mpu_certificate_date = f.mpu?.certificateDate ?? null;
   }
+  if (f.accrueUseTax !== undefined) out.accrue_use_tax = f.accrueUseTax;
   return out;
 }
 
@@ -189,6 +194,8 @@ export interface DocumentLineInput {
   taxShare?: string;
   /** Why a software line is untaxed or partly taxed. */
   taxExemption?: "direct_pay" | "mpu";
+  /** Bills only: the business owes California use tax on this line, at the bill's use tax rate. */
+  useTaxable?: boolean;
 }
 
 /** An invoice's sales tax, decided before it is issued and frozen on it. See core/sales-tax.ts. */
@@ -196,6 +203,16 @@ export interface DocumentTax {
   /** Fraction, up to five decimals ("0.08625"). */
   rate: string;
   source: "none" | "not_taxable" | "resale" | "out_of_state" | "lookup" | "manual" | "direct_pay";
+  jurisdiction?: string | null;
+  address?: string | null;
+  note?: string | null;
+}
+
+/** A bill's use tax: what the business owes the state on purchases the vendor didn't tax. See core/sales-tax.ts. */
+export interface DocumentUseTax {
+  /** Fraction, up to five decimals ("0.08625"). */
+  rate: string;
+  source: "not_taxable" | "lookup" | "manual";
   jurisdiction?: string | null;
   address?: string | null;
   note?: string | null;
@@ -213,6 +230,8 @@ export interface IssueDocumentInput {
   reference?: string;
   /** Invoices only. */
   tax?: DocumentTax;
+  /** Bills only. */
+  useTax?: DocumentUseTax;
   lines: DocumentLineInput[];
   idempotencyKey: string;
   actor: Actor;
@@ -233,6 +252,8 @@ interface PricedLine {
   servicePeriodEnd: string | null;
   taxableMinor: bigint | null;
   taxExemption: string | null;
+  useTaxable: boolean;
+  useTaxMinor: bigint;
 }
 
 /**
@@ -251,13 +272,16 @@ function requestHash(input: IssueDocumentInput): string {
   return createHash("sha256").update(canonicalJson({
     kind: input.kind, contactId: input.contactId, issueDate: input.issueDate, dueDate: input.dueDate ?? null,
     memo: input.memo ?? "", reference: input.reference ?? null, tax: input.tax ?? null, lines: input.lines,
+    // Only when present, so bills recorded before use tax keep their hashes.
+    ...(input.useTax ? { useTax: input.useTax } : {}),
   })).digest("hex");
 }
 
 /**
  * Issues an invoice or records a bill, and posts it: an invoice debits
  * receivables and credits revenue and sales tax; a bill debits its expense
- * or asset lines and credits payables.
+ * or asset lines and credits payables. A bill's use tax is added to the cost
+ * of its lines and credited to sales tax payable, not to the vendor.
  */
 export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<DocumentDetail> {
   requireWriter(input.actor, `create ${input.kind}s`);
@@ -277,6 +301,10 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
   const tax: DocumentTax = input.kind === "invoice" && input.tax ? input.tax : { rate: "0", source: "none" };
   if (!/^(0(\.\d{1,5})?|1(\.0{1,5})?)$/.test(tax.rate)) throw new LedgerError("INVALID", "the tax rate must be a fraction between 0 and 1, up to five decimals");
   const taxRate = new D(tax.rate).toFixed(5);
+  if (input.kind === "invoice" && input.useTax) throw new LedgerError("INVALID", "invoices don't accrue use tax");
+  const useTax = input.kind === "bill" ? input.useTax : undefined;
+  if (useTax && !/^(0(\.\d{1,5})?|1(\.0{1,5})?)$/.test(useTax.rate)) throw new LedgerError("INVALID", "the use tax rate must be a fraction between 0 and 1, up to five decimals");
+  const useTaxRate = new D(useTax && useTax.source !== "not_taxable" ? useTax.rate : "0").toFixed(5);
   if (!input.lines.length) throw new LedgerError("INVALID", `a ${input.kind} needs at least one line`);
   if (input.lines.length > 200) throw new LedgerError("INVALID", `a ${input.kind} can have at most 200 lines`);
   const dueDate = input.dueDate || input.issueDate;
@@ -310,6 +338,9 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     if (unitPriceMinor < 0n) throw new LedgerError("INVALID", `line ${i + 1}: price cannot be negative`);
     const taxable = input.kind === "invoice" && Boolean(l.taxable);
     const invoice = input.kind === "invoice";
+    // A bill keeps its lines' kinds and access dates only when they decided its use tax.
+    const keepKind = invoice || Boolean(useTax);
+    const useTaxable = Boolean(useTax) && useTax!.source !== "not_taxable" && Boolean(l.useTaxable);
     if (l.taxShare !== undefined && !(/^(0(\.\d{1,4})?|1(\.0{1,4})?)$/.test(l.taxShare))) throw new LedgerError("INVALID", `line ${i + 1}: the taxed share must be a fraction between 0 and 1`);
     if (l.servicePeriodEnd && (!l.servicePeriodStart || l.servicePeriodEnd < l.servicePeriodStart)) {
       throw new LedgerError("INVALID", `line ${i + 1}: the access period ends before it starts`);
@@ -317,14 +348,17 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     return {
       accountId: a.id, accountCode: a.code, description: (l.description ?? "").slice(0, 300),
       quantity: new D(l.quantity).toFixed(4), unitPriceMinor, taxable,
-      taxCategory: invoice ? l.taxCategory ?? null : null, itemId: l.itemId ?? null,
-      servicePeriodStart: invoice ? l.servicePeriodStart ?? null : null, servicePeriodEnd: invoice ? l.servicePeriodEnd ?? null : null,
+      taxCategory: keepKind ? l.taxCategory ?? null : null, itemId: l.itemId ?? null,
+      servicePeriodStart: keepKind ? l.servicePeriodStart ?? null : null, servicePeriodEnd: keepKind ? l.servicePeriodEnd ?? null : null,
       taxExemption: invoice ? l.taxExemption ?? null : null,
       ...priceLine(l.quantity, unitPriceMinor, taxable, taxRate, taxable ? l.taxShare : undefined),
+      useTaxable,
+      useTaxMinor: priceLine(l.quantity, unitPriceMinor, useTaxable, useTaxRate).taxMinor,
     };
   });
   const subtotal = lines.reduce((s, l) => s + l.amountMinor, 0n);
   const taxTotal = lines.reduce((s, l) => s + l.taxMinor, 0n);
+  const useTaxTotal = lines.reduce((s, l) => s + l.useTaxMinor, 0n);
   if (subtotal + taxTotal <= 0n) throw new LedgerError("INVALID", `the ${input.kind} total must be more than zero`);
 
   const counter = input.kind === "invoice" ? "next_invoice_number" : "next_bill_number";
@@ -335,31 +369,34 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
   await run(() => tx.query(
     `INSERT INTO documents (id, org_id, entity_id, kind, number, reference, contact_id, issue_date, due_date, memo,
         currency, tax_rate, tax_source, tax_jurisdiction, tax_address, tax_note, subtotal_minor, tax_minor, total_minor,
-        idempotency_key, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+        idempotency_key, created_by, use_tax_rate, use_tax_minor, use_tax_source, use_tax_jurisdiction, use_tax_address, use_tax_note)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
     [docId, input.orgId, input.entityId, input.kind, number, input.reference?.trim() || null, input.contactId,
      input.issueDate, dueDate, (input.memo ?? "").slice(0, 300), currency, taxRate, tax.source,
      tax.jurisdiction?.slice(0, 200) || null, tax.address || null, tax.note?.slice(0, 300) || null,
-     subtotal, taxTotal, subtotal + taxTotal, key, input.actor.id],
+     subtotal, taxTotal, subtotal + taxTotal, key, input.actor.id,
+     useTaxRate, useTaxTotal, useTax?.source ?? "none", useTax?.jurisdiction?.slice(0, 200) || null, useTax?.address || null, useTax?.note?.slice(0, 300) || null],
   ));
   for (const [i, l] of lines.entries()) {
     await run(() => tx.query(
       `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, description, account_id, quantity,
           unit_price_minor, amount_minor, taxable, tax_rate, tax_minor, tax_category, item_id,
-          service_period_start, service_period_end, taxable_minor, tax_exemption)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+          service_period_start, service_period_end, taxable_minor, tax_exemption, use_taxable, use_tax_rate, use_tax_minor)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
       [input.orgId, input.entityId, docId, i + 1, l.description, l.accountId, l.quantity, l.unitPriceMinor,
        l.amountMinor, l.taxable, taxRate, l.taxMinor, l.taxCategory, l.itemId,
-       l.servicePeriodStart, l.servicePeriodEnd, l.taxableMinor, l.taxExemption],
+       l.servicePeriodStart, l.servicePeriodEnd, l.taxableMinor, l.taxExemption, l.useTaxable, useTaxRate, l.useTaxMinor],
     ));
   }
 
-  // One journal line per account, so the entry reads like the document.
+  // One journal line per account, so the entry reads like the document. Use
+  // tax is part of what a purchase cost, so it goes with its line's account.
   const perAccount = new Map<string, bigint>();
-  for (const l of lines) perAccount.set(l.accountCode, (perAccount.get(l.accountCode) ?? 0n) + l.amountMinor);
+  for (const l of lines) perAccount.set(l.accountCode, (perAccount.get(l.accountCode) ?? 0n) + l.amountMinor + l.useTaxMinor);
   const side = input.kind === "invoice" ? "credit" : "debit";
   const jl: LineInput[] = [...perAccount].filter(([, v]) => v > 0n).map(([account, v]) => ({ account, [side]: v, description: number }));
   if (taxTotal > 0n) jl.push({ account: "sales_tax_payable", credit: taxTotal, description: `${number} sales tax` });
+  if (useTaxTotal > 0n) jl.push({ account: "sales_tax_payable", credit: useTaxTotal, description: `${number} use tax` });
   if (input.kind === "invoice") jl.unshift({ account: CONTROL.invoice, debit: subtotal + taxTotal, description: number });
   else jl.push({ account: CONTROL.bill, credit: subtotal + taxTotal, description: number });
 
@@ -373,8 +410,14 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id,
     action: input.kind === "invoice" ? "invoice.issued" : "bill.recorded",
     objectType: input.kind, objectId: docId,
-    after: { number, contactId: input.contactId, issueDate: input.issueDate, dueDate, subtotal, tax: taxTotal, total: subtotal + taxTotal, taxRate, entryId: entry.id },
-    context: { role: input.actor.role, requestHash: hash, taxSource: tax.source, ...(tax.note ? { taxNote: tax.note } : {}) },
+    after: {
+      number, contactId: input.contactId, issueDate: input.issueDate, dueDate, subtotal, tax: taxTotal, total: subtotal + taxTotal, taxRate, entryId: entry.id,
+      ...(useTax ? { useTax: useTaxTotal, useTaxRate } : {}),
+    },
+    context: {
+      role: input.actor.role, requestHash: hash, taxSource: tax.source, ...(tax.note ? { taxNote: tax.note } : {}),
+      ...(useTax ? { useTaxSource: useTax.source, ...(useTax.note ? { useTaxNote: useTax.note } : {}) } : {}),
+    },
   });
   return getDocument(tx, docId, hash);
 }
@@ -396,6 +439,13 @@ export interface DocumentSummary {
   taxJurisdiction: string | null;
   taxAddress: string | null;
   taxNote: string | null;
+  /** Bills: California use tax the business owes on this purchase, on top of what the vendor is paid. */
+  useTaxRate: string;
+  useTaxMinor: bigint;
+  useTaxSource: string;
+  useTaxJurisdiction: string | null;
+  useTaxAddress: string | null;
+  useTaxNote: string | null;
   subtotalMinor: bigint;
   taxMinor: bigint;
   totalMinor: bigint;
@@ -412,7 +462,8 @@ export interface DocumentDetail extends DocumentSummary {
   createdBy: string;
   lines: { lineNo: number; description: string; accountCode: string; accountName: string; quantity: string;
     unitPriceMinor: bigint; amountMinor: bigint; taxable: boolean; taxMinor: bigint; taxCategory: string | null; itemId: string | null;
-    servicePeriodStart: string | null; servicePeriodEnd: string | null; taxableMinor: bigint | null; taxExemption: string | null }[];
+    servicePeriodStart: string | null; servicePeriodEnd: string | null; taxableMinor: bigint | null; taxExemption: string | null;
+    useTaxable: boolean; useTaxMinor: bigint }[];
   payments: { id: string; date: string; amountMinor: bigint; bankAccountCode: string; entryId: string; createdBy: string }[];
   requestHash?: string;
   replayed: boolean;
@@ -420,7 +471,8 @@ export interface DocumentDetail extends DocumentSummary {
 
 const SUMMARY_SQL = `
   SELECT d.id, d.kind, d.number, d.reference, d.contact_id, c.name AS contact_name, d.issue_date, d.due_date, d.memo,
-         d.currency, d.tax_rate::text AS tax_rate, d.tax_source, d.tax_jurisdiction, d.tax_address, d.tax_note, d.subtotal_minor, d.tax_minor, d.total_minor, d.status, d.entry_id, d.void_entry_id,
+         d.currency, d.tax_rate::text AS tax_rate, d.tax_source, d.tax_jurisdiction, d.tax_address, d.tax_note,
+         d.use_tax_rate::text AS use_tax_rate, d.use_tax_minor, d.use_tax_source, d.use_tax_jurisdiction, d.use_tax_address, d.use_tax_note, d.subtotal_minor, d.tax_minor, d.total_minor, d.status, d.entry_id, d.void_entry_id,
          d.void_date, d.void_reason, d.created_by,
          coalesce((SELECT sum(p.amount_minor) FROM document_payments p
                     WHERE p.document_id = d.id AND p.payment_date <= $2::date), 0)::bigint AS paid
@@ -439,6 +491,8 @@ function summary(r: any, asOf: string): DocumentSummary {
     id: r.id, kind: r.kind, number: r.number, reference: r.reference, contactId: r.contact_id, contactName: r.contact_name,
     issueDate: r.issue_date, dueDate: r.due_date, memo: r.memo, currency: r.currency.trim(),
     taxRate: r.tax_rate, taxSource: r.tax_source, taxJurisdiction: r.tax_jurisdiction, taxAddress: r.tax_address, taxNote: r.tax_note,
+    useTaxRate: r.use_tax_rate, useTaxMinor: r.use_tax_minor, useTaxSource: r.use_tax_source,
+    useTaxJurisdiction: r.use_tax_jurisdiction, useTaxAddress: r.use_tax_address, useTaxNote: r.use_tax_note,
     subtotalMinor: r.subtotal_minor, taxMinor: r.tax_minor, totalMinor: r.total_minor, paidMinor: r.paid,
     dueMinor: r.status === "void" && r.void_date <= asOf ? 0n : (r.total_minor as bigint) - (r.paid as bigint),
     status: statusOf(r, asOf), entryId: r.entry_id, voidEntryId: r.void_entry_id,
@@ -463,7 +517,8 @@ export async function getDocument(tx: Tx, documentId: string, requestHashHint?: 
   if (!r) throw new LedgerError("INVALID", `document ${documentId} not found`);
   const lines = await tx.query(
     `SELECT l.line_no, l.description, a.code, a.name, l.quantity::text AS quantity, l.unit_price_minor, l.amount_minor,
-            l.taxable, l.tax_minor, l.tax_category, l.item_id, l.service_period_start, l.service_period_end, l.taxable_minor, l.tax_exemption
+            l.taxable, l.tax_minor, l.tax_category, l.item_id, l.service_period_start, l.service_period_end, l.taxable_minor, l.tax_exemption,
+            l.use_taxable, l.use_tax_minor
        FROM document_lines l JOIN accounts a ON a.id = l.account_id WHERE l.document_id = $1 ORDER BY l.line_no`,
     [documentId],
   );
@@ -488,6 +543,7 @@ export async function getDocument(tx: Tx, documentId: string, requestHashHint?: 
       quantity: new D(l.quantity).toString(), unitPriceMinor: l.unit_price_minor, amountMinor: l.amount_minor,
       taxable: l.taxable, taxMinor: l.tax_minor, taxCategory: l.tax_category, itemId: l.item_id,
       servicePeriodStart: l.service_period_start, servicePeriodEnd: l.service_period_end, taxableMinor: l.taxable_minor, taxExemption: l.tax_exemption,
+      useTaxable: l.use_taxable, useTaxMinor: l.use_tax_minor,
     })),
     payments: pays.rows.map((p) => ({
       id: p.id, date: p.payment_date, amountMinor: p.amount_minor, bankAccountCode: p.code, entryId: p.entry_id, createdBy: p.created_by,

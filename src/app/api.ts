@@ -4,9 +4,9 @@ import { appendAudit, verifyAuditChain } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type Actor, type LineInput, type PeriodStatus, type Role } from "../core/ledger.js";
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
-import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, priceLine, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
+import { aging, createContact, getDocument, listContacts, listDocuments, priceLine, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import {
-  cleanAddress, createItem, currentCategories, decideSalesTax, explainTax, issueInvoice, listItems, salesTaxReport, setBusinessAddress,
+  cleanAddress, createItem, currentCategories, decideSalesTax, decideUseTax, explainTax, explainUseTax, issueInvoice, listItems, recordBill, salesTaxReport, setBusinessAddress,
   updateItem, type InvoiceLineInput, type RateLookup,
 } from "../core/sales-tax.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
@@ -439,6 +439,7 @@ function contactFields(b: Record<string, any>) {
         ? { caPercent: str(String(b.mpu.caPercent), "California share", 10), certificateDate: date(b.mpu.certificateDate, "certificate date") }
         : null,
     } : {}),
+    ...(typeof b.accrueUseTax === "boolean" ? { accrueUseTax: b.accrueUseTax } : {}),
   };
 }
 
@@ -483,6 +484,21 @@ route("POST", "/api/orgs/:org/entities/:entity/invoices/tax-preview", async (req
   });
 });
 
+route("POST", "/api/orgs/:org/entities/:entity/bills/use-tax-preview", async (req, p, ctx) => {
+  const b = await body(req);
+  const lines = invoiceLines(b.lines);
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const manual = manualTax(b.manualTax);
+    const d = await decideUseTax(tx, {
+      entityId: p.entity!, date: date(b.issueDate, "date"), categories: lines.map((l) => l.taxCategory ?? ""),
+      lines: lines.map((l) => ({ periodStart: l.servicePeriodStart, periodEnd: l.servicePeriodEnd })),
+      lookup: ctx.opts.taxRates, manual: manual ? { ...manual, actor: ctx.actor } : undefined,
+    });
+    return json({ ...d, explanation: explainUseTax(d) });
+  });
+});
+
 for (const kind of ["invoice", "bill"] as DocumentKind[]) {
   const base = `/api/orgs/:org/entities/:entity/${kind}s`;
 
@@ -520,12 +536,18 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
       async (tx) => {
         await ensureEntity(tx, p.entity!);
         if (kind === "invoice") return issueInvoice(tx, { ...common, lines, lookup: ctx.opts.taxRates, manual: manualTax(b.manualTax) });
-        return issueDocument(tx, {
-          ...common, kind,
+        return recordBill(tx, {
+          ...common,
+          useTax: typeof b.useTax === "boolean" ? b.useTax : undefined, lookup: ctx.opts.taxRates, manual: manualTax(b.manualTax),
           lines: lines.map((l, i) => {
             if (!l.account) throw new HttpError(400, `line ${i + 1}: choose an account`);
             if (!l.unitPrice) throw new HttpError(400, `line ${i + 1}: enter a price`);
-            return { account: l.account, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice };
+            return {
+              account: l.account, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice,
+              ...(l.taxCategory ? { taxCategory: l.taxCategory } : {}),
+              ...(l.servicePeriodStart ? { servicePeriodStart: l.servicePeriodStart } : {}),
+              ...(l.servicePeriodEnd ? { servicePeriodEnd: l.servicePeriodEnd } : {}),
+            };
           }),
         });
       },
@@ -846,7 +868,10 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/sales-tax", async (req, p,
     `Taxable sales,${m(r.taxableMinor)}`, `Sales tax charged,${m(r.taxMinor)}`, "",
     "Jurisdiction,Rate %,Invoices,Taxable sales,Tax",
     ...r.byJurisdiction.map((j) => [cell(j.jurisdiction), j.ratePercent, String(j.invoices), m(j.taxableMinor), m(j.taxMinor)].join(",")),
-    "", `Sales tax payable on ${to},${m(r.payableMinor)}`,
+    "", `Purchases subject to use tax,${m(r.useTax.purchasesMinor)}`, `Use tax owed on purchases,${m(r.useTax.taxMinor)}`,
+    ...(r.useTax.byJurisdiction.length ? ["", "Use tax by jurisdiction,Rate %,Bills,Purchases,Use tax",
+      ...r.useTax.byJurisdiction.map((j) => [cell(j.jurisdiction), j.ratePercent, String(j.bills), m(j.purchasesMinor), m(j.taxMinor)].join(","))] : []),
+    "", `Sales and use tax payable on ${to},${m(r.payableMinor)}`,
   ];
   return csvResponse(lines.join("\n") + "\n", `sales-tax-${from}-to-${to}.csv`);
 });
