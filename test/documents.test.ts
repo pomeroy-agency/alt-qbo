@@ -32,10 +32,12 @@ async function business() {
 
 describe("line pricing", () => {
   it("rounds quantity x price and tax half-up to the cent", () => {
-    expect(priceLine("3", 3333n, true, "0.0725")).toEqual({ amountMinor: 9999n, taxMinor: 725n });
-    expect(priceLine("2.5", 101n, true, "0.1")).toEqual({ amountMinor: 253n, taxMinor: 25n });
-    expect(priceLine("1", 50n, true, "0.1")).toEqual({ amountMinor: 50n, taxMinor: 5n });
-    expect(priceLine("1", 1000n, false, "0.0725")).toEqual({ amountMinor: 1000n, taxMinor: 0n });
+    expect(priceLine("3", 3333n, true, "0.0725")).toEqual({ amountMinor: 9999n, taxableMinor: null, taxMinor: 725n });
+    expect(priceLine("2.5", 101n, true, "0.1")).toEqual({ amountMinor: 253n, taxableMinor: null, taxMinor: 25n });
+    expect(priceLine("1", 50n, true, "0.1")).toEqual({ amountMinor: 50n, taxableMinor: null, taxMinor: 5n });
+    expect(priceLine("1", 1000n, false, "0.0725")).toEqual({ amountMinor: 1000n, taxableMinor: null, taxMinor: 0n });
+    // Only a share taxed (a multiple-points-of-use certificate): tax on that share.
+    expect(priceLine("1", 1000n, true, "0.0725", "0.6")).toEqual({ amountMinor: 1000n, taxableMinor: 600n, taxMinor: 44n });
   });
 });
 

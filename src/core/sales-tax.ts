@@ -32,11 +32,35 @@ export interface TaxDecision {
   note: string | null;
   /** Whether each line, in order, is taxable under the rule pack. */
   taxable: boolean[];
-  /** Rule pack used, as "id@version". */
+  /** The fraction of each taxable line that is taxed, when less than all of it ("0.6000"), else null. */
+  taxShare: (string | null)[];
+  /** Why a software line is untaxed or partly taxed: the buyer pays directly, or a multiple-points-of-use certificate. */
+  exemptions: ("direct_pay" | "mpu" | null)[];
+  /** Things for the person issuing the invoice to check; they don't stop it. */
+  warnings: string[];
+  /** Rule packs used, as "id@version", comma-separated when lines fall under different years. */
   rules: string | null;
 }
 
+/** Each line's access period, for software; and its amount, for the direct-payment warning. */
+export interface TaxLineInfo {
+  periodStart?: string;
+  periodEnd?: string;
+  amountMinor?: bigint;
+}
+
 const CAN_SET_RATE: Role[] = ["owner", "accountant", "system"];
+
+/**
+ * SB 122: past $5,000,000 of software a year from one seller, the buyer
+ * reports the tax (with a use tax direct payment permit). Alt-QBO warns from
+ * $4,000,000 so an accountant can check before the line is crossed.
+ */
+const DIRECT_PAY_THRESHOLD_MINOR = 500_000_000n;
+const DIRECT_PAY_WARNING_MINOR = 400_000_000n;
+
+const addDays = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+const dollars = (minor: bigint) => `$${(Number(minor) / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 
 export const formatAddress = (a: Address) => `${a.line1}, ${a.city}, ${a.state} ${a.zip}`;
 
@@ -68,7 +92,7 @@ export function rulesFor(region: string | null, date: string): SalesTaxRulePack 
 export function currentCategories(region: string | null, today = new Date().toISOString().slice(0, 10)) {
   const pack = salesTaxRules(region, today) ?? latestSalesTaxRules(region);
   if (!pack) return [];
-  return Object.entries(pack.categories).map(([id, c]) => ({ id, label: c.label, help: c.help, taxable: c.taxable }));
+  return Object.entries(pack.categories).map(([id, c]) => ({ id, label: c.label, help: c.help, taxable: c.taxable, digitalProduct: Boolean(c.digitalProduct) }));
 }
 
 /** One line a person can read: why this invoice has the tax it has. */
@@ -76,24 +100,67 @@ export function explainTax(t: Pick<TaxDecision, "rate" | "source" | "jurisdictio
   const pct = `${new D(t.rate).mul(100).toFixed(3).replace(/\.?0+$/, "")}%`;
   switch (t.source) {
     case "not_taxable": return "No sales tax: nothing on this invoice is taxable in California.";
+    case "direct_pay": return `No sales tax on software: ${t.note ?? "the buyer pays California use tax directly"}.`;
     case "resale": return `No sales tax: ${t.note ?? "sale for resale"}.`;
     case "out_of_state": return `No sales tax: delivered outside California${t.address ? ` (${t.address})` : ""}.`;
-    case "lookup": return `Sales tax ${pct} on taxable lines, the rate for ${t.jurisdiction}${t.address ? ` (${t.address})` : ""}.`;
+    case "lookup": return `Sales tax ${pct} on taxable lines, the rate for ${t.jurisdiction}${t.address ? ` (${t.address})` : ""}.${t.note ? ` ${t.note}.` : ""}`;
     case "manual": return `Sales tax ${pct}, set by hand: ${t.note}.`;
     default: return "No sales tax.";
   }
 }
 
 /**
+ * Each line's taxability under the pack in force for it: the pack for the
+ * start of the customer's access, for software, else for the invoice date.
+ * Software whose taxability changes within its access period, or soon after
+ * an invoice that doesn't say when access starts, is refused with a request
+ * to split the line or give the date, rather than guessed.
+ */
+function lineRules(region: string | null, date: string, categories: string[], info: TaxLineInfo[] = []) {
+  const packs = new Set<string>();
+  const lines = categories.map((c, i) => {
+    const n = i + 1;
+    const { periodStart, periodEnd } = info[i] ?? {};
+    if (periodEnd && !periodStart) throw new LedgerError("INVALID", `line ${n}: enter when the customer's access starts`);
+    if (periodStart && periodEnd && periodEnd < periodStart) throw new LedgerError("INVALID", `line ${n}: the access period ends before it starts`);
+    const atIssue = rulesFor(region, date).categories[c];
+    if (!atIssue) throw new LedgerError("INVALID", `line ${n}: choose what kind of sale this is`);
+    const digital = Boolean(atIssue.digitalProduct);
+    const pack = digital && periodStart ? rulesFor(region, periodStart) : rulesFor(region, date);
+    const cat = pack.categories[c];
+    if (!cat) throw new LedgerError("INVALID", `line ${n}: choose what kind of sale this is`);
+    if (digital) {
+      const end = periodEnd ? salesTaxRules(region, periodEnd) : null;
+      if (end && end.categories[c] && end.categories[c].taxable !== cat.taxable) {
+        throw new LedgerError("INVALID", `line ${n}: this access period runs across ${end.effectiveFrom}, when ${cat.label.toLowerCase()} becomes ${end.categories[c].taxable ? "taxable" : "not taxable"}. Split it into one line for access before that date and one from it`);
+      }
+      const soon = periodStart ? null : salesTaxRules(region, addDays(date, 62));
+      if (soon && soon.categories[c] && soon.categories[c].taxable !== cat.taxable) {
+        throw new LedgerError("INVALID", `line ${n}: enter when the customer's access starts. ${cat.label} is ${soon.categories[c].taxable ? "taxable" : "not taxable"} for access from ${soon.effectiveFrom}`);
+      }
+    }
+    packs.add(`${pack.id}@${pack.version}`);
+    return { taxable: cat.taxable, digital };
+  });
+  return { lines, rules: [...packs].join(", ") };
+}
+
+/**
  * Decides an invoice's sales tax. In order: an accountant's rate, if given;
  * nothing taxable; a resale certificate on file; delivery outside the state;
  * otherwise the looked-up rate for the customer's address, or the business's
- * own address when the customer has none.
+ * own address when the customer has none. Software (a digital product) is
+ * different in three ways: it is taxed only at the customer's own address,
+ * never the business's; a buyer with a direct payment permit pays its tax
+ * themselves; and a multiple-points-of-use certificate taxes only the
+ * California share.
  */
 export async function decideSalesTax(
   tx: Tx,
   input: {
     entityId: string; contactId: string; date: string; categories: string[];
+    /** Per line, in the same order as categories. */
+    lines?: TaxLineInfo[];
     lookup?: RateLookup;
     /** Set by an owner or accountant, with a reason, when the lookup can't be used. Percent, like "8.625". */
     manual?: { ratePercent: string; reason: string; actor: Actor };
@@ -102,20 +169,42 @@ export async function decideSalesTax(
   const ent = (await tx.query("SELECT region, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1", [input.entityId])).rows[0];
   if (!ent) throw new LedgerError("INVALID", "entity not found");
   const pack = rulesFor(ent.region, input.date);
-  const taxable = input.categories.map((c, i) => {
-    const cat = pack.categories[c];
-    if (!cat) throw new LedgerError("INVALID", `line ${i + 1}: choose what kind of sale this is`);
-    return cat.taxable;
-  });
-  const rules = `${pack.id}@${pack.version}`;
+  const { lines, rules } = lineRules(ent.region, input.date, input.categories, input.lines);
+  const taxable = lines.map((l) => l.taxable);
   const contact = (await tx.query(
-    "SELECT name, resale_permit, address_line1, address_city, address_state, address_zip FROM contacts WHERE id = $1 AND entity_id = $2",
+    `SELECT name, resale_permit, direct_pay_permit, mpu_ca_percent::text AS mpu_ca_percent, mpu_certificate_date,
+            address_line1, address_city, address_state, address_zip
+       FROM contacts WHERE id = $1 AND entity_id = $2`,
     [input.contactId, input.entityId],
   )).rows[0];
   if (!contact) throw new LedgerError("INVALID", "choose a customer");
+
+  // Software: the buyer pays the tax directly, or only the California share is taxed.
+  const exemptions: TaxDecision["exemptions"] = lines.map(() => null);
+  const taxShare: TaxDecision["taxShare"] = lines.map(() => null);
+  const notes: string[] = [];
+  lines.forEach((l, i) => {
+    if (!l.digital || !l.taxable) return;
+    if (contact.direct_pay_permit) {
+      taxable[i] = false;
+      exemptions[i] = "direct_pay";
+    } else if (contact.mpu_ca_percent !== null) {
+      taxShare[i] = new D(contact.mpu_ca_percent).div(100).toFixed(4);
+      exemptions[i] = "mpu";
+    }
+  });
+  const directPayNote = `the buyer pays California use tax directly (permit ${contact.direct_pay_permit})`;
+  if (exemptions.includes("direct_pay")) notes.push(`Software not taxed: ${directPayNote}`);
+  if (exemptions.includes("mpu")) {
+    notes.push(`Software taxed on the ${new D(contact.mpu_ca_percent).toString()}% California share, per the customer's multiple-points-of-use certificate dated ${contact.mpu_certificate_date}`);
+  }
+  const warnings = await directPayWarnings(tx, input, pack, contact, lines.map((l) => l.digital));
+
   const delivery = addressOf(contact) ?? addressOf(ent);
-  const decision = (source: TaxSource, rate = "0.00000", extra: Partial<TaxDecision> = {}): TaxDecision =>
-    ({ rate, source, jurisdiction: null, address: delivery ? formatAddress(delivery) : null, note: null, taxable, rules, ...extra });
+  const decision = (source: TaxSource, rate = "0.00000", extra: Partial<TaxDecision> = {}): TaxDecision => ({
+    rate, source, jurisdiction: null, address: delivery ? formatAddress(delivery) : null, note: notes.join(". ") || null,
+    taxable, taxShare, exemptions, warnings, rules, ...extra,
+  });
 
   if (input.manual) {
     if (!CAN_SET_RATE.includes(input.manual.actor.role)) throw new LedgerError("FORBIDDEN", "only an owner or accountant can set the sales tax rate by hand");
@@ -123,10 +212,15 @@ export async function decideSalesTax(
     if (!/^\d{1,2}(\.\d{1,3})?$/.test(input.manual.ratePercent.trim())) throw new LedgerError("INVALID", "enter the rate as a percentage like 8.625");
     const rate = new D(input.manual.ratePercent.trim()).div(100);
     if (rate.gt(pack.maxCombinedRate)) throw new LedgerError("INVALID", `no California rate is that high (the top is under ${new D(pack.maxCombinedRate).mul(100)}%)`);
-    return decision("manual", rate.toFixed(5), { jurisdiction: "Set by hand", note: input.manual.reason.trim().slice(0, 300) });
+    return decision("manual", rate.toFixed(5), { jurisdiction: "Set by hand", note: [input.manual.reason.trim().slice(0, 300), ...notes].join(". ") });
   }
-  if (!taxable.some(Boolean)) return decision("not_taxable");
+  if (!taxable.some(Boolean)) {
+    return exemptions.includes("direct_pay") ? decision("direct_pay", "0.00000", { note: directPayNote }) : decision("not_taxable");
+  }
   if (contact.resale_permit) return decision("resale", "0.00000", { note: `Resale certificate, seller's permit ${contact.resale_permit}` });
+  if (lines.some((l, i) => l.digital && taxable[i]) && !addressOf(contact)) {
+    throw new LedgerError("INVALID", `add ${contact.name}'s billing address: software is taxed where the customer is, not where your business is`);
+  }
   if (!delivery) {
     throw new LedgerError("INVALID", `add ${contact.name}'s address, or your business address, so Alt-QBO can work out the sales tax rate`);
   }
@@ -145,9 +239,30 @@ export async function decideSalesTax(
   return decision("lookup", rate.toFixed(5), { jurisdiction: found.jurisdiction.slice(0, 200) });
 }
 
+/** Warns when a customer's software billing this year nears the $5,000,000 direct-payment line and no permit is on file. */
+async function directPayWarnings(
+  tx: Tx, input: { entityId: string; contactId: string; date: string; lines?: TaxLineInfo[] },
+  pack: SalesTaxRulePack, contact: { name: string; direct_pay_permit: string | null }, digital: boolean[],
+): Promise<string[]> {
+  if (contact.direct_pay_permit || !digital.some(Boolean)) return [];
+  const softwareKinds = Object.entries(pack.categories).filter(([, c]) => c.digitalProduct).map(([k]) => k);
+  const year = input.date.slice(0, 4);
+  const billed = (await tx.query(
+    `SELECT coalesce(sum(l.amount_minor), 0)::bigint AS s
+       FROM document_lines l JOIN documents d ON d.id = l.document_id
+      WHERE d.entity_id = $1 AND d.contact_id = $2 AND d.kind = 'invoice' AND d.status <> 'void'
+        AND d.issue_date BETWEEN $3::date AND $4::date AND l.tax_category = ANY($5)`,
+    [input.entityId, input.contactId, `${year}-01-01`, `${year}-12-31`, softwareKinds],
+  )).rows[0].s as bigint;
+  const total = billed + digital.reduce((s, d, i) => s + (d ? input.lines?.[i]?.amountMinor ?? 0n : 0n), 0n);
+  if (total <= DIRECT_PAY_WARNING_MINOR) return [];
+  const past = total > DIRECT_PAY_THRESHOLD_MINOR;
+  return [`${contact.name} has been billed ${dollars(total)} for software in ${year}. ${past ? "Past" : "From"} ${dollars(DIRECT_PAY_THRESHOLD_MINOR)}, the buyer reports the tax instead of you (SB 122). Ask whether they hold a use tax direct payment permit, and if so have an owner or accountant record it on the customer`];
+}
+
 // ---------------------------------------------------------------- invoices
 
-export interface InvoiceLineInput extends Omit<DocumentLineInput, "account" | "unitPrice" | "taxable"> {
+export interface InvoiceLineInput extends Omit<DocumentLineInput, "account" | "unitPrice" | "taxable" | "taxShare" | "taxExemption"> {
   /** Fills the account, price, description and kind of sale from a saved product or service. */
   itemId?: string;
   account?: string;
@@ -180,6 +295,8 @@ async function resolveLines(tx: Tx, entityId: string, lines: InvoiceLineInput[])
     return {
       account, unitPrice, quantity: l.quantity, description: l.description || item?.name || "",
       taxCategory: l.taxCategory || item?.tax_category, itemId: l.itemId,
+      ...(l.servicePeriodStart ? { servicePeriodStart: l.servicePeriodStart } : {}),
+      ...(l.servicePeriodEnd ? { servicePeriodEnd: l.servicePeriodEnd } : {}),
     };
   });
 }
@@ -198,21 +315,30 @@ export async function issueInvoice(tx: Tx, input: IssueInvoiceInput): Promise<Do
     [input.entityId, `invoice:${input.idempotencyKey}`],
   )).rows[0];
   let tax: DocumentTax;
-  let taxable: boolean[];
+  let taxed: Pick<DocumentLineInput, "taxable" | "taxShare" | "taxExemption">[];
   if (prior && !manual) {
+    // A retry: the lines as they were taxed the first time, so the replay matches.
     tax = { rate: prior.rate, source: prior.tax_source, jurisdiction: prior.tax_jurisdiction, address: prior.tax_address, note: prior.tax_note };
-    const pack = rulesFor((await tx.query("SELECT region FROM entities WHERE id = $1", [input.entityId])).rows[0]?.region, input.issueDate);
-    taxable = lines.map((l) => Boolean(l.taxCategory && pack.categories[l.taxCategory]?.taxable));
+    const { rows } = await tx.query(
+      `SELECT l.taxable, l.amount_minor, l.taxable_minor, l.tax_exemption FROM document_lines l JOIN documents d ON d.id = l.document_id
+        WHERE d.entity_id = $1 AND d.idempotency_key = $2 ORDER BY l.line_no`,
+      [input.entityId, `invoice:${input.idempotencyKey}`],
+    );
+    taxed = rows.map((r) => ({
+      taxable: r.taxable, taxExemption: r.tax_exemption ?? undefined,
+      taxShare: r.tax_exemption === "mpu" && r.amount_minor > 0n ? new D(r.taxable_minor.toString()).div(r.amount_minor.toString()).toFixed(4) : undefined,
+    }));
   } else {
     const d = await decideSalesTax(tx, {
       entityId: input.entityId, contactId: input.contactId, date: input.issueDate,
-      categories: lines.map((l) => l.taxCategory ?? ""), lookup: input.lookup, manual,
+      categories: lines.map((l) => l.taxCategory ?? ""), lines: lines.map((l) => ({ periodStart: l.servicePeriodStart, periodEnd: l.servicePeriodEnd })),
+      lookup: input.lookup, manual,
     });
     tax = { rate: d.rate, source: d.source, jurisdiction: d.jurisdiction, address: d.address, note: d.note };
-    taxable = d.taxable;
+    taxed = d.taxable.map((t, i) => ({ taxable: t, taxShare: d.taxShare[i] ?? undefined, taxExemption: d.exemptions[i] ?? undefined }));
   }
   const { lookup: _l, manual: _m, ...rest } = input;
-  return issueDocument(tx, { ...rest, kind: "invoice", tax, lines: lines.map((l, i) => ({ ...l, taxable: taxable[i] })) });
+  return issueDocument(tx, { ...rest, kind: "invoice", tax, lines: lines.map((l, i) => ({ ...l, ...taxed[i] })) });
 }
 
 // ------------------------------------------------------ products and services
@@ -323,6 +449,10 @@ export interface SalesTaxReport {
   nontaxable: { category: string; label: string; amountMinor: bigint }[];
   resaleMinor: bigint;
   interstateMinor: bigint;
+  /** Software sold to buyers who pay California use tax directly (SB 122). */
+  directPayMinor: bigint;
+  /** The out-of-California share of software under a multiple-points-of-use certificate. */
+  outsideCaUseMinor: bigint;
   taxableMinor: bigint;
   taxMinor: bigint;
   byJurisdiction: { jurisdiction: string; ratePercent: string; taxableMinor: bigint; taxMinor: bigint; invoices: number }[];
@@ -340,30 +470,33 @@ export async function salesTaxReport(tx: Tx, entityId: string, from: string, to:
   const region = (await tx.query("SELECT region FROM entities WHERE id = $1", [entityId])).rows[0]?.region;
   const pack = salesTaxRules(region, from) ?? salesTaxRules(region, to);
   const { rows } = await tx.query(
-    `SELECT d.id, d.tax_source, CASE WHEN d.tax_source = 'manual' AND d.tax_address IS NOT NULL THEN 'Set by hand for ' || d.tax_address ELSE coalesce(d.tax_jurisdiction, '') END AS jurisdiction, d.tax_rate, l.taxable, l.tax_category, l.amount_minor, l.tax_minor
+    `SELECT d.id, d.tax_source, CASE WHEN d.tax_source = 'manual' AND d.tax_address IS NOT NULL THEN 'Set by hand for ' || d.tax_address ELSE coalesce(d.tax_jurisdiction, '') END AS jurisdiction, d.tax_rate, l.taxable, l.tax_category, l.amount_minor, l.tax_minor, l.taxable_minor, l.tax_exemption
        FROM documents d JOIN document_lines l ON l.document_id = d.id
       WHERE d.entity_id = $1 AND d.kind = 'invoice' AND d.issue_date BETWEEN $2 AND $3
         AND NOT (d.status = 'void' AND d.void_date <= $3)`,
     [entityId, from, to],
   );
-  const r: SalesTaxReport = { from, to, totalSalesMinor: 0n, nontaxable: [], resaleMinor: 0n, interstateMinor: 0n, taxableMinor: 0n, taxMinor: 0n, byJurisdiction: [], payableMinor: 0n };
+  const r: SalesTaxReport = { from, to, totalSalesMinor: 0n, nontaxable: [], resaleMinor: 0n, interstateMinor: 0n, directPayMinor: 0n, outsideCaUseMinor: 0n, taxableMinor: 0n, taxMinor: 0n, byJurisdiction: [], payableMinor: 0n };
   const nontaxable = new Map<string, bigint>();
   const juris = new Map<string, SalesTaxReport["byJurisdiction"][number] & { docs: Set<string> }>();
   for (const l of rows) {
     const amount = l.amount_minor as bigint;
     r.totalSalesMinor += amount;
-    if (!l.taxable) {
+    if (!l.taxable && l.tax_exemption === "direct_pay") r.directPayMinor += amount;
+    else if (!l.taxable) {
       const cat = l.tax_category ?? "uncategorized";
       nontaxable.set(cat, (nontaxable.get(cat) ?? 0n) + amount);
     } else if (l.tax_source === "resale") r.resaleMinor += amount;
     else if (l.tax_source === "out_of_state") r.interstateMinor += amount;
     else {
-      r.taxableMinor += amount;
+      const taxed = (l.taxable_minor as bigint | null) ?? amount;
+      r.outsideCaUseMinor += amount - taxed;
+      r.taxableMinor += taxed;
       r.taxMinor += l.tax_minor as bigint;
       const pct = new D(l.tax_rate).mul(100).toFixed(3).replace(/\.?0+$/, "");
       const key = `${l.jurisdiction}|${pct}`;
       const j = juris.get(key) ?? { jurisdiction: l.jurisdiction || "Entered by user", ratePercent: pct, taxableMinor: 0n, taxMinor: 0n, invoices: 0, docs: new Set() };
-      j.taxableMinor += amount; j.taxMinor += l.tax_minor as bigint; j.docs.add(l.id);
+      j.taxableMinor += taxed; j.taxMinor += l.tax_minor as bigint; j.docs.add(l.id);
       juris.set(key, j);
     }
   }

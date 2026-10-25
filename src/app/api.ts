@@ -4,7 +4,7 @@ import { appendAudit, verifyAuditChain } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type Actor, type LineInput, type PeriodStatus, type Role } from "../core/ledger.js";
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
-import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
+import { aging, createContact, getDocument, issueDocument, listContacts, listDocuments, priceLine, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import {
   cleanAddress, createItem, currentCategories, decideSalesTax, explainTax, issueInvoice, listItems, salesTaxReport, setBusinessAddress,
   updateItem, type InvoiceLineInput, type RateLookup,
@@ -15,7 +15,7 @@ import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedge
 import { backupEntity } from "../core/backup.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
-import { D, toMajor } from "../core/money.js";
+import { D, parseMoney, toMajor } from "../core/money.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
@@ -433,6 +433,12 @@ function contactFields(b: Record<string, any>) {
     ...(b.email !== undefined ? { email: optional(b.email, "email", 200) } : {}),
     ...(b.address !== undefined ? { address: cleanAddress(b.address) } : {}),
     ...(b.resalePermit !== undefined ? { resalePermit: optional(b.resalePermit, "seller's permit", 40) } : {}),
+    ...(b.directPayPermit !== undefined ? { directPayPermit: optional(b.directPayPermit, "direct payment permit", 40) } : {}),
+    ...(b.mpu !== undefined ? {
+      mpu: b.mpu && (b.mpu.caPercent !== undefined && String(b.mpu.caPercent).trim() !== "")
+        ? { caPercent: str(String(b.mpu.caPercent), "California share", 10), certificateDate: date(b.mpu.certificateDate, "certificate date") }
+        : null,
+    } : {}),
   };
 }
 
@@ -446,6 +452,8 @@ function invoiceLines(raw: unknown): InvoiceLineInput[] {
     quantity: str(String(l.quantity ?? "1"), `line ${i + 1} quantity`, 20),
     unitPrice: typeof l.unitPrice === "string" && l.unitPrice.trim() ? str(l.unitPrice, `line ${i + 1} price`, 20) : undefined,
     taxCategory: typeof l.taxCategory === "string" && l.taxCategory ? str(l.taxCategory, `line ${i + 1} kind of sale`, 40) : undefined,
+    servicePeriodStart: l.servicePeriodStart ? date(l.servicePeriodStart, `line ${i + 1} access start`) : undefined,
+    servicePeriodEnd: l.servicePeriodEnd ? date(l.servicePeriodEnd, `line ${i + 1} access end`) : undefined,
   }));
 }
 
@@ -463,8 +471,12 @@ route("POST", "/api/orgs/:org/entities/:entity/invoices/tax-preview", async (req
     const items = await listItems(tx, p.entity!);
     const categories = lines.map((l) => l.taxCategory || items.find((it) => it.id === l.itemId)?.taxCategory || "");
     const manual = manualTax(b.manualTax);
+    const amount = (l: InvoiceLineInput) => {
+      try { return priceLine(l.quantity, parseMoney(l.unitPrice ?? "0").minor, false, "0").amountMinor; } catch { return 0n; }
+    };
     const d = await decideSalesTax(tx, {
       entityId: p.entity!, contactId: uuid(b.contactId, "choose a customer"), date: date(b.issueDate, "date"), categories,
+      lines: lines.map((l) => ({ periodStart: l.servicePeriodStart, periodEnd: l.servicePeriodEnd, amountMinor: amount(l) })),
       lookup: ctx.opts.taxRates, manual: manual ? { ...manual, actor: ctx.actor } : undefined,
     });
     return json({ ...d, explanation: explainTax(d) });
@@ -830,6 +842,7 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/sales-tax", async (req, p,
     `Total sales,${m(r.totalSalesMinor)}`,
     ...r.nontaxable.map((n) => `${cell(`Nontaxable: ${n.label}`)},${m(n.amountMinor)}`),
     `Sales for resale,${m(r.resaleMinor)}`, `Sales delivered outside California,${m(r.interstateMinor)}`,
+    `Software to buyers who pay use tax directly,${m(r.directPayMinor)}`, `Software used outside California (multiple-points-of-use certificates),${m(r.outsideCaUseMinor)}`,
     `Taxable sales,${m(r.taxableMinor)}`, `Sales tax charged,${m(r.taxMinor)}`, "",
     "Jurisdiction,Rate %,Invoices,Taxable sales,Tax",
     ...r.byJurisdiction.map((j) => [cell(j.jurisdiction), j.ratePercent, String(j.invoices), m(j.taxableMinor), m(j.taxMinor)].join(",")),

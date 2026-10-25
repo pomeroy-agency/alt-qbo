@@ -31,7 +31,10 @@ async function business() {
   const base = { orgId: org.id, entityId: entity.id };
   const contact = (name: string, extra: { address?: typeof SF; resalePermit?: string } = {}) =>
     t((tx) => createContact(tx, { ...base, kind: "customer", name, actor: bookkeeper, ...extra }));
-  return { org, entity, t, base, contact };
+  /** A customer whose tax settings only an owner or accountant can record. */
+  const taxContact = (name: string, extra: { directPayPermit?: string; mpu?: { caPercent: string; certificateDate: string } }) =>
+    t((tx) => createContact(tx, { ...base, kind: "customer", name, address: SF, actor: accountant, ...extra }));
+  return { org, entity, t, base, contact, taxContact };
 }
 
 describe("deciding an invoice's sales tax", () => {
@@ -66,18 +69,6 @@ describe("deciding an invoice's sales tax", () => {
     await expectLedgerError(decide(sf.id, ["mystery"]), "INVALID");
   });
 
-  it("taxes ready-made software from 2027 (SB 122) but not custom digital work", async () => {
-    const b = await business();
-    const { lookup } = fakeLookup();
-    const sf = await b.contact("SF Client", { address: SF });
-    const decide = (date: string, categories: string[]) =>
-      b.t((tx) => decideSalesTax(tx, { entityId: b.entity.id, contactId: sf.id, date, categories, lookup }));
-    expect(await decide("2026-12-31", ["prewritten_software"])).toMatchObject({ source: "not_taxable", rules: "us-ca-sales-tax-2026@2026.1.0" });
-    expect(await decide("2027-01-01", ["prewritten_software", "digital_delivery"])).toMatchObject({
-      source: "lookup", rate: "0.08625", taxable: [true, false], rules: "us-ca-sales-tax-2027@2027.1.0",
-    });
-  });
-
   it("refuses to guess when the lookup fails or answers something impossible", async () => {
     const b = await business();
     const { lookup } = fakeLookup();
@@ -95,6 +86,106 @@ describe("deciding an invoice's sales tax", () => {
     await expectLedgerError(decide(la.id, { manual: { ratePercent: "25", reason: "typo", actor: accountant } }), "INVALID");
     expect(await decide(la.id, { manual: { ratePercent: "9.75", reason: "CDTFA site down", actor: accountant } }))
       .toMatchObject({ source: "manual", rate: "0.09750", note: "CDTFA site down" });
+  });
+});
+
+describe("software and SaaS from 2027 (SB 122)", () => {
+  const decider = (b: Awaited<ReturnType<typeof business>>, lookup: RateLookup) =>
+    (contactId: string, date: string, categories: string[], lines?: { periodStart?: string; periodEnd?: string; amountMinor?: bigint }[]) =>
+      b.t((tx) => decideSalesTax(tx, { entityId: b.entity.id, contactId, date, categories, lines, lookup }));
+
+  it("taxes software by when the customer's access starts, not the invoice date", async () => {
+    const b = await business();
+    const { lookup } = fakeLookup();
+    const sf = await b.contact("SF Client", { address: SF });
+    const decide = decider(b, lookup);
+    const dec2026 = { periodStart: "2026-12-01", periodEnd: "2026-12-31" };
+    const jan2027 = { periodStart: "2027-01-01", periodEnd: "2027-01-31" };
+
+    // Late in 2026, an invoice for software has to say when access starts.
+    await expectLedgerError(decide(sf.id, "2026-12-15", ["prewritten_software"]), "INVALID");
+    expect(await decide(sf.id, "2026-12-15", ["prewritten_software"], [dec2026]))
+      .toMatchObject({ source: "not_taxable", taxable: [false], rules: "us-ca-sales-tax-2026@2026.1.0" });
+    // Invoiced in December for January access: taxable.
+    expect(await decide(sf.id, "2026-12-15", ["prewritten_software"], [jan2027]))
+      .toMatchObject({ source: "lookup", rate: "0.08625", taxable: [true], rules: "us-ca-sales-tax-2027@2027.1.0" });
+    // Invoiced in January for December access: not taxable.
+    expect(await decide(sf.id, "2027-01-05", ["prewritten_software"], [dec2026])).toMatchObject({ source: "not_taxable", taxable: [false] });
+    // A period across January 1, 2027 has to be split.
+    await expectLedgerError(decide(sf.id, "2026-12-15", ["prewritten_software"], [{ periodStart: "2026-12-01", periodEnd: "2027-01-31" }]), "INVALID");
+    await expectLedgerError(decide(sf.id, "2026-12-15", ["prewritten_software"], [{ periodEnd: "2027-01-31" }]), "INVALID");
+    // Mid-2026 invoices need no date, and services never do.
+    expect(await decide(sf.id, "2026-06-01", ["prewritten_software", "professional_service"])).toMatchObject({ source: "not_taxable" });
+
+    // In 2027 only ready-made software is taxed: not custom software, digital works or services.
+    expect(await decide(sf.id, "2027-02-01", ["prewritten_software", "custom_software", "digital_delivery", "professional_service"]))
+      .toMatchObject({ source: "lookup", taxable: [true, false, false, false] });
+  });
+
+  it("taxes software only at the customer's own address", async () => {
+    const b = await business();
+    const { lookup } = fakeLookup();
+    const decide = decider(b, lookup);
+    const noAddress = await b.contact("No Address Co");
+    await b.t((tx) => setBusinessAddress(tx, { ...b.base, address: { line1: "500 Howard St", city: "San Francisco", state: "CA", zip: "94105" }, actor: owner }));
+    // Goods sold at the business still use its address; software never does.
+    expect(await decide(noAddress.id, "2027-02-01", ["goods"])).toMatchObject({ source: "lookup", address: "500 Howard St, San Francisco, CA 94105" });
+    await expect(decide(noAddress.id, "2027-02-01", ["prewritten_software"])).rejects.toThrow(/billing address/);
+    // Untaxed software (2026) needs no address.
+    expect(await decide(noAddress.id, "2026-06-01", ["prewritten_software"])).toMatchObject({ source: "not_taxable" });
+  });
+
+  it("leaves software tax to buyers with a direct payment permit, and warns near $5 million", async () => {
+    const b = await business();
+    const { lookup } = fakeLookup();
+    const decide = decider(b, lookup);
+    // Only an owner or accountant can record the permit.
+    await expectLedgerError(b.t((tx) => createContact(tx, { ...b.base, kind: "customer", name: "X", directPayPermit: "DP 1", actor: bookkeeper })), "FORBIDDEN");
+    const big = await b.taxContact("Big Buyer", { directPayPermit: "DP 123" });
+    expect(big.directPayPermit).toBe("DP 123");
+
+    const both = await decide(big.id, "2027-02-01", ["prewritten_software", "goods"]);
+    expect(both).toMatchObject({ source: "lookup", taxable: [false, true], exemptions: ["direct_pay", null] });
+    expect(both.note).toMatch(/permit DP 123/);
+    const software = await decide(big.id, "2027-02-01", ["prewritten_software"]);
+    expect(software).toMatchObject({ source: "direct_pay", rate: "0.00000", taxable: [false] });
+    expect(explainTax(software)).toBe("No sales tax on software: the buyer pays California use tax directly (permit DP 123).");
+    expect(software.warnings).toEqual([]);
+
+    // Without a permit, a big year of software brings a warning, not a change in tax.
+    const sf = await b.contact("Growing Client", { address: SF });
+    expect((await decide(sf.id, "2027-02-01", ["prewritten_software"], [{ amountMinor: 100_000_00n }])).warnings).toEqual([]);
+    const warned = await decide(sf.id, "2027-02-01", ["prewritten_software"], [{ amountMinor: 4_500_000_00n }]);
+    expect(warned).toMatchObject({ source: "lookup", taxable: [true] });
+    expect(warned.warnings[0]).toMatch(/\$4,500,000 for software in 2027.*direct payment permit/);
+  });
+
+  it("taxes only the California share under a multiple-points-of-use certificate", async () => {
+    const b = await business();
+    const { lookup } = fakeLookup();
+    await expectLedgerError(b.taxContact("Bad", { mpu: { caPercent: "120", certificateDate: "2027-01-02" } }), "INVALID");
+    const multi = await b.taxContact("Multi-State Co", { mpu: { caPercent: "60", certificateDate: "2027-01-02" } });
+    expect(multi.mpu).toEqual({ caPercent: "60", certificateDate: "2027-01-02" });
+    const d = await decider(b, lookup)(multi.id, "2027-02-01", ["prewritten_software", "goods"]);
+    expect(d).toMatchObject({ source: "lookup", taxable: [true, true], taxShare: ["0.6000", null], exemptions: ["mpu", null] });
+    expect(explainTax(d)).toMatch(/60% California share.*dated 2027-01-02/);
+
+    const input = {
+      // Invoiced in December 2026 (the books' open year) for February 2027 access.
+      ...b.base, contactId: multi.id, issueDate: "2026-12-20", idempotencyKey: "mpu-1", actor: bookkeeper, lookup,
+      lines: [
+        { account: "4000", taxCategory: "prewritten_software", quantity: "1", unitPrice: "1000.00", servicePeriodStart: "2027-02-01", servicePeriodEnd: "2027-02-28" },
+        { account: "4000", taxCategory: "goods", quantity: "1", unitPrice: "100.00" },
+      ],
+    };
+    const inv = await b.t((tx) => issueInvoice(tx, input));
+    // $1,000 x 60% x 8.625% = $51.75, plus $100 x 8.625% = $8.63.
+    expect(inv).toMatchObject({ subtotalMinor: 110000n, taxMinor: 6038n });
+    expect(inv.lines[0]).toMatchObject({ taxableMinor: 60000n, taxMinor: 5175n, taxExemption: "mpu", servicePeriodStart: "2027-02-01", servicePeriodEnd: "2027-02-28" });
+    expect(await b.t((tx) => issueInvoice(tx, input))).toMatchObject({ id: inv.id, replayed: true });
+
+    const r = await b.t((tx) => salesTaxReport(tx, b.entity.id, "2026-10-01", "2026-12-31"));
+    expect(r).toMatchObject({ totalSalesMinor: 110000n, taxableMinor: 70000n, outsideCaUseMinor: 40000n, directPayMinor: 0n, taxMinor: 6038n });
   });
 });
 
@@ -226,6 +317,21 @@ describe("sales tax API", () => {
     expect(csv.data).toContain("Taxable sales,200.00");
     expect(csv.data).toContain("Sales for resale,100.00");
     expect((await call(`${base}/address`, { cookie, body: { address: { line1: "500 Howard St", city: "San Francisco", state: "CA", zip: "94105" } } })).status).toBe(200);
+
+    // Software from 2027: access dates on the line, and the owner records a customer's certificate.
+    const saas = await call(`${base}/contacts`, { cookie, body: { kind: "customer", name: "SaaS Buyer", address: { line1: "1 Market St", city: "San Francisco", zip: "94105" } } });
+    const line = { taxCategory: "prewritten_software", account: "4000", quantity: "1", unitPrice: "500.00", servicePeriodStart: "2027-01-01", servicePeriodEnd: "2027-12-31" };
+    const p1 = await call(`${base}/invoices/tax-preview`, { cookie, body: { contactId: saas.data.id, issueDate: "2026-12-20", lines: [line] } });
+    expect(p1.data).toMatchObject({ source: "lookup", taxable: [true], rules: "us-ca-sales-tax-2027@2027.1.0", warnings: [] });
+    const withCert = await call(`${base}/contacts/${saas.data.id}`, { cookie, body: { mpu: { caPercent: "25", certificateDate: "2026-12-01" } } });
+    expect(withCert.data.mpu).toEqual({ caPercent: "25", certificateDate: "2026-12-01" });
+    const p2 = await call(`${base}/invoices/tax-preview`, { cookie, body: { contactId: saas.data.id, issueDate: "2026-12-20", lines: [line] } });
+    expect(p2.data).toMatchObject({ taxShare: ["0.2500"], exemptions: ["mpu"] });
+    const permit = await call(`${base}/contacts/${saas.data.id}`, { cookie, body: { directPayPermit: "DP 9", mpu: null } });
+    expect(permit.data).toMatchObject({ directPayPermit: "DP 9", mpu: null });
+    const inv3 = await call(`${base}/invoices`, { cookie, body: { contactId: saas.data.id, issueDate: "2026-12-20", lines: [line] } });
+    expect(inv3.data).toMatchObject({ taxMinor: "0", taxSource: "direct_pay" });
+    expect(inv3.data.lines[0]).toMatchObject({ taxExemption: "direct_pay", servicePeriodStart: "2027-01-01" });
   });
 });
 

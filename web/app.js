@@ -575,6 +575,8 @@ function bankOptions() {
 // Sales tax: each line's kind of sale says whether it's taxable; the rate comes from the customer's address.
 const taxCategories = () => state.entity.salesTaxCategories ?? [];
 const isTaxable = (category) => taxCategories().find((c) => c.id === category)?.taxable ?? false;
+/** Software (a digital product): its tax follows when the customer's access starts, so the line asks for the dates. */
+const isSoftware = (category) => taxCategories().find((c) => c.id === category)?.digitalProduct ?? false;
 const DEFAULT_KIND = "professional_service";
 const pct = (rate) => `${(Number(rate) * 100).toFixed(3).replace(/\.?0+$/, "")}%`;
 
@@ -598,7 +600,9 @@ function docLineRow(kind, l = {}) {
     return `<tr>
       <td><select name="itemId" aria-label="Product or service">${itemOptions(l.itemId)}</select></td>
       <td><input name="description" aria-label="Description" value="${esc(l.description ?? "")}"></td>
-      <td><select name="taxCategory" aria-label="Kind of sale">${kindOptions(cat)}</select><div class="hash" data-taxable>${isTaxable(cat) ? "Taxable" : "Not taxable"}</div></td>
+      <td><select name="taxCategory" aria-label="Kind of sale">${kindOptions(cat)}</select><div class="hash" data-taxable>${isTaxable(cat) ? "Taxable" : "Not taxable"}</div>
+        <div data-period ${isSoftware(cat) ? "" : "hidden"}><label class="hash">Access from<input name="servicePeriodStart" type="date" value="${esc(l.servicePeriodStart ?? "")}"></label>
+          <label class="hash">to<input name="servicePeriodEnd" type="date" value="${esc(l.servicePeriodEnd ?? "")}"></label></div></td>
       ${tail}
     </tr>`;
   }
@@ -613,14 +617,18 @@ function readDocLines() {
   return [...document.querySelectorAll("#doc-lines tr")].map((tr) => {
     const v = (n) => tr.querySelector(`[name=${n}]`)?.value.trim() ?? "";
     const common = { description: v("description"), quantity: v("quantity"), unitPrice: v("unitPrice") };
-    return tr.querySelector("[name=taxCategory]")
-      ? { ...common, itemId: v("itemId") || undefined, taxCategory: v("taxCategory") }
-      : { ...common, account: v("account") };
+    if (!tr.querySelector("[name=taxCategory]")) return { ...common, account: v("account") };
+    const software = isSoftware(v("taxCategory"));
+    return {
+      ...common, itemId: v("itemId") || undefined, taxCategory: v("taxCategory"),
+      servicePeriodStart: software ? v("servicePeriodStart") || undefined : undefined,
+      servicePeriodEnd: software ? v("servicePeriodEnd") || undefined : undefined,
+    };
   });
 }
 
 /** What the server said about this invoice's sales tax, for the figures shown while typing. */
-const docTax = { rate: null, explanation: "", error: "", timer: null, seq: 0 };
+const docTax = { rate: null, explanation: "", error: "", taxable: null, taxShare: null, timer: null, seq: 0 };
 
 /** Asks the server how this invoice will be taxed. Called when the customer, date or kinds of sale change. */
 function scheduleTaxPreview() {
@@ -633,14 +641,15 @@ async function runTaxPreview() {
   if (!form) return;
   const d = formData(form);
   const lines = readDocLines();
-  const anyTaxable = lines.some((l) => isTaxable(l.taxCategory));
+  // Software can be taxable in a later year than the invoice date, so always ask the server about it.
+  const anyTaxable = lines.some((l) => isTaxable(l.taxCategory) || isSoftware(l.taxCategory));
   const seq = ++docTax.seq;
-  const show = (rate, explanation, error = "") => {
+  const show = (rate, explanation, error = "", r = {}) => {
     if (seq !== docTax.seq) return;
-    Object.assign(docTax, { rate, explanation, error });
+    Object.assign(docTax, { rate, explanation, error, taxable: r.taxable ?? null, taxShare: r.taxShare ?? null });
     const note = document.getElementById("doc-tax-note");
-    note.className = error ? "alert warn" : "hash";
-    note.textContent = error || explanation;
+    note.className = error || r.warnings?.length ? "alert warn" : "hash";
+    note.textContent = [error || explanation, ...(r.warnings ?? [])].filter(Boolean).join(" ");
     const manual = form.querySelector("[data-manual]");
     if (manual) manual.hidden = !error;
     updateDocTotals();
@@ -650,7 +659,7 @@ async function runTaxPreview() {
   const manualTax = d.manualRate && d.manualReason ? { ratePercent: d.manualRate, reason: d.manualReason } : undefined;
   try {
     const r = await api(entPath("/invoices/tax-preview"), { body: { contactId: d.contactId, issueDate: d.issueDate, lines, manualTax } });
-    show(r.rate, r.explanation);
+    show(r.rate, r.explanation, "", r);
   } catch (err) {
     show(null, "", err.message);
   }
@@ -662,15 +671,21 @@ function updateDocTotals() {
   if (!form) return;
   const rate = Number(docTax.rate ?? 0);
   let sub = 0n, tax = 0n, bad = false;
-  document.querySelectorAll("#doc-lines tr").forEach((tr) => {
+  // The server's answer per line wins once it has one; it knows the access dates and the customer's certificates.
+  const lineTaxable = (i, cat) => docTax.taxable?.[i] ?? isTaxable(cat);
+  document.querySelectorAll("#doc-lines tr").forEach((tr, i) => {
     const cat = tr.querySelector("[name=taxCategory]");
-    if (cat) tr.querySelector("[data-taxable]").textContent = isTaxable(cat.value) ? "Taxable" : "Not taxable";
+    if (cat) {
+      const share = docTax.taxShare?.[i];
+      tr.querySelector("[data-taxable]").textContent = !lineTaxable(i, cat.value) ? "Not taxable" : share ? `Taxable on ${Number(share) * 100}%` : "Taxable";
+      tr.querySelector("[data-period]").hidden = !isSoftware(cat.value);
+    }
     const q = Number(tr.querySelector("[name=quantity]").value || 0);
     const p = cents(tr.querySelector("[name=unitPrice]").value.trim());
     if (p === null || !(q > 0)) { bad = true; tr.querySelector("[data-amount]").textContent = ""; return; }
     const amt = BigInt(Math.round(q * Number(p)));
     sub += amt;
-    if (cat && isTaxable(cat.value)) tax += BigInt(Math.round(Number(amt) * rate));
+    if (cat && lineTaxable(i, cat.value)) tax += BigInt(Math.round(Math.round(Number(amt) * Number(docTax.taxShare?.[i] ?? 1)) * rate));
     tr.querySelector("[data-amount]").textContent = usd(amt);
   });
   document.getElementById("doc-sub").textContent = usd(sub);
@@ -817,7 +832,7 @@ async function docPageView(id, kind, docId) {
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
-        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.taxable ? ` <span class="hash">taxable</span>` : ""}</td>
+        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.taxable ? ` <span class="hash">taxable${l.taxableMinor !== null && l.taxableMinor !== undefined ? ` on ${usd(l.taxableMinor)}` : ""}</span>` : ""}${l.servicePeriodStart ? `<div class="hash">Access ${longDate(l.servicePeriodStart)}${l.servicePeriodEnd ? ` to ${longDate(l.servicePeriodEnd)}` : ""}</div>` : ""}</td>
           <td class="num">${esc(l.quantity)}</td><td class="num">${usd(l.unitPriceMinor)}</td><td class="num">${usd(l.amountMinor)}</td></tr>`).join("")}</tbody>
         <tfoot>
           <tr><td colspan="3" class="num muted">Subtotal</td><td class="num">${usd(x.subtotalMinor)}</td></tr>
@@ -848,7 +863,8 @@ function taxExplanation(x) {
     not_taxable: "No sales tax: nothing on this invoice is taxable in California.",
     resale: `No sales tax: ${x.taxNote ?? "sale for resale"}.`,
     out_of_state: `No sales tax: delivered outside California${at}.`,
-    lookup: `Sales tax ${pct(x.taxRate)} on taxable lines, the rate for ${x.taxJurisdiction}${at}.`,
+    lookup: `Sales tax ${pct(x.taxRate)} on taxable lines, the rate for ${x.taxJurisdiction}${at}.${x.taxNote ? ` ${x.taxNote}.` : ""}`,
+    direct_pay: `No sales tax on software: ${x.taxNote ?? "the buyer pays California use tax directly"}.`,
     manual: `Sales tax ${pct(x.taxRate)}, set by hand: ${x.taxNote}.`,
     user_entered: `Sales tax ${pct(x.taxRate)}, entered by hand before the rate was worked out automatically.`,
   }[x.taxSource] ?? "No sales tax.";
@@ -858,6 +874,7 @@ async function contactsView(id) {
   await loadEntity(id);
   const { contacts } = await api(entPath("/contacts"));
   const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  const canSetTaxStatus = ["owner", "accountant"].includes(state.org.role);
   const oneLine = (a) => (a ? `${a.line1}, ${a.city}, ${a.state} ${a.zip}` : "");
   const addressFields = (a = {}) => `
     <label>Street<input name="line1" value="${esc(a?.line1 ?? "")}" placeholder="123 Main St"></label>
@@ -868,7 +885,7 @@ async function contactsView(id) {
     <div class="head"><div><h1>Customers and vendors</h1><p class="muted">The people and businesses you invoice and pay. A customer's address decides the sales tax rate on what you sell them.</p></div></div>
     <div class="panel table-wrap"><table>
       <thead><tr><th>Name</th><th>Type</th><th>Email</th><th>Address</th><th></th></tr></thead>
-      <tbody>${contacts.map((c) => `<tr><td>${esc(c.name)}${c.resalePermit ? `<div class="hash">Resale certificate · permit ${esc(c.resalePermit)}</div>` : ""}</td><td>${CONTACT_LABEL[c.kind]}</td>
+      <tbody>${contacts.map((c) => `<tr><td>${esc(c.name)}${c.resalePermit ? `<div class="hash">Resale certificate · permit ${esc(c.resalePermit)}</div>` : ""}${c.directPayPermit ? `<div class="hash">Pays use tax on software directly · permit ${esc(c.directPayPermit)}</div>` : ""}${c.mpu ? `<div class="hash">Software ${esc(c.mpu.caPercent)}% used in California · certificate ${esc(c.mpu.certificateDate)}</div>` : ""}</td><td>${CONTACT_LABEL[c.kind]}</td>
           <td>${esc(c.email ?? "")}</td><td>${esc(oneLine(c.address)) || (c.kind === "vendor" ? "" : `<span class="muted">No address</span>`)}</td>
           <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="contact-edit" data-id="${c.id}">Edit</button>` : ""}</td></tr>
         <tr hidden data-contact-edit="${c.id}"><td colspan="5">
@@ -876,6 +893,10 @@ async function contactsView(id) {
             <label>Email<input name="email" type="email" value="${esc(c.email ?? "")}"></label>
             ${addressFields(c.address)}
             ${c.kind !== "vendor" ? `<label>Seller's permit<input name="resalePermit" value="${esc(c.resalePermit ?? "")}" placeholder="Only with a resale certificate" style="width:190px"></label>` : ""}
+            ${c.kind !== "vendor" && canSetTaxStatus ? `
+              <label title="Past $5,000,000 of software a year from you, the buyer reports the tax (SB 122)">Direct payment permit<input name="directPayPermit" value="${esc(c.directPayPermit ?? "")}" placeholder="Only if they pay use tax directly" style="width:190px"></label>
+              <label title="From the customer's multiple-points-of-use certificate">Software used in California %<input name="mpuCaPercent" inputmode="decimal" value="${esc(c.mpu?.caPercent ?? "")}" placeholder="All" style="width:80px"></label>
+              <label>Certificate date<input name="mpuCertificateDate" type="date" value="${esc(c.mpu?.certificateDate ?? "")}"></label>` : ""}
             <button type="submit">Save</button>
           </form></td></tr>`).join("") || `<tr><td colspan="5" class="muted">No customers or vendors yet.</td></tr>`}</tbody>
     </table></div>
@@ -887,7 +908,8 @@ async function contactsView(id) {
         ${addressFields()}
         <button type="submit">Add</button>
       </form>
-      <p class="hash">A customer who buys to resell can give you a resale certificate (CDTFA-230). Add their seller's permit number with Edit, and Alt-QBO won't charge them sales tax.</p></div>` : ""}`);
+      <p class="hash">A customer who buys to resell can give you a resale certificate (CDTFA-230). Add their seller's permit number with Edit, and Alt-QBO won't charge them sales tax.
+        For software from 2027, an owner or accountant can also record a buyer's use tax direct payment permit, or the California share from their multiple-points-of-use certificate.</p></div>` : ""}`);
 }
 
 /** The four address fields of a form, as the API takes them; null when left blank. */
@@ -1178,6 +1200,8 @@ async function reportsView(id) {
         ${r.nontaxable.map((n) => line(`Less nontaxable: ${esc(n.label)}`, n.amountMinor)).join("")}
         ${line("Less sales for resale", r.resaleMinor, "To customers with a resale certificate on file")}
         ${line("Less sales delivered outside California", r.interstateMinor)}
+        ${BigInt(r.directPayMinor) ? line("Less software to buyers who pay use tax directly", r.directPayMinor, "Customers with a use tax direct payment permit on file (SB 122)") : ""}
+        ${BigInt(r.outsideCaUseMinor) ? line("Less software used outside California", r.outsideCaUseMinor, "The out-of-state share on multiple-points-of-use certificates") : ""}
       </tbody><tfoot>
         <tr><td>Taxable sales</td><td class="num">${usd(r.taxableMinor)}</td></tr>
         <tr><td>Sales tax charged on invoices</td><td class="num">${usd(r.taxMinor)}</td></tr>
@@ -1917,7 +1941,7 @@ document.addEventListener("change", (ev) => {
     if (!box.hidden) box.querySelector("input").focus();
   }
   if (t.name === "itemId" && t.closest("#doc-lines")) fillFromItem(t.closest("tr"), t.value);
-  if (t.closest("form[data-form=document][data-kind=invoice]") && ["contactId", "issueDate", "itemId", "taxCategory", "manualRate", "manualReason"].includes(t.name)) {
+  if (t.closest("form[data-form=document][data-kind=invoice]") && ["contactId", "issueDate", "itemId", "taxCategory", "servicePeriodStart", "servicePeriodEnd", "manualRate", "manualReason"].includes(t.name)) {
     updateDocTotals();
     scheduleTaxPreview();
   }
@@ -2321,7 +2345,11 @@ document.addEventListener("submit", async (ev) => {
       toast(`${d.name} added`);
       await contactsView(state.entity.entity.id);
     } else if (kind === "contact-edit") {
-      await api(entPath(`/contacts/${f.dataset.id}`), { body: { email: d.email, address: addressOf(d), ...(d.resalePermit !== undefined ? { resalePermit: d.resalePermit } : {}) } });
+      await api(entPath(`/contacts/${f.dataset.id}`), { body: {
+        email: d.email, address: addressOf(d), ...(d.resalePermit !== undefined ? { resalePermit: d.resalePermit } : {}),
+        ...(d.directPayPermit !== undefined ? { directPayPermit: d.directPayPermit } : {}),
+        ...(d.mpuCaPercent !== undefined ? { mpu: d.mpuCaPercent.trim() ? { caPercent: d.mpuCaPercent.trim(), certificateDate: d.mpuCertificateDate } : null } : {}),
+      } });
       toast("Saved");
       await contactsView(state.entity.entity.id);
     } else if (kind === "item" || kind === "item-edit") {

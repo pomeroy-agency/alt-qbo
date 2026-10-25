@@ -10,6 +10,13 @@ export interface TaxCategory {
   help: string;
   taxable: boolean;
   cite: string;
+  /**
+   * A digital product (Rev. & Tax. Code §6016.1): prewritten software however
+   * delivered. Its tax follows the customer's own address and the period the
+   * customer has access, and the SB 122 direct-payment and multiple-points-of-
+   * use rules apply to it.
+   */
+  digitalProduct?: boolean;
 }
 
 export interface SalesTaxRulePack extends RulePackMeta {
@@ -37,6 +44,11 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
       help: "Consulting, design, writing, bookkeeping, coaching. Not taxable when nothing physical is handed over.",
       taxable: false, cite: "Rev. & Tax. Code §6051; Regulation 1501",
     },
+    custom_software: {
+      label: "Custom software",
+      help: "Software written for this one customer, or a separately billed change made to their order to existing software. Not taxable.",
+      taxable: false, cite: "Rev. & Tax. Code §6010.9; Regulation 1502",
+    },
     digital_delivery: {
       label: "Delivered electronically",
       help: "Files, software or artwork sent by email or download with no disk or print. Not taxable.",
@@ -44,8 +56,9 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
     },
     prewritten_software: {
       label: "Software or app access",
-      help: "Ready-made software or a subscription to an online app (SaaS), sold to many customers. Not taxable in 2026 when delivered electronically; taxable from January 1, 2027.",
-      taxable: false, cite: "Regulation 1502(f)(1)(D); SB 122 (2026) from 2027",
+      help: "Software or an app you offer to customers generally, including downloads, subscriptions and online access (SaaS). Not taxable in 2026 when downloaded or used online; on a disk or drive, choose \"Physical goods\". Taxable from January 1, 2027: enter when the customer's access starts.",
+      taxable: false, cite: "Regulation 1502(f)(1)(D); Rev. & Tax. Code §6016.1 from January 1, 2027",
+      digitalProduct: true,
     },
     repair_labor: {
       label: "Repair or installation labor",
@@ -107,27 +120,36 @@ export const usCaliforniaSalesTax2027: SalesTaxRulePack = {
   status: "draft",
   categories: {
     ...usCaliforniaSalesTax2026.categories,
+    professional_service: {
+      label: "Professional or creative service",
+      help: "Consulting, design, writing, bookkeeping, coaching. Not taxable when nothing physical is handed over, including work delivered through a portal or app when the customer is paying for a person's work done after they asked for it.",
+      taxable: false, cite: "Rev. & Tax. Code §§6051, 6372.1; Regulation 1501; draft Regulation 1600(g)(3)",
+    },
     digital_delivery: {
       label: "Delivered electronically",
-      help: "Files, artwork, photos, writing or custom-built software sent by email, download or a shared link, with no disk or print. Not taxable. Ready-made software and app subscriptions are taxable from 2027: choose \"Software or app access\".",
-      taxable: false, cite: "Regulation 1502(f)(1)(D); SB 122 (2026) exclusions for custom software and digital works",
+      help: "Files, artwork, photos, writing, music, video or e-books sent by email, download or a shared link, with no disk or print. Also cloud hosting or platforms customers run their own software on. Not taxable. For ready-made software or app access, choose \"Software or app access\".",
+      taxable: false, cite: "Regulation 1502(f)(1)(D); Rev. & Tax. Code §6016.1(b) (digital assets, audio, audiovisual and visual works, books, video games, digital infrastructure)",
     },
     prewritten_software: {
       label: "Software or app access",
-      help: "Ready-made software or a subscription to an online app (SaaS), sold to many customers, however it's delivered. Taxable from January 1, 2027. Custom software built for one customer is not.",
-      taxable: true, cite: "SB 122 (2026), operative January 1, 2027",
+      help: "Software or an app you offer to customers generally, including downloads, subscriptions and online access (SaaS). Taxable from January 1, 2027, even if it started as a custom project. Enter when the customer's access starts, and bill setup, training or consulting on separate lines.",
+      taxable: true, cite: "Rev. & Tax. Code §§6016.1, 6016.2, 6010.9; draft Regulation 1600",
+      digitalProduct: true,
     },
   },
   sources: [
     ...usCaliforniaSalesTax2026.sources,
-    { ref: "SB 122 (Stats. 2026), signed June 29, 2026", covers: "prewritten software, including SaaS, taxable from 2027-01-01; exclusions", basis: "working-knowledge" },
-    { ref: "CDTFA discussion paper and draft emergency regulations on digital products (Sept 2026)", covers: "SaaS and remotely accessed software within the definition", basis: "working-knowledge" },
+    { ref: "SB 122 (Stats. 2026, ch. 23), signed June 29, 2026: Rev. & Tax. Code §§6010.9, 6016.1, 6016.2, 6372.1", covers: "prewritten software, including SaaS, taxable from 2027-01-01; exclusions; custom software; human-effort services; $5,000,000 direct payment", basis: "working-knowledge" },
+    { ref: "CDTFA draft emergency Regulations 1600, 1600.2 and 1502.2 (discussion paper, Sept 1, 2026); notice L-1036", covers: "remote access, sourcing by the customer's address (1600(d)(2)(A)), timing by access period, human-effort exemption (1600(g)(3)), multiple-points-of-use certificate (1600.2)", basis: "working-knowledge" },
   ],
   reviewNotes: [
-    "Carried over unchanged from the 2026 pack: the 7.25% statewide rate, the 12% sanity bound, and every category except the two below. The statewide rate is not changing for 2027 as far as published sources show; January 2027 district rate changes come from the CDTFA rate lookup, not this pack.",
-    "New for 2027 (rule watch, 2026-10-25): SB 122 makes prewritten software taxable however delivered, including SaaS. 'prewritten_software' is taxable; 'digital_delivery' stays not taxable for custom software and digital works (visual, audio, audiovisual, books), which SB 122 excludes. Confirmed by several secondary sources (K&L Gates, Snell & Wilmer, Baker Tilly, Avalara); the statute text and CDTFA's emergency regulations were not read directly because ca.gov is blocked from the build machines.",
-    "SB 122 shifts reporting to the purchaser for some sales over $5,000,000 and has its own rules for where remotely accessed software is taxed. Alt-QBO taxes at the customer's address like any other sale; confirm that's right for SaaS sold to customers with users in several places.",
-    "Software first built custom and later held for repeated sale becomes prewritten. The help text says 'sold to many customers'; confirm the wording.",
+    "Carried over unchanged from the 2026 pack: the 7.25% statewide rate, the 12% sanity bound, and every category except the three below. The statewide rate is not changing for 2027 as far as published sources show; January 2027 district rate changes come from the CDTFA rate lookup, not this pack.",
+    "Legal review 2026-10-25 (https://claude.ai/artifact/KNyqBmPyM1axk2JoiLD44n): 'prewritten_software' is taxable (§6016.1, however delivered, including remote access under §6016.2). Custom software (§6010.9) has its own non-taxable choice. 'professional_service' names the human-effort exemption (§6372.1) and 'digital_delivery' names the §6016.1(b) exclusions, including digital infrastructure. ca.gov was blocked from the build machines, so the statute and CDTFA text were read through search extracts; confirm against the chaptered text before release.",
+    "Sourcing (draft Reg. 1600(d)(2)(A)): billing address, then shipping, payment instrument, mailing. Alt-QBO uses the customer's address as the billing address and refuses a taxable software line when the customer has none, rather than using the business's own address.",
+    "Timing: tax follows the access period, not the invoice date. Each software line carries the period the customer has access; a period that runs across a change in taxability must be split. How CDTFA will treat one prepaid period that began in 2026 is unsettled; Alt-QBO asks for the split, the conservative reading.",
+    "$5,000,000 direct payment: a customer flagged as holding a use tax direct payment permit (owner or accountant only) is not charged tax on software lines. Alt-QBO warns once a customer's software billing for the year passes $4,000,000 without the flag; it does not apply the threshold itself.",
+    "Multiple points of use (proposed Reg. 1600.2, not yet adopted): a customer's certificate can give the share of use in California; software lines are taxed on that share only. Recheck when 1600.2 is adopted.",
+    "Keep this pack in draft until OAL approves CDTFA's emergency regulations and the adopted text is read.",
     ...usCaliforniaSalesTax2026.reviewNotes,
   ],
 };

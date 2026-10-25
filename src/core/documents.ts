@@ -47,17 +47,26 @@ export interface Contact {
   address: ContactAddress | null;
   /** California seller's permit from the customer's resale certificate. */
   resalePermit: string | null;
+  /** The buyer's use tax direct payment permit: they report the tax on software themselves (SB 122). */
+  directPayPermit: string | null;
+  /** Multiple-points-of-use certificate: the share of the buyer's software use that is in California. */
+  mpu: { caPercent: string; certificateDate: string } | null;
 }
 
-const CONTACT_COLS = "id, kind, name, email, address_line1, address_city, address_state, address_zip, resale_permit";
+const CONTACT_COLS = "id, kind, name, email, address_line1, address_city, address_state, address_zip, resale_permit, direct_pay_permit, mpu_ca_percent::text AS mpu_ca_percent, mpu_certificate_date";
 
 function contactOf(r: any): Contact {
   return {
     id: r.id, kind: r.kind, name: r.name, email: r.email,
     address: r.address_line1 ? { line1: r.address_line1, city: r.address_city, state: r.address_state, zip: r.address_zip } : null,
     resalePermit: r.resale_permit,
+    directPayPermit: r.direct_pay_permit,
+    mpu: r.mpu_ca_percent !== null ? { caPercent: new D(r.mpu_ca_percent).toString(), certificateDate: r.mpu_certificate_date } : null,
   };
 }
+
+/** Who can set the tax settings that stop or reduce the tax a customer is charged. */
+const CAN_SET_TAX_STATUS: Role[] = ["owner", "accountant", "system"];
 
 interface ContactFields {
   name?: string;
@@ -65,6 +74,10 @@ interface ContactFields {
   /** Checked by cleanAddress in core/sales-tax.ts before it gets here. */
   address?: ContactAddress | null;
   resalePermit?: string | null;
+  /** Owners and accountants only. */
+  directPayPermit?: string | null;
+  /** Owners and accountants only. caPercent is 0 to 100, up to two decimals. */
+  mpu?: { caPercent: string; certificateDate: string } | null;
 }
 
 function contactColumns(f: ContactFields): Record<string, unknown> {
@@ -82,7 +95,22 @@ function contactColumns(f: ContactFields): Record<string, unknown> {
     out.address_zip = f.address?.zip ?? null;
   }
   if (f.resalePermit !== undefined) out.resale_permit = f.resalePermit?.trim().slice(0, 40) || null;
+  if (f.directPayPermit !== undefined) out.direct_pay_permit = f.directPayPermit?.trim().slice(0, 40) || null;
+  if (f.mpu !== undefined) {
+    if (f.mpu && (!/^\d{1,3}(\.\d{1,2})?$/.test(f.mpu.caPercent.trim()) || new D(f.mpu.caPercent.trim()).gt(100))) {
+      throw new LedgerError("INVALID", "the California share should be a percentage from 0 to 100, like 60");
+    }
+    if (f.mpu && !/^\d{4}-\d{2}-\d{2}$/.test(f.mpu.certificateDate)) throw new LedgerError("INVALID", "enter the date on the certificate");
+    out.mpu_ca_percent = f.mpu ? new D(f.mpu.caPercent.trim()).toFixed(2) : null;
+    out.mpu_certificate_date = f.mpu?.certificateDate ?? null;
+  }
   return out;
+}
+
+function requireTaxStatusRole(actor: Actor, f: ContactFields) {
+  if ((f.directPayPermit !== undefined || f.mpu !== undefined) && !CAN_SET_TAX_STATUS.includes(actor.role)) {
+    throw new LedgerError("FORBIDDEN", "only an owner or accountant can record a direct payment permit or a multiple-points-of-use certificate");
+  }
 }
 
 export async function createContact(
@@ -90,6 +118,7 @@ export async function createContact(
   input: ContactFields & { orgId: string; entityId: string; kind: ContactKind; name: string; actor: Actor },
 ): Promise<Contact> {
   requireWriter(input.actor, "add contacts");
+  requireTaxStatusRole(input.actor, input);
   const cols = contactColumns({ email: null, ...input });
   const dup = await tx.query("SELECT 1 FROM contacts WHERE entity_id = $1 AND lower(name) = lower($2)", [input.entityId, cols.name]);
   if (dup.rows[0]) throw new LedgerError("INVALID", `there is already a contact named ${cols.name}`);
@@ -113,6 +142,7 @@ export async function updateContact(
   input: ContactFields & { orgId: string; entityId: string; contactId: string; actor: Actor },
 ): Promise<Contact> {
   requireWriter(input.actor, "change contacts");
+  requireTaxStatusRole(input.actor, input);
   const before = (await tx.query(`SELECT ${CONTACT_COLS} FROM contacts WHERE id = $1 AND entity_id = $2 FOR UPDATE`, [input.contactId, input.entityId])).rows[0];
   if (!before) throw new LedgerError("INVALID", "contact not found");
   const cols = contactColumns(input);
@@ -152,13 +182,20 @@ export interface DocumentLineInput {
   taxCategory?: string;
   /** The product or service this line was filled from. */
   itemId?: string;
+  /** For software: the first and last day the customer has access, which decide its tax. */
+  servicePeriodStart?: string;
+  servicePeriodEnd?: string;
+  /** Fraction of a taxable line that is taxed ("0.6"), when less than all of it. */
+  taxShare?: string;
+  /** Why a software line is untaxed or partly taxed. */
+  taxExemption?: "direct_pay" | "mpu";
 }
 
 /** An invoice's sales tax, decided before it is issued and frozen on it. See core/sales-tax.ts. */
 export interface DocumentTax {
   /** Fraction, up to five decimals ("0.08625"). */
   rate: string;
-  source: "none" | "not_taxable" | "resale" | "out_of_state" | "lookup" | "manual";
+  source: "none" | "not_taxable" | "resale" | "out_of_state" | "lookup" | "manual" | "direct_pay";
   jurisdiction?: string | null;
   address?: string | null;
   note?: string | null;
@@ -192,15 +229,22 @@ interface PricedLine {
   taxMinor: bigint;
   taxCategory: string | null;
   itemId: string | null;
+  servicePeriodStart: string | null;
+  servicePeriodEnd: string | null;
+  taxableMinor: bigint | null;
+  taxExemption: string | null;
 }
 
-/** Line amount = quantity x unit price; tax = rate on each taxable line. Both rounded half-up to the cent. */
-export function priceLine(quantity: string, unitPriceMinor: bigint, taxable: boolean, taxRate: string) {
-  const amountMinor = BigInt(new D(quantity).mul(unitPriceMinor.toString()).toDecimalPlaces(0, D.ROUND_HALF_UP).toFixed(0));
-  const taxMinor = taxable
-    ? BigInt(new D(amountMinor.toString()).mul(taxRate).toDecimalPlaces(0, D.ROUND_HALF_UP).toFixed(0))
-    : 0n;
-  return { amountMinor, taxMinor };
+/**
+ * Line amount = quantity x unit price; tax = rate on the taxed part of each
+ * taxable line (all of it, or its share). All rounded half-up to the cent.
+ */
+export function priceLine(quantity: string, unitPriceMinor: bigint, taxable: boolean, taxRate: string, taxShare?: string) {
+  const round = (d: InstanceType<typeof D>) => BigInt(d.toDecimalPlaces(0, D.ROUND_HALF_UP).toFixed(0));
+  const amountMinor = round(new D(quantity).mul(unitPriceMinor.toString()));
+  const taxableMinor = taxable && taxShare !== undefined ? round(new D(amountMinor.toString()).mul(taxShare)) : null;
+  const taxMinor = taxable ? round(new D((taxableMinor ?? amountMinor).toString()).mul(taxRate)) : 0n;
+  return { amountMinor, taxableMinor, taxMinor };
 }
 
 function requestHash(input: IssueDocumentInput): string {
@@ -265,11 +309,18 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     }
     if (unitPriceMinor < 0n) throw new LedgerError("INVALID", `line ${i + 1}: price cannot be negative`);
     const taxable = input.kind === "invoice" && Boolean(l.taxable);
+    const invoice = input.kind === "invoice";
+    if (l.taxShare !== undefined && !(/^(0(\.\d{1,4})?|1(\.0{1,4})?)$/.test(l.taxShare))) throw new LedgerError("INVALID", `line ${i + 1}: the taxed share must be a fraction between 0 and 1`);
+    if (l.servicePeriodEnd && (!l.servicePeriodStart || l.servicePeriodEnd < l.servicePeriodStart)) {
+      throw new LedgerError("INVALID", `line ${i + 1}: the access period ends before it starts`);
+    }
     return {
       accountId: a.id, accountCode: a.code, description: (l.description ?? "").slice(0, 300),
       quantity: new D(l.quantity).toFixed(4), unitPriceMinor, taxable,
-      taxCategory: input.kind === "invoice" ? l.taxCategory ?? null : null, itemId: l.itemId ?? null,
-      ...priceLine(l.quantity, unitPriceMinor, taxable, taxRate),
+      taxCategory: invoice ? l.taxCategory ?? null : null, itemId: l.itemId ?? null,
+      servicePeriodStart: invoice ? l.servicePeriodStart ?? null : null, servicePeriodEnd: invoice ? l.servicePeriodEnd ?? null : null,
+      taxExemption: invoice ? l.taxExemption ?? null : null,
+      ...priceLine(l.quantity, unitPriceMinor, taxable, taxRate, taxable ? l.taxShare : undefined),
     };
   });
   const subtotal = lines.reduce((s, l) => s + l.amountMinor, 0n);
@@ -294,10 +345,12 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
   for (const [i, l] of lines.entries()) {
     await run(() => tx.query(
       `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, description, account_id, quantity,
-          unit_price_minor, amount_minor, taxable, tax_rate, tax_minor, tax_category, item_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          unit_price_minor, amount_minor, taxable, tax_rate, tax_minor, tax_category, item_id,
+          service_period_start, service_period_end, taxable_minor, tax_exemption)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
       [input.orgId, input.entityId, docId, i + 1, l.description, l.accountId, l.quantity, l.unitPriceMinor,
-       l.amountMinor, l.taxable, taxRate, l.taxMinor, l.taxCategory, l.itemId],
+       l.amountMinor, l.taxable, taxRate, l.taxMinor, l.taxCategory, l.itemId,
+       l.servicePeriodStart, l.servicePeriodEnd, l.taxableMinor, l.taxExemption],
     ));
   }
 
@@ -358,7 +411,8 @@ export interface DocumentDetail extends DocumentSummary {
   voidReason: string | null;
   createdBy: string;
   lines: { lineNo: number; description: string; accountCode: string; accountName: string; quantity: string;
-    unitPriceMinor: bigint; amountMinor: bigint; taxable: boolean; taxMinor: bigint; taxCategory: string | null; itemId: string | null }[];
+    unitPriceMinor: bigint; amountMinor: bigint; taxable: boolean; taxMinor: bigint; taxCategory: string | null; itemId: string | null;
+    servicePeriodStart: string | null; servicePeriodEnd: string | null; taxableMinor: bigint | null; taxExemption: string | null }[];
   payments: { id: string; date: string; amountMinor: bigint; bankAccountCode: string; entryId: string; createdBy: string }[];
   requestHash?: string;
   replayed: boolean;
@@ -409,7 +463,7 @@ export async function getDocument(tx: Tx, documentId: string, requestHashHint?: 
   if (!r) throw new LedgerError("INVALID", `document ${documentId} not found`);
   const lines = await tx.query(
     `SELECT l.line_no, l.description, a.code, a.name, l.quantity::text AS quantity, l.unit_price_minor, l.amount_minor,
-            l.taxable, l.tax_minor, l.tax_category, l.item_id
+            l.taxable, l.tax_minor, l.tax_category, l.item_id, l.service_period_start, l.service_period_end, l.taxable_minor, l.tax_exemption
        FROM document_lines l JOIN accounts a ON a.id = l.account_id WHERE l.document_id = $1 ORDER BY l.line_no`,
     [documentId],
   );
@@ -433,6 +487,7 @@ export async function getDocument(tx: Tx, documentId: string, requestHashHint?: 
       lineNo: l.line_no, description: l.description, accountCode: l.code, accountName: l.name,
       quantity: new D(l.quantity).toString(), unitPriceMinor: l.unit_price_minor, amountMinor: l.amount_minor,
       taxable: l.taxable, taxMinor: l.tax_minor, taxCategory: l.tax_category, itemId: l.item_id,
+      servicePeriodStart: l.service_period_start, servicePeriodEnd: l.service_period_end, taxableMinor: l.taxable_minor, taxExemption: l.tax_exemption,
     })),
     payments: pays.rows.map((p) => ({
       id: p.id, date: p.payment_date, amountMinor: p.amount_minor, bankAccountCode: p.code, entryId: p.entry_id, createdBy: p.created_by,
