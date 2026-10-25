@@ -9,6 +9,7 @@ import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBan
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
 import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
 import { toMajor } from "../core/money.js";
+import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, calculatePayRun, type PayRunInput } from "../payroll/pay-run.js";
@@ -81,7 +82,6 @@ function uuid(v: unknown, message: string): string {
   return v;
 }
 
-const ROLES: Role[] = ["owner", "admin", "bookkeeper", "approver", "accountant", "read_only"];
 const ENTITY_TYPES: EntityType[] = ["sole_prop", "llc_single", "llc_partnership", "llc_s_corp", "s_corp", "c_corp", "partnership"];
 
 interface Ctx {
@@ -149,40 +149,44 @@ route("POST", "/api/orgs/:org/entities", async (req, _p, ctx) => {
   return json(entity, 201);
 });
 
-route("GET", "/api/orgs/:org/members", async (_req, _p, ctx) => {
-  const { rows } = await ctx.pool.query(
-    `SELECT u.email, u.name, m.role, m.created_at FROM memberships m JOIN users u ON u.id = m.user_id
-      WHERE m.org_id = $1 ORDER BY m.created_at`,
-    [ctx.orgId],
-  );
-  return json({ members: rows });
-});
+route("GET", "/api/orgs/:org/members", async (_req, _p, ctx) =>
+  withSystem(ctx.pool, async (tx) => json({
+    members: await listMembers(tx, ctx.orgId),
+    invitations: ["owner", "admin"].includes(ctx.role) ? await listInvitations(tx, ctx.orgId) : [],
+  })),
+);
 
-route("POST", "/api/orgs/:org/members", async (req, _p, ctx) => {
+route("POST", "/api/orgs/:org/invitations", async (req, _p, ctx) => {
   requireRole(ctx, ["owner", "admin"]);
   const b = await body(req);
   const email = normaliseEmail(b.email);
-  const role = b.role as Role;
-  if (!ROLES.includes(role) || role === "owner") throw new HttpError(400, "pick a role other than owner");
-  const name = str(b.name, "name");
-  const passwordHash = await hashPassword(str(b.password, "password", 200));
-  await withSystem(ctx.pool, async (tx) => {
-    const existing = (await tx.query("SELECT id FROM users WHERE email = $1", [email])).rows[0];
-    const userId = existing?.id ?? (await tx.query(
-      "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id", [email, name, passwordHash],
-    )).rows[0].id;
-    await tx.query(
-      "INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, $3) ON CONFLICT (user_id, org_id) DO NOTHING",
-      [userId, ctx.orgId, role],
-    );
-  });
-  await tenant(ctx, async (tx) => {
-    await appendAudit(tx, {
-      orgId: ctx.orgId, actor: ctx.actor.id, action: "member.added", objectType: "user", objectId: email,
-      after: { email, role },
-    });
-  });
-  return json({ ok: true }, 201);
+  const out = await withSystem(ctx.pool, (tx) => invite(tx, { orgId: ctx.orgId, email, role: b.role as InviteRole, actor: ctx.actor }));
+  return json({ id: out.id, email, token: out.token, link: `${new URL(req.url).origin}/#/join/${out.token}` }, 201);
+});
+
+route("POST", "/api/orgs/:org/invitations/:invitation/revoke", async (_req, p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  await withSystem(ctx.pool, (tx) => revokeInvitation(tx, { orgId: ctx.orgId, invitationId: p.invitation!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/members/:user/role", async (req, p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => changeRole(tx, { orgId: ctx.orgId, userId: p.user!, role: b.role as MemberRole, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/members/:user/remove", async (_req, p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  if (p.user === ctx.user.id) throw new HttpError(400, "use Leave to remove yourself");
+  await withSystem(ctx.pool, (tx) => removeMember(tx, { orgId: ctx.orgId, userId: p.user!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/leave", async (_req, _p, ctx) => {
+  await withSystem(ctx.pool, (tx) => removeMember(tx, { orgId: ctx.orgId, userId: ctx.user.id, actor: ctx.actor, self: true }));
+  return json({ ok: true });
 });
 
 route("GET", "/api/orgs/:org/audit", async (_req, _p, ctx) =>
@@ -775,13 +779,28 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
   if (req.method === "GET" && path === "/api/rule-packs") {
     return json({ packs: allRulePacks().map((p) => ({ id: p.id, version: p.version, status: p.status, effectiveFrom: p.effectiveFrom, effectiveTo: p.effectiveTo, sources: p.sources, reviewNotes: p.reviewNotes })) });
   }
+  const invitePath = /^\/api\/invitations\/([\w-]{20,64})$/.exec(path);
+  if (req.method === "GET" && invitePath) {
+    const inv = await withSystem(pool, (tx) => previewInvitation(tx, invitePath[1]!));
+    if (!inv) throw new HttpError(404, "this invitation link isn't valid");
+    return json(inv);
+  }
+  const acceptPath = /^\/api\/invitations\/([\w-]{20,64})\/accept$/.exec(path);
+  if (req.method === "POST" && acceptPath) {
+    const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+    if (!user) throw new AuthError("not signed in");
+    return json(await withSystem(pool, (tx) => acceptInvitation(tx, { token: acceptPath[1]!, userId: user.id })));
+  }
   if (req.method === "POST" && path === "/api/auth/signup") {
     const b = await body(req);
-    if (opts.signupCode && b.inviteCode !== opts.signupCode) throw new AuthError("that invite code isn't valid", 403);
+    // Someone joining through an invitation doesn't need the sign-up code or a business of their own.
+    const inviteToken = typeof b.inviteToken === "string" && b.inviteToken ? b.inviteToken : null;
+    if (!inviteToken && opts.signupCode && b.inviteCode !== opts.signupCode) throw new AuthError("that invite code isn't valid", 403);
     const email = normaliseEmail(b.email);
     const name = str(b.name, "name", 100);
-    const orgName = str(b.orgName, "business name");
+    const orgName = inviteToken ? null : str(b.orgName, "business name");
     const passwordHash = await hashPassword(str(b.password, "password", 200));
+    let joined: string | undefined;
     const userId = await withSystem(pool, async (tx) => {
       if ((await tx.query("SELECT 1 FROM users WHERE email = $1", [email])).rows[0]) {
         throw new AuthError("an account with that email already exists; sign in instead", 409);
@@ -789,12 +808,16 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       const uid = (await tx.query(
         "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id", [email, name, passwordHash],
       )).rows[0].id;
-      const org = await createOrganization(tx, { name: orgName, actor: { id: `user:${email}`, role: "owner" } });
-      await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [uid, org.id]);
+      if (inviteToken) {
+        joined = (await acceptInvitation(tx, { token: inviteToken, userId: uid })).orgId;
+      } else {
+        const org = await createOrganization(tx, { name: orgName!, actor: { id: `user:${email}`, role: "owner" } });
+        await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [uid, org.id]);
+      }
       return uid;
     });
     const s = await createSession(pool, userId);
-    return json({ ok: true }, 201, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+    return json({ ok: true, joined }, 201, { "set-cookie": sessionCookie(s.token, s.maxAge) });
   }
   if (req.method === "POST" && path === "/api/auth/login") {
     const b = await body(req);
@@ -802,8 +825,11 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     const { rows } = await pool.query("SELECT id, password_hash FROM users WHERE email = $1", [email]);
     const ok = rows[0] && (await verifyPassword(String(b.password ?? ""), rows[0].password_hash));
     if (!ok) throw new AuthError("wrong email or password");
+    const joined = typeof b.inviteToken === "string" && b.inviteToken
+      ? (await withSystem(pool, (tx) => acceptInvitation(tx, { token: b.inviteToken, userId: rows[0].id }))).orgId
+      : undefined;
     const s = await createSession(pool, rows[0].id);
-    return json({ ok: true }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+    return json({ ok: true, joined }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
   }
   if (req.method === "POST" && path === "/api/auth/logout") {
     await endSession(pool, cookie(req, SESSION_COOKIE));

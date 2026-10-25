@@ -928,27 +928,102 @@ async function payrollView(id, preview = null) {
 
 // ------------------------------------------------------------- org views
 
+const ROLE_LABEL = {
+  owner: "Owner", admin: "Admin", bookkeeper: "Bookkeeper", approver: "Approver", accountant: "Accountant", read_only: "View only",
+};
+const ROLE_HELP = {
+  admin: "manages the team and settings", bookkeeper: "posts entries, prepares payroll", approver: "approves payroll",
+  accountant: "closes periods, adjustments", read_only: "sees everything, changes nothing",
+};
+const team = { link: null };
+
 async function teamView() {
-  const { members } = await api(orgPath("/members"));
-  const canAdd = ["owner", "admin"].includes(state.org.role);
+  const { members, invitations } = await api(orgPath("/members"));
+  const mine = state.org.role;
+  const canManage = ["owner", "admin"].includes(mine);
+  const me = state.me.user.id;
+  const manageable = (m) => m.userId !== me && (mine === "owner" || (mine === "admin" && m.role !== "owner"));
+  const roleChoices = (current) => Object.entries(ROLE_LABEL).filter(([k]) => mine === "owner" || k !== "owner")
+    .map(([k, l]) => `<option value="${k}" ${k === current ? "selected" : ""}>${l}</option>`).join("");
+  const link = team.link;
+  team.link = null;
   app.innerHTML = shell("team", `
-    <div class="head"><div><h1>Team</h1><p class="muted">Roles control who can post, close periods and approve payroll.</p></div></div>
+    <div class="head"><div><h1>Team</h1><p class="muted">Roles control who can post, close periods and approve payroll. Payroll needs at least two people: one prepares, another approves.</p></div></div>
+    ${link ? `<div class="alert good">Invitation ready. Send this link to ${esc(link.email)}; it works once, for that email, for 14 days.
+      <div class="row" style="margin-top:8px"><input id="invite-link" class="mono" readonly value="${esc(link.link)}" style="flex:1;min-width:260px"><button class="secondary" data-action="copy-invite">Copy link</button></div></div>` : ""}
     <div class="panel table-wrap"><table>
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Added</th></tr></thead>
-      <tbody>${members.map((m) => `<tr><td>${esc(m.name)}</td><td>${esc(m.email)}</td><td>${m.role}</td><td>${m.created_at.slice(0, 10)}</td></tr>`).join("")}</tbody>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr></thead>
+      <tbody>${members.map((m) => `<tr><td>${esc(m.name)}${m.userId === me ? ` <span class="muted">(you)</span>` : ""}</td><td>${esc(m.email)}</td>
+        <td>${canManage && manageable(m) ? `<select data-action="member-role" data-id="${m.userId}" aria-label="Role for ${esc(m.name)}">${roleChoices(m.role)}</select>` : ROLE_LABEL[m.role]}</td>
+        <td>${m.createdAt.slice(0, 10)}</td>
+        <td>${canManage && manageable(m) ? `<button class="link" data-action="member-remove" data-id="${m.userId}" data-name="${esc(m.name)}">Remove</button>`
+          : m.userId === me ? `<button class="link" data-action="leave-org">Leave</button>` : ""}</td></tr>`).join("")}</tbody>
     </table></div>
-    ${canAdd ? `<div class="panel"><h2>Add a team member</h2>
-      <p class="muted">Share the email and starting password with them directly. Payroll needs at least two people: one prepares, another approves.</p>
-      <form data-form="member" class="grid">
-        <label>Name<input name="name" required></label>
-        <label>Email<input name="email" type="email" required></label>
-        <label>Starting password<input name="password" type="text" minlength="10" required autocomplete="off"></label>
-        <label>Role<select name="role">
-          <option value="approver">Approver (approves payroll)</option><option value="bookkeeper">Bookkeeper (posts entries, prepares payroll)</option>
-          <option value="accountant">Accountant (closes periods, adjustments)</option><option value="admin">Admin</option><option value="read_only">Read-only</option>
-        </select></label>
-        <label>&nbsp;<button type="submit">Add member</button></label>
-      </form></div>` : ""}`);
+    ${canManage ? `<div class="panel">
+      <h2>Invite someone</h2>
+      <p class="muted">They join by signing up, or signing in, with this email through the link you send them. You never set a password for anyone.</p>
+      <form data-form="invite" class="row">
+        <label>Email<input name="email" type="email" required style="width:260px"></label>
+        <label>Role<select name="role">${Object.entries(ROLE_HELP).filter(([k]) => mine === "owner" || k !== "owner")
+          .map(([k, h]) => `<option value="${k}" ${k === "bookkeeper" ? "selected" : ""}>${ROLE_LABEL[k]} (${h})</option>`).join("")}</select></label>
+        <button type="submit">Create invitation</button>
+      </form>
+      ${invitations.length ? `<h2 style="margin-top:16px">Pending invitations</h2><div class="table-wrap"><table>
+        <thead><tr><th>Email</th><th>Role</th><th>Sent</th><th>Expires</th><th></th></tr></thead>
+        <tbody>${invitations.map((i) => `<tr><td>${esc(i.email)}</td><td>${ROLE_LABEL[i.role]}</td><td>${i.createdAt.slice(0, 10)}</td><td>${i.expiresAt.slice(0, 10)}</td>
+          <td><button class="link" data-action="invite-revoke" data-id="${i.id}">Revoke</button></td></tr>`).join("")}</tbody>
+      </table></div>` : ""}
+    </div>` : ""}`);
+}
+
+/** The page an invitation link opens. */
+async function joinView(token, error = "") {
+  let inv;
+  try { inv = await api(`/api/invitations/${token}`); } catch (err) { inv = null; error = error || err.message; }
+  let me = state.me;
+  if (!me) {
+    // Not api(): a 401 here just means "not signed in yet", not a redirect to the login page.
+    const res = await api("/api/me", { raw: true });
+    me = state.me = res.ok ? await res.json() : null;
+  }
+  const pending = inv?.status === "pending";
+  const signedInAs = me?.user?.email;
+  let body;
+  if (!inv) body = `<p>Ask whoever invited you for a new link.</p>`;
+  else if (!pending) body = `<p>This invitation has ${inv.status === "accepted" ? "already been used" : inv.status === "expired" ? "expired" : "been withdrawn"}. ${inv.status === "accepted" ? `<a href="#/">Go to your books</a>` : "Ask for a new link."}</p>`;
+  else if (signedInAs === inv.email) body = `<button data-action="accept-invite" data-token="${esc(token)}">Join ${esc(inv.orgName)}</button>`;
+  else if (signedInAs) body = `<p>You're signed in as ${esc(signedInAs)}, but this invitation is for ${esc(inv.email)}.</p><button class="secondary" data-action="logout-join">Sign out and continue</button>`;
+  else body = `
+    <h2>New to Alt-QBO</h2>
+    <form data-form="join-signup" data-token="${esc(token)}">
+      <label>Your name<input name="name" required autocomplete="name"></label>
+      <label>Email<input name="email" value="${esc(inv.email)}" readonly></label>
+      <label>Choose a password<input name="password" type="password" minlength="10" required autocomplete="new-password"></label>
+      <button type="submit">Create account and join</button>
+    </form>
+    <h2 style="margin-top:18px">Already have an account</h2>
+    <form data-form="join-login" data-token="${esc(token)}">
+      <input type="hidden" name="email" value="${esc(inv.email)}">
+      <label>Password for ${esc(inv.email)}<input name="password" type="password" required autocomplete="current-password"></label>
+      <button type="submit" class="secondary">Sign in and join</button>
+    </form>`;
+  app.innerHTML = `
+    <div class="wrap auth">
+      <div class="panel">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>Alt-QBO</h1></div>
+        ${inv ? `<p>You're invited to join <strong>${esc(inv.orgName)}</strong> as ${esc(ROLE_LABEL[inv.role] ?? inv.role)}.</p>` : ""}
+        ${error ? `<div class="alert bad">${esc(error)}</div>` : ""}
+        ${body}
+      </div>
+    </div>`;
+}
+
+async function joined(orgId) {
+  state.me = null; state.org = null;
+  if (orgId) { state.orgId = orgId; try { localStorage.setItem("altqbo_org", orgId); } catch {} }
+  location.hash = "#/";
+  await route();
+  toast("You've joined the team");
 }
 
 async function auditView() {
@@ -972,6 +1047,7 @@ async function route() {
   const parts = hash.slice(2).split("/");
   try {
     if (parts[0] === "login" || parts[0] === "signup") return authView(parts[0]);
+    if (parts[0] === "join" && parts[1]) return await joinView(parts[1]);
     if (!state.me) {
       try { state.me = await api("/api/me"); } catch { return authView("login"); }
     }
@@ -1024,6 +1100,12 @@ document.addEventListener("change", (ev) => {
     bankUi.account = t.value;
     bankView(state.entity.entity.id).catch((err) => toast(err.message));
   }
+  if (t.dataset.action === "member-role") {
+    api(orgPath(`/members/${t.dataset.id}/role`), { body: { role: t.value } })
+      .then(() => toast(`Role changed to ${ROLE_LABEL[t.value]}`))
+      .catch((err) => toast(err.message))
+      .finally(() => teamView());
+  }
   if (t.dataset.action === "switch-org") {
     state.orgId = t.value;
     try { localStorage.setItem("altqbo_org", t.value); } catch {}
@@ -1065,6 +1147,36 @@ document.addEventListener("click", async (ev) => {
         const kind = location.hash.includes("/bills") ? "bills" : "invoices";
         document.getElementById(`detail-${b.dataset.id}`).innerHTML = docDetail(await api(entPath(`/${kind}/${b.dataset.id}`)));
       }
+    } else if (a === "copy-invite") {
+      const input = document.getElementById("invite-link");
+      await navigator.clipboard.writeText(input.value).catch(() => { input.select(); document.execCommand("copy"); });
+      toast("Link copied");
+    } else if (a === "invite-revoke") {
+      b.disabled = true;
+      await api(orgPath(`/invitations/${b.dataset.id}/revoke`), { body: {} });
+      toast("Invitation revoked; the link no longer works");
+      await teamView();
+    } else if (a === "member-remove") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = `Remove ${b.dataset.name}? Click again`; return; }
+      b.disabled = true;
+      await api(orgPath(`/members/${b.dataset.id}/remove`), { body: {} });
+      toast(`${b.dataset.name} removed`);
+      await teamView();
+    } else if (a === "leave-org") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Leave this organisation? Click again"; return; }
+      b.disabled = true;
+      await api(orgPath("/leave"), { body: {} });
+      state.me = null; state.org = null; state.orgId = null;
+      location.hash = "#/";
+      await route();
+    } else if (a === "accept-invite") {
+      b.disabled = true;
+      const r = await api(`/api/invitations/${b.dataset.token}/accept`, { body: {} });
+      await joined(r.orgId);
+    } else if (a === "logout-join") {
+      await api("/api/auth/logout", { body: {} });
+      state.me = null; state.org = null; state.orgId = null;
+      await route();
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);
@@ -1238,10 +1350,18 @@ document.addEventListener("submit", async (ev) => {
       await api(entPath("/contacts"), { body: d });
       toast(`${d.name} added`);
       await contactsView(state.entity.entity.id);
-    } else if (kind === "member") {
-      await api(orgPath("/members"), { body: d });
-      toast(`${d.name} added as ${d.role}`);
+    } else if (kind === "invite") {
+      team.link = await api(orgPath("/invitations"), { body: d });
       await teamView();
+    } else if (kind === "join-signup" || kind === "join-login") {
+      const token = f.dataset.token;
+      let r;
+      try {
+        r = await api(`/api/auth/${kind === "join-signup" ? "signup" : "login"}`, { body: { ...d, inviteToken: token } });
+      } catch (err) {
+        return joinView(token, err.message);
+      }
+      await joined(r.joined);
     }
   } catch (err) {
     toast(err.message);
