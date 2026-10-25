@@ -95,7 +95,8 @@ function topbar() {
       <button class="link" data-action="theme" title="Switch between light, dark and your device's setting">${{ auto: "Theme: device", dark: "Theme: dark", light: "Theme: light" }[t]}</button>
       <button class="secondary" data-action="logout">Sign out</button>
     </header>
-    <div class="banner">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</div>`;
+    <div class="banner">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</div>
+    ${state.me?.emailEnabled && state.me.user && !state.me.user.emailVerified ? `<div class="banner info">Please confirm your email: we sent a link to ${esc(state.me.user.email)}. <button class="link" data-action="resend-verify">Send it again</button></div>` : ""}`;
 }
 
 // The everyday menu stays short. Bookkeeping mechanics live under "Accountant tools".
@@ -134,14 +135,39 @@ function shell(active, content) {
 
 // ------------------------------------------------------------------ auth
 
-function authView(mode, error = "") {
-  const signup = mode === "signup";
-  app.innerHTML = `
+let emailEnabled = null;
+async function emailOn() {
+  if (emailEnabled === null) emailEnabled = await api("/api/auth/options").then((o) => o.email).catch(() => false);
+  return emailEnabled;
+}
+
+const authPage = (inner) => `
     <div class="wrap auth">
       <div class="panel">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>Alt-QBO</h1></div>
+        ${inner}
+      </div>
+    </div>`;
+
+async function authView(mode, error = "", notice = "") {
+  const signup = mode === "signup";
+  const email = await emailOn();
+  const alerts = `${error ? `<div class="alert bad">${esc(error)}</div>` : ""}${notice ? `<div class="alert good">${esc(notice)}</div>` : ""}`;
+  if (mode === "forgot" || mode === "magic") {
+    const forgot = mode === "forgot";
+    app.innerHTML = authPage(`
+      <p class="muted">${forgot ? "Enter your email and we'll send a link to choose a new password." : "Enter your email and we'll send a link that signs you in, no password needed."}</p>
+      ${alerts}
+      <form data-form="${mode}">
+        <label>Email<input name="email" type="email" required autocomplete="email"></label>
+        <button type="submit">${forgot ? "Send reset link" : "Email me a sign-in link"}</button>
+      </form>
+      <p style="margin-top:14px"><a href="#/login">Back to sign in</a></p>`);
+    return;
+  }
+  app.innerHTML = authPage(`
         <p class="muted">${signup ? "Create your account and your first organisation." : "Sign in to your books."}</p>
-        ${error ? `<div class="alert bad">${esc(error)}</div>` : ""}
+        ${alerts}
         <form data-form="${mode}">
           ${signup ? `<label>Your name<input name="name" required autocomplete="name"></label>` : ""}
           <label>Email<input name="email" type="email" required autocomplete="email"></label>
@@ -151,9 +177,33 @@ function authView(mode, error = "") {
             <label>Invite code<input name="inviteCode" autocomplete="off"></label>` : ""}
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>
-        <p style="margin-top:14px">${signup ? `Already have an account? <a href="#/login">Sign in</a>` : `New here? <a href="#/signup">Create an account</a>`}</p>
-      </div>
-    </div>`;
+        ${!signup && email ? `<p style="margin-top:12px"><a href="#/magic">Email me a sign-in link instead</a> · <a href="#/forgot">Forgot your password?</a></p>` : ""}
+        <p style="margin-top:14px">${signup ? `Already have an account? <a href="#/login">Sign in</a>` : `New here? <a href="#/signup">Create an account</a>`}</p>`);
+}
+
+/** Pages opened from an emailed link. */
+async function emailLinkView(kind, token, error = "") {
+  if (kind === "reset") {
+    app.innerHTML = authPage(`
+      <p class="muted">Choose a new password. Signing in with it signs you out everywhere else.</p>
+      ${error ? `<div class="alert bad">${esc(error)}</div>` : ""}
+      <form data-form="reset-password" data-token="${esc(token)}">
+        <label>New password<input name="password" type="password" minlength="10" required autocomplete="new-password"></label>
+        <button type="submit">Save and sign in</button>
+      </form>`);
+    return;
+  }
+  try {
+    const r = await api(`/api/auth/${kind}/${token}`, { body: {} });
+    state.me = null; state.org = null;
+    if (kind === "verify") {
+      app.innerHTML = authPage(`<div class="alert good">Thanks, ${esc(r.email)} is confirmed.</div><p><a href="#/">Go to your books</a></p>`);
+      return;
+    }
+    location.hash = "#/";
+  } catch (err) {
+    app.innerHTML = authPage(`<div class="alert bad">${esc(err.message)}</div><p><a href="#/${kind === "verify" ? "" : "magic"}">${kind === "verify" ? "Go to your books" : "Send a new link"}</a></p>`);
+  }
 }
 
 // ------------------------------------------------------------------ views
@@ -1179,7 +1229,7 @@ async function teamView() {
   team.link = null;
   app.innerHTML = shell("team", `
     <div class="head"><div><h1>Team</h1><p class="muted">Roles control who can post, close periods and approve payroll. Payroll needs at least two people: one prepares, another approves.</p></div></div>
-    ${link ? `<div class="alert good">Invitation ready. Send this link to ${esc(link.email)}; it works once, for that email, for 14 days.
+    ${link ? `<div class="alert good">${link.emailed ? `We emailed the invitation to ${esc(link.email)}. You can also copy the link below; it` : `Invitation ready. Send this link to ${esc(link.email)}; it`} works once, for that email, for 14 days.
       <div class="row" style="margin-top:8px"><input id="invite-link" class="mono" readonly value="${esc(link.link)}" style="flex:1;min-width:260px"><button class="secondary" data-action="copy-invite">Copy link</button></div></div>` : ""}
     <div class="panel table-wrap"><table>
       <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr></thead>
@@ -1276,10 +1326,11 @@ async function route() {
   const hash = location.hash || "#/";
   const parts = hash.slice(2).split("/");
   try {
-    if (parts[0] === "login" || parts[0] === "signup") return authView(parts[0]);
+    if (["login", "signup", "forgot", "magic"].includes(parts[0])) return await authView(parts[0]);
+    if (["email-link", "reset", "verify"].includes(parts[0]) && parts[1]) return await emailLinkView(parts[0], parts[1]);
     if (parts[0] === "join" && parts[1]) return await joinView(parts[1]);
     if (!state.me) {
-      try { state.me = await api("/api/me"); } catch { return authView("login"); }
+      try { state.me = await api("/api/me"); } catch { return await authView("login"); }
     }
     if (!state.me.orgs.length) return authView("login", "Your account isn't part of any organisation yet.");
     if (!state.orgId || !state.me.orgs.some((o) => o.id === state.orgId)) {
@@ -1362,7 +1413,11 @@ document.addEventListener("click", async (ev) => {
   if (!b || b.tagName === "SELECT") return;
   const a = b.dataset.action;
   try {
-    if (a === "theme") {
+    if (a === "resend-verify") {
+      b.disabled = true;
+      await api("/api/auth/verify-resend", { body: {} });
+      b.textContent = "Sent. Check your inbox.";
+    } else if (a === "theme") {
       const next = THEMES[(THEMES.indexOf(theme()) + 1) % THEMES.length];
       try { localStorage.setItem("altqbo_theme", next); } catch {}
       applyTheme(next);
@@ -1542,6 +1597,22 @@ document.addEventListener("submit", async (ev) => {
       state.me = null; state.org = null; state.orgId = null;
       location.hash = "#/";
       await route();
+    } else if (kind === "forgot" || kind === "magic") {
+      try {
+        await api(`/api/auth/${kind === "forgot" ? "reset" : "email-link"}`, { body: d });
+      } catch (err) {
+        return authView(kind, err.message);
+      }
+      return authView(kind, "", `If ${d.email} has an Alt-QBO account, a link is on its way. Check your inbox and spam folder.`);
+    } else if (kind === "reset-password") {
+      try {
+        await api(`/api/auth/reset/${f.dataset.token}`, { body: d });
+      } catch (err) {
+        return emailLinkView("reset", f.dataset.token, err.message);
+      }
+      state.me = null; state.org = null; state.orgId = null;
+      location.hash = "#/";
+      toast("Password changed");
     } else if (kind === "entity") {
       const e = await api(orgPath("/entities"), { body: { ...d, country: "US" } });
       state.org.stale = true;

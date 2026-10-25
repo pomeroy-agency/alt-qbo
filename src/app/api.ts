@@ -13,6 +13,8 @@ import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { toMajor } from "../core/money.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
+import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
+import type { Mailer } from "./mail.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, calculatePayRun, type PayRunInput } from "../payroll/pay-run.js";
@@ -26,6 +28,15 @@ import {
 export interface ApiOptions {
   /** When set, sign-up requires this invite code. */
   signupCode?: string;
+  /** Sends sign-in, reset, confirmation and invitation emails. Without one, those features say email isn't set up. */
+  mailer?: Mailer;
+  /** The site's own address for links in emails. Taken from configuration, not the request, so a forged Host header can't redirect a reset link. */
+  appUrl?: string;
+}
+
+/** Where emailed and copied links point. */
+function appUrl(req: Request, opts: ApiOptions): string {
+  return (opts.appUrl || new URL(req.url).origin).replace(/\/+$/, "");
 }
 
 class HttpError extends Error {
@@ -89,6 +100,7 @@ const ENTITY_TYPES: EntityType[] = ["sole_prop", "llc_single", "llc_partnership"
 
 interface Ctx {
   pool: pg.Pool;
+  opts: ApiOptions;
   user: SessionUser;
   orgId: string;
   role: Role;
@@ -164,7 +176,19 @@ route("POST", "/api/orgs/:org/invitations", async (req, _p, ctx) => {
   const b = await body(req);
   const email = normaliseEmail(b.email);
   const out = await withSystem(ctx.pool, (tx) => invite(tx, { orgId: ctx.orgId, email, role: b.role as InviteRole, actor: ctx.actor }));
-  return json({ id: out.id, email, token: out.token, link: `${new URL(req.url).origin}/#/join/${out.token}` }, 201);
+  const link = `${appUrl(req, ctx.opts)}/#/join/${out.token}`;
+  // The link is always returned so it can be copied; emailing it is a convenience on top.
+  let emailed = false;
+  if (ctx.opts.mailer) {
+    const org = (await ctx.pool.query("SELECT name FROM organizations WHERE id = $1", [ctx.orgId])).rows[0];
+    try {
+      await ctx.opts.mailer({ to: email, ...emailText.invite(org.name, ROLE_NAMES[b.role as string] ?? String(b.role), ctx.user.name, link) });
+      emailed = true;
+    } catch (err) {
+      console.error("invitation email failed", err);
+    }
+  }
+  return json({ id: out.id, email, token: out.token, link, emailed }, 201);
 });
 
 route("POST", "/api/orgs/:org/invitations/:invitation/revoke", async (_req, p, ctx) => {
@@ -862,7 +886,60 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
 
 // --------------------------------------------------------------- dispatch
 
+const ROLE_NAMES: Record<string, string> = { admin: "an admin", bookkeeper: "a bookkeeper", approver: "an approver", accountant: "an accountant", read_only: "a viewer" };
+
+const EMAIL_ROUTE: Record<string, EmailPurpose> = { "email-link": "sign_in", reset: "reset", verify: "verify" };
+const EMAIL_HASH: Record<EmailPurpose, string> = { sign_in: "email-link", reset: "reset", verify: "verify" };
+
+/** Emails a one-time link if the account exists and isn't over its hourly limit. Says nothing either way, so the form can't be used to find accounts. */
+async function sendEmailLink(req: Request, pool: pg.Pool, opts: ApiOptions, email: string, purpose: EmailPurpose): Promise<void> {
+  if (!opts.mailer) throw new HttpError(503, "email isn't set up on this site yet");
+  const issued = await withSystem(pool, async (tx) => {
+    const user = (await tx.query("SELECT id, email, name FROM users WHERE email = $1", [email])).rows[0];
+    if (!user) return null;
+    const token = await issueEmailToken(tx, user, purpose);
+    return token ? { user, token } : null;
+  });
+  if (!issued) return;
+  const link = `${appUrl(req, opts)}/#/${EMAIL_HASH[purpose]}/${issued.token}`;
+  try {
+    await opts.mailer({ to: issued.user.email, ...emailText[purpose](issued.user.name, link) });
+  } catch (err) {
+    console.error(`${purpose} email failed`, err);
+  }
+}
+
 async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response | null> {
+  if (req.method === "GET" && path === "/api/auth/options") return json({ email: Boolean(opts.mailer) });
+  if (req.method === "POST" && (path === "/api/auth/email-link" || path === "/api/auth/reset")) {
+    const b = await body(req);
+    await sendEmailLink(req, pool, opts, normaliseEmail(b.email), path.endsWith("reset") ? "reset" : "sign_in");
+    return json({ ok: true });
+  }
+  if (req.method === "POST" && path === "/api/auth/verify-resend") {
+    const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+    if (!user) throw new AuthError("not signed in");
+    await sendEmailLink(req, pool, opts, user.email, "verify");
+    return json({ ok: true });
+  }
+  const tokenPath = /^\/api\/auth\/(email-link|reset|verify)\/([\w-]{20,100})$/.exec(path);
+  if (req.method === "POST" && tokenPath) {
+    const purpose = EMAIL_ROUTE[tokenPath[1]!]!;
+    const b = purpose === "reset" ? await body(req) : {};
+    const passwordHash = purpose === "reset" ? await hashPassword(str(b.password, "password", 200)) : null;
+    const user = await withSystem(pool, async (tx) => {
+      const u = await useEmailToken(tx, tokenPath[2]!, purpose);
+      if (passwordHash) {
+        await tx.query("UPDATE users SET password_hash = $2 WHERE id = $1", [u.id, passwordHash]);
+        // A new password signs out every other session, in case the old one leaked.
+        await tx.query("DELETE FROM sessions WHERE user_id = $1", [u.id]);
+      }
+      return u;
+    });
+    if (purpose === "verify") return json({ ok: true, email: user.email });
+    const s = await createSession(pool, user.id);
+    return json({ ok: true }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+  }
   if (req.method === "GET" && path === "/api/health") return json({ ok: true });
   if (req.method === "GET" && path === "/api/rule-packs") {
     return json({ packs: allRulePacks().map((p) => ({ id: p.id, version: p.version, status: p.status, effectiveFrom: p.effectiveFrom, effectiveTo: p.effectiveTo, sources: p.sources, reviewNotes: p.reviewNotes })) });
@@ -904,6 +981,7 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       }
       return uid;
     });
+    if (opts.mailer) await sendEmailLink(req, pool, opts, email, "verify");
     const s = await createSession(pool, userId);
     return json({ ok: true, joined }, 201, { "set-cookie": sessionCookie(s.token, s.maxAge) });
   }
@@ -943,7 +1021,8 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
         WHERE m.user_id = $1 ORDER BY m.created_at`,
       [user.id],
     );
-    return json({ user, orgs: rows });
+    const verified = (await pool.query("SELECT email_verified_at IS NOT NULL AS v FROM users WHERE id = $1", [user.id])).rows[0].v;
+    return json({ user: { ...user, emailVerified: verified }, orgs: rows, emailEnabled: Boolean(opts.mailer) });
   }
   return null;
 }
@@ -972,7 +1051,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       const role = await membershipRole(pool, user.id, params.org!);
       if (!role) throw new HttpError(404, "organisation not found");
       if (req.method !== "GET" && role === "read_only") throw new HttpError(403, "read-only users cannot make changes");
-      const ctx: Ctx = { pool, user, orgId: params.org!, role, actor: { id: `user:${user.email}`, role } };
+      const ctx: Ctx = { pool, opts, user, orgId: params.org!, role, actor: { id: `user:${user.email}`, role } };
       return await r.handler(req, params, ctx);
     }
     return json({ error: "not found" }, 404);

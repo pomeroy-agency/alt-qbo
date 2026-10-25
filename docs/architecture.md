@@ -39,6 +39,8 @@ Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields
 
 11. **Overview and closing (`src/core/overview.ts`).** The money figures are read from posted lines and open documents on the same basis as the reports, and the menu badges come from one counting query run on every screen. Closing the books through a date is a loop over `setPeriodStatus`, so it obeys the same role checks and audit events as closing one month, plus one `books.closed_through` event; it never reopens anything. The example business is built with the ordinary services (`issueDocument`, `recordPayment`, `importBankCsv`) in a separate organisation, one per person.
 
+12. **Email (`src/app/email-auth.ts`).** Sign-in, reset and confirmation links each carry a random 32-byte token; `email_tokens` keeps its SHA-256 hash, purpose, the address it went to and an expiry (15 minutes, an hour, three days). A trigger lets a token be spent once, before it expires, and never edited or deleted. A token stops working if the account's email changes, and spending any token marks the email confirmed. Links are built from the configured site address (`APP_URL`, or Netlify's `URL`), never the request's Host header. The request forms answer the same way whether or not an account exists.
+
 ## Not in Phase 0 yet
 
 - Multi-currency functional amounts and revaluation (lines carry a currency and balance per currency today).
