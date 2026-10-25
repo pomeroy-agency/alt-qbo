@@ -81,9 +81,11 @@ export function returnPeriod(key: string): ReturnPeriod {
     const to = quarterEnd(y, q);
     const period: ReturnPeriod = { key, label: `Q${q} ${y}`, from, to, dueDate: returnDue(to) };
     if (m[3]) {
-      // Prepayments for the first two months, due the 24th of the month after each.
+      // Prepayments for the first two months, due the 24th of the month after each. In the
+      // second quarter the second one covers May 1 to June 15, still due June 24.
       period.prepayments = [0, 1].map((i) => {
         const mo = q * 3 - 2 + i;
+        if (q === 2 && i === 1) return { month: "May and June 1-15", from: iso(y, 5, 1), to: iso(y, 6, 15), dueDate: due(iso(y, 6, 24)) };
         return { month: MONTHS[mo - 1]!, from: iso(y, mo, 1), to: monthEnd(y, mo), dueDate: due(iso(y, mo + 1, 24)) };
       });
     }
@@ -220,7 +222,10 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
   ];
   for (const p of period.prepayments ?? []) {
     const m = await salesTaxReport(tx, entityId, p.from, p.to);
-    lines.push(money("Prepayment", `${p.month} prepayment, due ${p.dueDate}`, m.taxMinor, "The month's tax charged. The CDTFA accepts a set share of it as the prepayment; check your prepayment notice"));
+    const share = p.to.endsWith("-06-15")
+      ? "Tax charged May 1 to June 15. Prepay at least 90% of May's tax plus 90% of June 1-15's (or 135% of May's, or half of last year's second quarter)"
+      : "The month's tax charged. Prepay at least 90% of it, or a third of the same quarter's tax last year if you were in business all of that quarter";
+    lines.push(money("Prepayment", `${p.month} prepayment, due ${p.dueDate}`, m.taxMinor, share));
   }
 
   return {

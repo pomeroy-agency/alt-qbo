@@ -27,6 +27,8 @@ describe("sales tax return periods", () => {
       { month: "January", from: "2027-01-01", to: "2027-01-31", dueDate: "2027-02-24" },
       { month: "February", from: "2027-02-01", to: "2027-02-28", dueDate: "2027-03-24" },
     ]);
+    // The second quarter's second prepayment runs to June 15.
+    expect(returnPeriod("2027-Q2P").prepayments?.[1]).toEqual({ month: "May and June 1-15", from: "2027-05-01", to: "2027-06-15", dueDate: "2027-06-24" });
     expect(() => returnPeriod("2027-Q5")).toThrow(LedgerError);
     expect(() => returnPeriod("2027-M13")).toThrow(LedgerError);
   });
