@@ -189,3 +189,23 @@ details > summary { cursor: pointer; }
   .stub { break-after: page; }
   .stub:last-child { break-after: auto; }
 }
+
+/* Two-factor setup */
+.qr { width: 200px; max-width: 100%; margin: 10px 0; padding: 8px; background: #fff; border-radius: 8px; }
+.qr svg { display: block; width: 100%; height: auto; }
+.steps li { margin-bottom: 14px; }
+pre.recovery { background: var(--bg); border: 1px solid var(--line); padding: 12px; border-radius: 8px; font-size: 15px; line-height: 1.7; }
+details { margin-top: 10px; }
+details summary { cursor: pointer; color: var(--brand); }
+
+/* Billing */
+.banner.bad { background: var(--bad-bg); color: var(--bad-ink); }
+.grid.plans { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 12px; }
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 12px; }
+.card.plan { cursor: pointer; display: grid; gap: 6px; }
+.card.plan input { justify-self: start; }
+.card.plan.on, .card.plan:has(input:checked) { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.row.seg { gap: 6px; }
+.card.plan .plan-price { font-size: 26px; font-weight: 700; }
+.card.plan .plan-price .muted { font-size: 14px; font-weight: 400; }
+.muted.small { font-size: 13px; }

@@ -13,12 +13,19 @@ import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBan
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
 import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
 import { backupEntity } from "../core/backup.js";
+import { listRestorePoints, readRestorePoint, type BackupStore } from "../core/nightly-backups.js";
+import {
+  BillingError, billingSummary, cancel as cancelSubscription, checkAccess, choosePlan, ensureSubscription, resume as resumeSubscription,
+  runBilling, saveBillingDetails, saveCard, type BillingConfig,
+} from "../billing/billing.js";
+import { GatewayError } from "../billing/gateway.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
+import { beginMfaSetup, checkSecondFactor, disableMfa, enableMfa, issueMfaTicket, mfaStatus, redeemMfaTicket, regenerateRecoveryCodes } from "./mfa.js";
 import type { Mailer } from "./mail.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
@@ -43,6 +50,10 @@ export interface ApiOptions {
   appUrl?: string;
   /** Looks up the California sales tax rate for an address (the CDTFA in production). Without one, only an owner or accountant can issue a taxable invoice, by setting the rate by hand. */
   taxRates?: RateLookup;
+  /** Where the nightly encrypted backups are kept, and their key. Without it, restore points can't be downloaded. */
+  backups?: { store: BackupStore; key: Buffer };
+  /** Alt-QBO's own subscriptions: card processor, seller's books, and whether unpaid organisations become read-only. */
+  billing?: BillingConfig;
 }
 
 /** Where emailed and copied links point. */
@@ -144,16 +155,18 @@ async function ensureEntity(tx: Tx, entityId: string) {
 
 // ------------------------------------------------------------ organisation
 
-route("GET", "/api/orgs/:org", async (_req, _p, ctx) =>
-  tenant(ctx, async (tx) => {
+route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
+  // Whether changes are paused for an unpaid subscription, so every page can say so.
+  const access = ctx.opts.billing?.enforce ? await checkAccess(ctx.pool, ctx.orgId, ctx.opts.billing, pacificToday()) : { level: "full" };
+  return tenant(ctx, async (tx) => {
     const org = (await tx.query("SELECT id, name, kind FROM organizations WHERE id = $1", [ctx.orgId])).rows[0];
     const entities = (await tx.query(
       `SELECT id, legal_name, entity_type, region, framework, functional_currency, tax_return_type
          FROM entities ORDER BY created_at`,
     )).rows;
-    return json({ org, role: ctx.role, entities });
-  }),
-);
+    return json({ org, role: ctx.role, entities, access });
+  });
+});
 
 route("POST", "/api/orgs/:org/entities", async (req, _p, ctx) => {
   requireRole(ctx, ["owner", "admin"]);
@@ -225,6 +238,107 @@ route("POST", "/api/orgs/:org/members/:user/remove", async (_req, p, ctx) => {
 route("POST", "/api/orgs/:org/leave", async (_req, _p, ctx) => {
   await withSystem(ctx.pool, (tx) => removeMember(tx, { orgId: ctx.orgId, userId: ctx.user.id, actor: ctx.actor, self: true }));
   return json({ ok: true });
+});
+
+route("GET", "/api/orgs/:org/security", async (_req, _p, ctx) => {
+  const org = (await ctx.pool.query("SELECT require_mfa FROM organizations WHERE id = $1", [ctx.orgId])).rows[0];
+  const members = (await ctx.pool.query(
+    `SELECT u.name, u.email, m.role, u.totp_enabled_at IS NOT NULL AS mfa FROM memberships m JOIN users u ON u.id = m.user_id
+      WHERE m.org_id = $1 ORDER BY lower(u.name)`,
+    [ctx.orgId],
+  )).rows;
+  return json({ requireMfa: org.require_mfa, members: ["owner", "admin"].includes(ctx.role) ? members : [] });
+});
+
+route("POST", "/api/orgs/:org/security", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner"]);
+  const b = await body(req);
+  const requireMfa = b.requireMfa === true;
+  if (requireMfa && !(await mfaStatus(ctx.pool, ctx.user.id)).enabled) {
+    throw new HttpError(400, "turn on two-factor sign-in for yourself first");
+  }
+  await withSystem(ctx.pool, async (tx) => {
+    await tx.query("UPDATE organizations SET require_mfa = $2 WHERE id = $1", [ctx.orgId, requireMfa]);
+    await appendAudit(tx, {
+      orgId: ctx.orgId, actor: ctx.actor.id, action: requireMfa ? "org.mfa_required" : "org.mfa_optional",
+      objectType: "organization", objectId: ctx.orgId, after: { requireMfa }, context: { role: ctx.role },
+    });
+  });
+  return json({ ok: true, requireMfa });
+});
+
+// ----------------------------------------------------------------- billing
+
+const billingCfg = (ctx: Ctx): BillingConfig => ({ ...ctx.opts.billing, mailer: ctx.opts.mailer, taxRates: ctx.opts.taxRates, appUrl: ctx.opts.appUrl });
+
+route("GET", "/api/orgs/:org/billing", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  return withSystem(ctx.pool, async (tx) => json(await billingSummary(tx, ctx.orgId, pacificToday(), billingCfg(ctx))));
+});
+
+route("POST", "/api/orgs/:org/billing/details", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => saveBillingDetails(tx, ctx.orgId, pacificToday(), b));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/billing/plan", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  const today = pacificToday();
+  const out = await withSystem(ctx.pool, (tx) => choosePlan(tx, ctx.orgId, today, b.plan, b.interval));
+  if (out.upgradeChargeId) await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/billing/cancel", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner"]);
+  await withSystem(ctx.pool, (tx) => cancelSubscription(tx, ctx.orgId, pacificToday()));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/billing/resume", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner"]);
+  const today = pacificToday();
+  await withSystem(ctx.pool, (tx) => resumeSubscription(tx, ctx.orgId, today));
+  await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  return json({ ok: true });
+});
+
+// Card details are typed on the card processor's own page, never here.
+route("POST", "/api/orgs/:org/billing/card", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const gateway = ctx.opts.billing?.gateway;
+  if (!gateway || !ctx.opts.billing?.seller) throw new HttpError(503, "card payments aren't switched on yet");
+  const sub = await withSystem(ctx.pool, (tx) => ensureSubscription(tx, ctx.orgId, pacificToday()));
+  if (!sub.address_line1) throw new HttpError(400, "add the billing name, email and address first");
+  const base = appUrl(req, ctx.opts);
+  const out = await gateway.startCardSetup({
+    orgId: ctx.orgId, customerId: sub.processor_customer, email: sub.billing_email!, name: sub.billing_name!,
+    successUrl: `${base}/#/billing/card/{CHECKOUT_SESSION_ID}`, cancelUrl: `${base}/#/billing`,
+  });
+  if (!sub.processor_customer) await ctx.pool.query("UPDATE subscriptions SET processor_customer = $2 WHERE org_id = $1", [ctx.orgId, out.customerId]);
+  return json({ url: out.url });
+});
+
+route("POST", "/api/orgs/:org/billing/card/confirm", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const gateway = ctx.opts.billing?.gateway;
+  if (!gateway) throw new HttpError(503, "card payments aren't switched on yet");
+  const b = await body(req);
+  const card = await gateway.finishCardSetup(str(b.sessionId, "card setup", 300));
+  const today = pacificToday();
+  await withSystem(ctx.pool, async (tx) => {
+    await saveCard(tx, ctx.orgId, card, today);
+    await appendAudit(tx, {
+      orgId: ctx.orgId, actor: ctx.actor.id, action: "billing.card_saved", objectType: "organization", objectId: ctx.orgId,
+      after: { brand: card.brand, last4: card.last4 }, context: { role: ctx.role },
+    });
+  });
+  // Anything due (a trial that already ended, a failed payment) is charged to the new card straight away.
+  const run = await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  return json({ ok: true, card: { brand: card.brand, last4: card.last4 }, charged: run.charged, failed: run.failed });
 });
 
 route("GET", "/api/orgs/:org/audit", async (_req, _p, ctx) =>
@@ -876,6 +990,36 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/sales-tax", async (req, p,
   return csvResponse(lines.join("\n") + "\n", `sales-tax-${from}-to-${to}.csv`);
 });
 
+route("GET", "/api/orgs/:org/entities/:entity/backups", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ restorePoints: await listRestorePoints(tx, p.entity!), downloadable: Boolean(ctx.opts.backups) });
+  }),
+);
+
+// Downloads one nightly copy, decrypted. A POST because it is recorded in the audit log.
+route("POST", "/api/orgs/:org/entities/:entity/backups/:run/download", async (_req, p, ctx) => {
+  requireRole(ctx, ["owner", "admin", "accountant"]);
+  const backups = ctx.opts.backups;
+  if (!backups) throw new HttpError(503, "nightly backups aren't set up on this site yet");
+  const backup = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    let b;
+    try {
+      b = await readRestorePoint(tx, backups.store, backups.key, p.entity!, p.run!);
+    } catch (err) {
+      throw new HttpError(404, err instanceof Error ? err.message : "that backup isn't available");
+    }
+    await appendAudit(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.restore_point_downloaded",
+      objectType: "entity", objectId: p.entity!, after: { takenAt: b.createdAt }, context: { role: ctx.role },
+    });
+    return b;
+  });
+  const name = `alt-qbo-backup-${String(backup.entity.legal_name).toLowerCase()}-${backup.createdAt.slice(0, 10)}.json`.replace(/[^\w.-]+/g, "-");
+  return json(backup, 200, { "content-disposition": `attachment; filename="${name}"` });
+});
+
 // A POST, not a GET, because taking a backup is recorded in the audit log.
 route("POST", "/api/orgs/:org/entities/:entity/backup", async (_req, p, ctx) => {
   requireRole(ctx, ["owner", "admin", "accountant"]);
@@ -1274,6 +1418,9 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
 
 // --------------------------------------------------------------- dispatch
 
+/** Still allowed when unpaid books are read-only: paying, leaving, security (removing people), and taking the books away. */
+const ALWAYS_ALLOWED = /\/(billing(\/.*)?|leave|security|backup|backups\/[^/]+\/download|members\/[^/]+\/remove|invitations\/[^/]+\/revoke)$/;
+
 const ROLE_NAMES: Record<string, string> = { admin: "an admin", bookkeeper: "a bookkeeper", approver: "an approver", accountant: "an accountant", read_only: "a viewer" };
 
 const EMAIL_ROUTE: Record<string, EmailPurpose> = { "email-link": "sign_in", reset: "reset", verify: "verify" };
@@ -1295,6 +1442,81 @@ async function sendEmailLink(req: Request, pool: pg.Pool, opts: ApiOptions, emai
   } catch (err) {
     console.error(`${purpose} email failed`, err);
   }
+}
+
+/** Signs someone in, joining an invitation if they came through one. */
+async function startSession(pool: pg.Pool, userId: string, inviteToken?: unknown): Promise<Response> {
+  const joined = typeof inviteToken === "string" && inviteToken
+    ? (await withSystem(pool, (tx) => acceptInvitation(tx, { token: inviteToken, userId }))).orgId
+    : undefined;
+  const s = await createSession(pool, userId);
+  return json({ ok: true, joined }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+}
+
+/**
+ * After a password or an emailed link passed: a session, or, for someone
+ * with two-factor on, a ticket for the code step and no session yet. An
+ * invitation waits until the code is entered too.
+ */
+async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): Promise<Response> {
+  if ((await mfaStatus(pool, userId)).enabled) {
+    return json({ ok: true, mfaRequired: true, ticket: await issueMfaTicket(pool, userId) });
+  }
+  return startSession(pool, userId, inviteToken);
+}
+
+async function requireMfaIfOrgDoes(pool: pg.Pool, orgId: string, userId: string): Promise<void> {
+  const { rows } = await pool.query(
+    "SELECT o.require_mfa, u.totp_enabled_at IS NOT NULL AS has_mfa FROM organizations o, users u WHERE o.id = $1 AND u.id = $2",
+    [orgId, userId],
+  );
+  if (rows[0]?.require_mfa && !rows[0].has_mfa) {
+    throw new HttpError(403, "this organisation requires two-factor sign-in; turn it on under Your account first");
+  }
+}
+
+/** Turning two-factor sign-in on and off for the signed-in person. */
+async function mfaRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
+  const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+  if (!user) throw new AuthError("not signed in");
+  const b = await body(req);
+  const notify = async (on: boolean) => {
+    if (!opts.mailer) return;
+    try {
+      await opts.mailer({ to: user.email, ...emailText[on ? "mfa_on" : "mfa_off"](user.name) });
+    } catch (err) {
+      console.error("two-factor notice failed", err);
+    }
+  };
+  if (path === "/api/me/mfa/setup") {
+    if ((await mfaStatus(pool, user.id)).enabled) throw new HttpError(409, "two-factor sign-in is already on");
+    return json(await beginMfaSetup(pool, user));
+  }
+  if (path === "/api/me/mfa/enable") {
+    const recoveryCodes = await withSystem(pool, (tx) => enableMfa(tx, user.id, b.code));
+    await notify(true);
+    return json({ ok: true, recoveryCodes });
+  }
+  if (path === "/api/me/mfa/disable" || path === "/api/me/mfa/recovery-codes") {
+    // Both need the password and a current code, so a borrowed session alone can't weaken the account.
+    const row = (await pool.query("SELECT password_hash FROM users WHERE id = $1", [user.id])).rows[0];
+    if (!(await verifyPassword(String(b.password ?? ""), row.password_hash))) throw new AuthError("wrong password", 403);
+    const out = await withSystem(pool, async (tx) => {
+      if (!(await checkSecondFactor(tx, user.id, b.code))) return null;
+      if (path.endsWith("disable")) {
+        await disableMfa(tx, user.id);
+        return [];
+      }
+      return regenerateRecoveryCodes(tx, user.id);
+    });
+    if (!out) throw new AuthError("that code isn't right", 403);
+    if (path.endsWith("disable")) {
+      await notify(false);
+      return json({ ok: true });
+    }
+    return json({ ok: true, recoveryCodes: out });
+  }
+  throw new HttpError(404, "not found");
 }
 
 async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response | null> {
@@ -1337,10 +1559,23 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       return u;
     });
     if (purpose === "verify") return json({ ok: true, email: user.email });
-    const s = await createSession(pool, user.id);
-    return json({ ok: true }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+    return signedIn(pool, user.id);
   }
   if (req.method === "GET" && path === "/api/health") return json({ ok: true });
+  // For the public status page: up or down, and last night's backups as counts only.
+  if (req.method === "GET" && path === "/api/status") {
+    try {
+      const b = (await pool.query(
+        `SELECT max(backup_date)::text AS night,
+                count(*) FILTER (WHERE verified)::int AS verified, count(*) FILTER (WHERE NOT verified)::int AS failed
+           FROM backup_runs WHERE backup_date = (SELECT max(backup_date) FROM backup_runs)`,
+      )).rows[0];
+      return json({ api: true, database: true, backups: { lastNight: b.night, verified: b.verified, failed: b.failed } });
+    } catch (err) {
+      console.error("status check failed", err);
+      return json({ api: true, database: false, backups: { lastNight: null, verified: 0, failed: 0 } });
+    }
+  }
   if (req.method === "GET" && path === "/api/rule-packs") {
     return json({ packs: allRulePacks().map((p) => ({ id: p.id, version: p.version, status: p.status, effectiveFrom: p.effectiveFrom, effectiveTo: p.effectiveTo, sources: p.sources, reviewNotes: p.reviewNotes })) });
   }
@@ -1391,11 +1626,14 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     const { rows } = await pool.query("SELECT id, password_hash FROM users WHERE email = $1", [email]);
     const ok = rows[0] && (await verifyPassword(String(b.password ?? ""), rows[0].password_hash));
     if (!ok) throw new AuthError("wrong email or password");
-    const joined = typeof b.inviteToken === "string" && b.inviteToken
-      ? (await withSystem(pool, (tx) => acceptInvitation(tx, { token: b.inviteToken, userId: rows[0].id }))).orgId
-      : undefined;
-    const s = await createSession(pool, rows[0].id);
-    return json({ ok: true, joined }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
+    return signedIn(pool, rows[0].id, b.inviteToken);
+  }
+  // The second step of signing in, for someone with two-factor on.
+  if (req.method === "POST" && path === "/api/auth/mfa") {
+    const b = await body(req);
+    const out = await withSystem(pool, (tx) => redeemMfaTicket(tx, b.ticket, b.code));
+    if ("error" in out) throw new AuthError(out.error);
+    return startSession(pool, out.userId, b.inviteToken);
   }
   if (req.method === "POST" && path === "/api/auth/logout") {
     await endSession(pool, cookie(req, SESSION_COOKIE));
@@ -1422,8 +1660,10 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       [user.id],
     );
     const verified = (await pool.query("SELECT email_verified_at IS NOT NULL AS v FROM users WHERE id = $1", [user.id])).rows[0].v;
-    return json({ user: { ...user, emailVerified: verified }, orgs: rows, emailEnabled: Boolean(opts.mailer) });
+    const mfa = await mfaStatus(pool, user.id);
+    return json({ user: { ...user, emailVerified: verified, mfa }, orgs: rows, emailEnabled: Boolean(opts.mailer) });
   }
+  if (path.startsWith("/api/me/mfa/") && req.method === "POST") return mfaRoutes(req, path, pool, opts);
   return null;
 }
 
@@ -1450,6 +1690,11 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       if (!user) throw new AuthError("not signed in");
       const role = await membershipRole(pool, user.id, params.org!);
       if (!role) throw new HttpError(404, "organisation not found");
+      if (!path.endsWith("/leave")) await requireMfaIfOrgDoes(pool, params.org!, user.id);
+      if (req.method !== "GET" && opts.billing?.enforce && !ALWAYS_ALLOWED.test(path)) {
+        const access = await checkAccess(pool, params.org!, opts.billing, pacificToday(), path);
+        if (access.level === "read_only") throw new HttpError(402, access.reason!);
+      }
       if (req.method !== "GET" && role === "read_only") throw new HttpError(403, "read-only users cannot make changes");
       const ctx: Ctx = { pool, opts, user, orgId: params.org!, role, actor: { id: `user:${user.email}`, role } };
       return await r.handler(req, params, ctx);
@@ -1462,6 +1707,8 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       const status = err.code === "FORBIDDEN" ? 403 : err.code === "IDEMPOTENCY_CONFLICT" ? 409 : 422;
       return json({ error: err.message, code: err.code }, status);
     }
+    if (err instanceof BillingError) return json({ error: err.message }, err.status);
+    if (err instanceof GatewayError) return json({ error: err.message }, 502);
     if (err instanceof JurisdictionError) return json({ error: err.message, code: "JURISDICTION" }, 422);
     console.error(err);
     return json({ error: "something went wrong on our side" }, 500);

@@ -1,0 +1,25 @@
+/* Public pages: pricing, promises, security, status. Uses the app's colours from styles.css. */
+.site { max-width: 920px; margin: 0 auto; padding: 24px 16px 56px; }
+.site header.top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 28px; }
+.site header.top a.brand { display: flex; align-items: center; gap: 8px; color: var(--ink); text-decoration: none; font-weight: 600; }
+.site header.top nav { margin-left: auto; display: flex; gap: 14px; flex-wrap: wrap; font-size: 15px; }
+.site h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; }
+.site .lead { font-size: 18px; color: var(--muted); margin: 0 0 24px; max-width: 680px; }
+.site h2 { margin-top: 32px; }
+.site .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.site .plan { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+.site .plan.featured { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.site .price { font-size: 34px; font-weight: 700; margin: 6px 0 2px; }
+.site .price small { font-size: 15px; font-weight: 400; color: var(--muted); }
+.site .plan ul, .site .promises ul { padding-left: 20px; }
+.site .plan li, .site .promises li { margin: 6px 0; }
+.site table { width: 100%; border-collapse: collapse; }
+.site th, .site td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.site .table-wrap { overflow-x: auto; }
+.site .promises { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.site .promises section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+.site .promises h2 { margin-top: 0; font-size: 18px; }
+.site footer { margin-top: 40px; color: var(--muted); font-size: 14px; }
+.site .cta { display: inline-block; margin-top: 12px; }
+.site .ok { color: var(--good-ink, var(--brand)); font-weight: 600; }
+.site .down { color: var(--bad-ink); font-weight: 600; }

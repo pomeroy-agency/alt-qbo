@@ -59,7 +59,7 @@ Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields
 - Filling the official PDF forms, Schedule R, 941-X and W-2c corrections, and a W-2 e-file (EFW2) file; working out the federal lookback period from Alt-QBO's own history; reversing a recorded tax deposit.
 - Splitting a paycheck across several bank accounts, prenote (zero-dollar test) entries, and bank holidays when checking the pay date.
 - Sick leave used, final paychecks, voiding a posted pay run.
-- HTTP API, authentication, MFA; roles are passed in by the caller.
+- A self-service reset for someone who lost both their phone and their recovery codes.
 - City minimum wages, regular-rate overtime for bonuses, supplemental-rate withholding.
 - Sales tax outside California, use tax on purchases, prepayments.
-- Restoring a business from a backup file.
+- Restoring a business from a backup file into the database (backups are taken nightly, read back and checked, but loading one back in is still a manual job).
