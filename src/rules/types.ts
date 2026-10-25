@@ -47,7 +47,13 @@ export type FederalFilingStatus = "single_or_mfs" | "mfj" | "hoh";
 export interface FederalPayrollRules {
   socialSecurity: { employeeRate: string; employerRate: string; wageBase: string };
   medicare: { employeeRate: string; employerRate: string; additionalRate: string; additionalThreshold: string };
-  futa: { rate: string; wageBase: string; note: string };
+  futa: {
+    rate: string;
+    wageBase: string;
+    note: string;
+    /** Form 940 Schedule A credit reduction rate by state; null until the Department of Labor publishes it in November. */
+    creditReduction: Record<string, string | null>;
+  };
   supplementalRate: string;
   /** When the taxes reported on Form 941 and 940 must be deposited (Pub 15 sections 11 and 14). */
   deposits: {

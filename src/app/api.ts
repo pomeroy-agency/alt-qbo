@@ -26,6 +26,7 @@ import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
 import { createEmployee, listEmployees, setUiRate, updateEmployee, type EmployeeFields } from "../payroll/employees.js";
 import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
+import { form940, form941, formDe9, formsFor, formW2, type PreparedForm } from "../payroll/forms.js";
 import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
 import { calculateSavedRun, carrySickLeave, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import {
@@ -969,6 +970,17 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
     if (b.caUiRatePercent !== undefined) {
       await setUiRate(tx, { orgId: ctx.orgId, entityId: p.entity!, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
     }
+    if (b.caEmployerAccount !== undefined) {
+      const account = typeof b.caEmployerAccount === "string" ? b.caEmployerAccount.replace(/[\s-]/g, "") : "";
+      if (account && !/^\d{8}$/.test(account)) throw new HttpError(400, "the EDD account number has 8 digits, like 123-4567-8");
+      requireRole(ctx, ["owner", "admin", "accountant"]);
+      const before = (await tx.query("SELECT ca_employer_account FROM entities WHERE id = $1", [p.entity])).rows[0].ca_employer_account;
+      await tx.query("UPDATE entities SET ca_employer_account = $2 WHERE id = $1", [p.entity, account || null]);
+      await appendAudit(tx, {
+        orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.updated", objectType: "entity", objectId: p.entity!,
+        before: { caEmployerAccount: before }, after: { caEmployerAccount: account || null }, context: { role: ctx.role },
+      });
+    }
     if (b.federalDepositSchedule !== undefined) {
       await setFederalDepositSchedule(tx, { orgId: ctx.orgId, entityId: p.entity!, schedule: String(b.federalDepositSchedule), actor: ctx.actor });
     }
@@ -1008,6 +1020,55 @@ route("POST", "/api/orgs/:org/entities/:entity/tax-deposits/pay", async (req, p,
     });
   });
   return new Response(toJson(paid), { status: 201, headers: { "content-type": "application/json" } });
+});
+
+/** Prepared payroll tax forms: the list, and each form's figures (JSON, or CSV of its employee rows). */
+route("GET", "/api/orgs/:org/entities/:entity/payroll-forms", async (req, p, ctx) => {
+  const today = pacificToday();
+  const year = Number(new URL(req.url).searchParams.get("year") ?? today.slice(0, 4));
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new HttpError(400, "year should be like 2026");
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const ca = (await tx.query("SELECT ca_employer_account FROM entities WHERE id = $1", [p.entity])).rows[0].ca_employer_account;
+    return json({ year, forms: formsFor(year, today), caEmployerAccount: ca });
+  });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/payroll-forms/prepared", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const year = Number(q.get("year"));
+  const quarter = Number(q.get("quarter") ?? 1);
+  const fullSsn = q.get("ssn") === "full";
+  const form = await tenant(ctx, async (tx): Promise<PreparedForm> => {
+    await ensureEntity(tx, p.entity!);
+    const base = { orgId: ctx.orgId, entityId: p.entity!, year, actor: ctx.actor, fullSsn };
+    switch (q.get("form")) {
+      case "941": return form941(tx, p.entity!, year, quarter);
+      case "940": return form940(tx, p.entity!, year);
+      case "de9": return formDe9(tx, { ...base, quarter });
+      case "w2": return formW2(tx, base);
+      default: throw new HttpError(404, "no such form");
+    }
+  });
+  if (q.get("format") === "csv") {
+    if (!form.employees) throw new HttpError(400, "this form has no employee rows to download");
+    const cents = (v: unknown) => (typeof v === "bigint" ? (Number(v) / 100).toFixed(2) : v);
+    const flat = form.employees.map((row) => Object.fromEntries(Object.entries(row).flatMap(([k, v]): [string, unknown][] => {
+      if (Array.isArray(v)) return [[k, v.map((x: any) => `${x.code ?? x.label} ${cents(x.amountMinor)}`).join("; ")]];
+      if (v && typeof v === "object") return Object.entries(v).map(([k2, v2]) => [`${k}.${k2}`, v2]);
+      return [[k, cents(v)]];
+    })));
+    const cols = [...new Set(flat.flatMap((r) => Object.keys(r)))];
+    const cell = (v: unknown) => { const s = v === null || v === undefined ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = [cols.join(","), ...flat.map((r) => cols.map((c) => cell(r[c])).join(","))].join("\r\n") + "\r\n";
+    return new Response(csv, {
+      headers: {
+        "content-type": "text/csv; charset=utf-8", "cache-control": "no-store",
+        "content-disposition": `attachment; filename="${form.form.replace(/\s/g, "")}-${form.period.replace(/\s/g, "-")}.csv"`,
+      },
+    });
+  }
+  return new Response(toJson(form), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
 });
 
 /** The business's bank details for direct deposit files. */
