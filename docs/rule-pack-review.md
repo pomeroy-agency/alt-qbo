@@ -1,32 +1,46 @@
 # Rule pack review checklist (2026 packs)
 
-Before a pack's `status` changes from `draft` to `released`, each item below needs sign-off (for Greg's review).
+Before a pack's `status` changes from `draft` to `released`, each item below needs Greg's sign-off. Every figure was checked against current sources on 2026-10-25; the **Check** column says how. A daily scheduled check watches the sources for changes (see "Monitoring" at the end).
 
 ## us-federal 2026.1 (`src/rules/us-federal-2026.ts`)
 
-| Figure | Value | Basis |
-|---|---|---|
-| Social Security wage base | $184,500 | SSA announcement, Oct 2025 |
-| SS / Medicare rates | 6.2% / 1.45% each side; Additional Medicare 0.9% over $200,000 | statute |
-| FUTA | 0.6% net on first $7,000 | statute; California credit reduction for 2026 is set in Nov 2026 and handled on Schedule A |
-| Worksheet 1A line 1g | $12,900 MFJ, $8,600 other | Pub 15-T (2026), confirmed |
-| MFJ withholding schedules | standard and Step 2 | Pub 15-T (2026); our derivation reproduces both exactly (test) |
-| Single / HoH withholding schedules | derived from 2026 brackets | **compare with Pub 15-T 2026 tables**; Step 2 half-bracket rounding to be confirmed |
-| HoH bracket thresholds | 17,700 / 67,450 / 105,700 / 201,750 / 256,200 / 640,600 | **working knowledge; confirm against Rev. Proc. 2025-32** |
+| Figure | Value | Source | Check |
+|---|---|---|---|
+| Social Security wage base | $184,500 | SSA, Oct 2025 | ✅ matches |
+| SS / Medicare rates | 6.2% / 1.45% each side; Additional Medicare 0.9% over $200,000 | IRC 3101, 3111, 3102(f) | ✅ matches |
+| FUTA | 0.6% net on first $7,000 | IRC 3301; Form 940 | ✅ matches. California is on the DOL's 2026 credit-reduction list (likely 1.5%); final figure after Nov 10, 2026, goes on Schedule A |
+| Supplemental rate | 22% (37% over $1 million) | Pub 15 (2026) | ✅ matches |
+| 2026 brackets, all statuses | as in file | Rev. Proc. 2025-32, Tables 1-4 | ✅ matches the IRS PDF, including head of household (17,700 / 67,450 / 105,700 / 201,750 / 256,200 / 640,600) |
+| Standard deductions | $16,100 / $32,200 / $24,150 | Rev. Proc. 2025-32 §3.14 | ✅ matches |
+| Worksheet 1A line 1g | $12,900 MFJ, $8,600 other | Pub 15-T (2026) | ✅ matches |
+| Withholding schedules, all six | derived from brackets | Pub 15-T (2026) page 11 | ✅ all six now reproduce the published table exactly (tests). **Fixed:** single Step 2 thresholds were off by 50 cents because the IRS rounds halved thresholds to the dollar |
 
 ## us-ca 2026.1 (`src/rules/us-ca-2026.ts`)
 
-| Figure | Value | Basis |
+| Figure | Value | Source | Check |
+|---|---|---|---|
+| PIT Method B tables 1-7 (annual) | as in file | EDD 26methb.pdf | ✅ single and head-of-household thresholds and rates match the USDA payroll bulletin that reproduces the EDD tables; married thresholds are exactly twice single below $1M; every base amount is consistent. ⚠️ The EDD site is blocked from our build machines, so the $1,000 estimated-deduction allowance is confirmed only by third-party summaries |
+| Low-income exemption, standard deduction, allowance credit | $18,896 / $37,791; $5,706 / $11,412; $168.30 | EDD 26methb.pdf | ✅ matches (third-party summaries of the PDF) |
+| Supplemental PIT rates | 6.6%; 10.23% bonuses and stock options | EDD | ✅ matches |
+| SDI | 1.3%, no wage limit | EDD rates page; SCO letter 25-019 | ✅ matches |
+| UI | $7,000 base; schedule F+ (1.5% to 6.2%); 3.4% new employer | EDD | ✅ matches |
+| ETT | 0.1% on first $7,000 | EDD | ✅ matches |
+| Minimum wage | $16.90 statewide | Dept. of Finance; Labor Code 1182.12 | ✅ matches. ⚠️ About 40 cities and counties are higher (Los Angeles city $18.42, LA County unincorporated $18.47, San Francisco $19.61 from July 1, 2026). Not modelled yet |
+| Exempt salary floor | $70,304 | Labor Code 515(a): 2 × $16.90 × 2,080 | ✅ matches |
+| Sick leave | 1 hour per 30 worked; 40-hour use cap; 80-hour accrual cap | Labor Code 246 (SB 616) | ✅ matches; unchanged for 2026. Some cities are more generous |
+| Remote-seller threshold | $500,000 | R&TC 6203 (AB 147) | ✅ matches |
+| Franchise tax minimum | $800 | R&TC 17941, 23153 | ✅ matches; the first-year LLC exemption (AB 85) ended with 2023 |
+
+### Already announced for 2027 (a 2027 pack is needed before the first 2027 pay date)
+
+| Figure | 2027 value | Status |
 |---|---|---|
-| PIT Method B tables 1-7 (annual) | as in file | EDD 26methb.pdf |
-| SDI | 1.3%, no wage limit | EDD 2026 rates page |
-| UI | $7,000 base; 3.4% new-employer default | EDD; each employer enters its assigned rate |
-| ETT | 0.1% on first $7,000 | EDD |
-| Minimum wage | $16.90 statewide | **confirm; city ordinances not modelled** |
-| Exempt salary floor | $70,304 (2 x min wage x 2,080) | **confirm** |
-| Sick leave | 1 hour per 30 worked; 40-hour use cap; 80-hour accrual cap | Labor Code 246 as amended by SB 616 |
-| Sales tax | services non-taxable by default; $500k remote-seller threshold | **confirm** |
-| Franchise tax minimum | $800 | **confirm** |
+| Social Security wage base | $192,300 | final (SSA, Oct 14, 2026) |
+| California minimum wage | $17.40 | final (certified Jul 31, 2026) |
+| Exempt salary floor | $72,384 | follows from the minimum wage |
+| UI and ETT wage base, ETT rate | $7,000; 0.1% | final (EDD) |
+| SDI rate | 1.4% forecast | final rate due in December |
+| Federal brackets, Pub 15-T, EDD Method B | not yet published | expected Oct to Dec 2026 |
 
 ## us-ca-sales-tax 2026.1 (`src/rules/sales-tax/us-ca-2026.ts`)
 
@@ -46,8 +60,13 @@ Also to confirm:
 - **Out of state.** A sale is exempt as interstate only when the customer's address is outside California (Reg. 1620).
 - **Resale.** A sale is exempt only when the customer's seller's permit is on file. The number is recorded but not checked with the CDTFA (Reg. 1668).
 - **Own-vehicle delivery.** Delivery in the seller's own vehicle can be taxable, so consider a separate kind of sale for it (Reg. 1628).
-- **Rate lookup.** The rate comes from the CDTFA's tax rate API. It was spot-checked for four cities on 2026-10-25. Addresses on district boundaries still need checking.
+- **Rate lookup.** The rate comes from the CDTFA's tax rate API. It was spot-checked for four cities on 2026-10-25, and the live site returned 10.25% for Los Angeles City Hall the same day. Addresses on district boundaries still need checking.
+- **Design charges.** CDTFA annotations (430.0194, 100.0103, 100.0159, 100.0162, still in the 2026 law guide) say finished or sketched designs handed over in physical form are taxable, while preliminary art billed separately is not. Designs delivered only electronically are not tangible, which is why "professional or creative service" defaults to not taxable.
 
 ## Chart of accounts tax lines (`src/rules/coa/us-service.ts`)
 
 Tax-line codes for Schedule C, 1065, 1120S and 1120 are from working knowledge and need checking against the current forms and against each Intuit product's trial-balance import layout.
+
+## Monitoring
+
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA and FTB for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

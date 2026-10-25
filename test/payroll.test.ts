@@ -63,6 +63,28 @@ describe("rule packs", () => {
       [217875, 41024, 0.32], [272325, 58448, 0.35], [400450, 103291.75, 0.37],
     ]);
   });
+
+  it("derives the Pub 15-T 2026 single and head-of-household schedules exactly as published", () => {
+    const fit = usFederal2026.payroll.incomeTax;
+    const asRows = (s: ReturnType<typeof federalSchedule>) => s.map((r) => [Number(r.over), Number(r.base), Number(r.rate)]);
+    // IRS Publication 15-T (2026), page 11, checked against the PDF on 2026-10-25.
+    expect(asRows(federalSchedule(fit, "single_or_mfs", false))).toEqual([
+      [0, 0, 0], [7500, 0, 0.1], [19900, 1240, 0.12], [57900, 5800, 0.22], [113200, 17966, 0.24],
+      [209275, 41024, 0.32], [263725, 58448, 0.35], [648100, 192979.25, 0.37],
+    ]);
+    expect(asRows(federalSchedule(fit, "single_or_mfs", true))).toEqual([
+      [0, 0, 0], [8050, 0, 0.1], [14250, 620, 0.12], [33250, 2900, 0.22], [60900, 8983, 0.24],
+      [108938, 20512, 0.32], [136163, 29224, 0.35], [328350, 96489.63, 0.37],
+    ]);
+    expect(asRows(federalSchedule(fit, "hoh", false))).toEqual([
+      [0, 0, 0], [15550, 0, 0.1], [33250, 1770, 0.12], [83000, 7740, 0.22], [121250, 16155, 0.24],
+      [217300, 39207, 0.32], [271750, 56631, 0.35], [656150, 191171, 0.37],
+    ]);
+    expect(asRows(federalSchedule(fit, "hoh", true))).toEqual([
+      [0, 0, 0], [12075, 0, 0.1], [20925, 885, 0.12], [45800, 3870, 0.22], [64925, 8077.5, 0.24],
+      [112950, 19603.5, 0.32], [140175, 28315.5, 0.35], [332375, 95585.5, 0.37],
+    ]);
+  });
 });
 
 describe("California workweek hours", () => {

@@ -9,16 +9,18 @@ export const usCalifornia2026: CaliforniaRulePack = {
   effectiveTo: "2026-12-31",
   status: "draft",
   sources: [
-    { ref: "EDD, 2026 California Withholding Schedules, Method B (26methb.pdf)", covers: "PIT Tables 1-7, annual", basis: "published" },
-    { ref: "EDD, Contribution Rates, Withholding Schedules, and Meals and Lodging Values (2026)", covers: "SDI 1.3% with no wage limit; UI $7,000 base and 3.4% new-employer rate; ETT 0.1%", basis: "published" },
-    { ref: "Labor Code 510, 245-249, 515; DIR 2026 minimum wage", covers: "overtime, sick leave, exempt salary test, $16.90 minimum wage", basis: "working-knowledge" },
-    { ref: "Rev. & Tax. Code 6018.5 / 6203; R&TC 17941, 23153", covers: "sales-tax nexus threshold, $800 minimum franchise tax", basis: "working-knowledge" },
+    { ref: "EDD, 2026 California Withholding Schedules, Method B (26methb.pdf), as reproduced in the USDA National Finance Center's 2026 California withholding bulletin", covers: "PIT Tables 1-7, annual: single and head-of-household thresholds and rates matched; married thresholds are exactly twice single below $1 million, and every base amount is consistent with its rows", basis: "published" },
+    { ref: "EDD, Contribution Rates, Withholding Schedules, and Meals and Lodging Values (2026); State Controller payroll letter 25-019", covers: "SDI 1.3% with no wage limit; UI $7,000 base, schedule F+, 3.4% new-employer rate; ETT 0.1% on $7,000", basis: "published" },
+    { ref: "Labor Code 1182.12 and Department of Finance certification (2026: $16.90); Labor Code 515(a)", covers: "statewide minimum wage; exempt salary of twice the minimum wage for full-time work ($70,304)", basis: "published" },
+    { ref: "Labor Code 510, 245-249 as amended by SB 616 (2023)", covers: "daily and weekly overtime, seventh-day rule; sick leave 1 hour per 30 worked, 40-hour use cap, 80-hour accrual cap", basis: "published" },
+    { ref: "Rev. & Tax. Code 6203(c)(4) (AB 147); R&TC 17941, 23153", covers: "$500,000 remote-seller threshold; $800 minimum franchise tax (the AB 85 first-year LLC exemption ended with 2023)", basis: "published" },
   ],
   reviewNotes: [
-    "For Greg's legal review: $16.90 statewide minimum wage and $70,304 exempt salary floor for 2026; city minimum wages (Los Angeles, San Francisco, etc.) are not in this pack yet.",
-    "UI rate defaults to the 3.4% new-employer rate; each employer must enter its assigned rate from its DE 2088 notice.",
-    "PIT supplemental rates: 6.6% general, 10.23% for bonuses and stock options.",
+    "Checked 2026-10-25. The EDD site itself can't be reached from Alt-QBO's build machines, so the Method B tables were matched against the federal payroll bulletin that reproduces them and against the EDD rates page; the estimated-deduction allowance ($1,000) and supplemental rates (6.6%, 10.23% for bonuses and stock options) are from third-party summaries of the same PDF and should be read off 26methb.pdf once.",
+    "City and county minimum wages are higher than the state's in about 40 places (from July 1, 2026: City of Los Angeles $18.42, unincorporated LA County $18.47, San Francisco $19.61, Emeryville $20.34). Alt-QBO checks only the state minimum so far.",
+    "UI rate defaults to the 3.4% new-employer rate; each employer enters its assigned rate from its DE 2088 notice.",
     "Overtime uses the base hourly rate; regular-rate inclusion of bonuses and commissions is not modelled yet.",
+    "2027: minimum wage $17.40 (certified July 31, 2026), so the exempt salary floor becomes $72,384; UI and ETT stay at $7,000 and 0.1%; the 2027 SDI rate (forecast 1.4%) and 2027 Method B tables come out in December. A 2027 pack is needed before the first 2027 pay date.",
   ],
   payroll: {
     pit: {
