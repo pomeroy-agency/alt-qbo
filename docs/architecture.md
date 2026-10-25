@@ -37,6 +37,8 @@ Amounts are `bigint` minor units with a currency everywhere outside the tax math
 
 Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields plus the previous hash. The first event chains from `sha256("alt-qbo:audit-genesis:" + orgId)`. `verifyAuditChain` recomputes the chain and checks the head, so it catches edits made by anyone who disabled the triggers, and deleted events, including the last one. A later step is anchoring the head hash externally (for example, a daily signed checkpoint) so a full rewrite of chain and head is also detectable.
 
+11. **Overview and closing (`src/core/overview.ts`).** The money figures are read from posted lines and open documents on the same basis as the reports, and the menu badges come from one counting query run on every screen. Closing the books through a date is a loop over `setPeriodStatus`, so it obeys the same role checks and audit events as closing one month, plus one `books.closed_through` event; it never reopens anything. The example business is built with the ordinary services (`issueDocument`, `recordPayment`, `importBankCsv`) in a separate organisation, one per person.
+
 ## Not in Phase 0 yet
 
 - Multi-currency functional amounts and revaluation (lines carry a currency and balance per currency today).

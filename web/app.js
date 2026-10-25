@@ -72,36 +72,61 @@ const TAX_LABEL = {
 
 // ------------------------------------------------------------------ layout
 
+// Light, dark, or follow the device. Kept per browser; the page works without it.
+const THEMES = ["auto", "dark", "light"];
+function theme() {
+  try { return THEMES.includes(localStorage.getItem("altqbo_theme")) ? localStorage.getItem("altqbo_theme") : "auto"; } catch { return "auto"; }
+}
+function applyTheme(t = theme()) {
+  if (t === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+}
+applyTheme();
+
 function topbar() {
   const orgs = state.me?.orgs ?? [];
+  const t = theme();
   return `
     <header class="topbar">
       <a class="brand" href="#/"><img src="/favicon.svg" alt="">Alt-QBO</a>
       ${orgs.length > 1 ? `<select data-action="switch-org" aria-label="Organisation">${orgs.map((o) => `<option value="${o.id}" ${o.id === state.orgId ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : `<span>${esc(state.org?.org?.name ?? "")}</span>`}
       <span class="spacer"></span>
       <span class="who">${esc(state.me?.user?.name)} · ${esc(state.org?.role ?? "")}</span>
+      <button class="link" data-action="theme" title="Switch between light, dark and your device's setting">${{ auto: "Theme: device", dark: "Theme: dark", light: "Theme: light" }[t]}</button>
       <button class="secondary" data-action="logout">Sign out</button>
     </header>
     <div class="banner">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</div>`;
 }
 
+// The everyday menu stays short. Bookkeeping mechanics live under "Accountant tools".
 const ENTITY_TABS = [
-  ["overview", "Overview"], ["invoices", "Invoices"], ["bills", "Bills"], ["bank", "Bank"], ["reconcile", "Reconcile"], ["contacts", "Customers and vendors"], ["journal", "Journal"], ["reports", "Reports"], ["trial-balance", "Trial balance"], ["periods", "Periods"], ["payroll", "Payroll"],
-  ["accounts", "Chart of accounts"], ["connections", "Connections"],
+  ["overview", "Overview"], ["invoices", "Invoices", "overdueInvoices", "overdue"], ["bills", "Bills", "billsDueSoon", "due within a week"],
+  ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["reports", "Reports"], ["payroll", "Payroll", "payRunsToApprove", "to approve"],
+];
+const ACCOUNTANT_TABS = [
+  ["reconcile", "Reconcile"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"],
 ];
 
 function shell(active, content) {
   const e = state.entity?.entity;
+  const attn = state.entity?.attention ?? {};
+  const link = ([k, l, count, what]) => {
+    const n = count ? attn[count] : 0;
+    return `<a href="#/e/${e.id}/${k}" class="${active === k ? "on" : ""}">${l}${n ? ` <span class="badge" title="${n} ${what}">${n}</span>` : ""}</a>`;
+  };
   const nav = e ? `
     <div class="label">${esc(e.legalName)}</div>
-    ${ENTITY_TABS.map(([k, l]) => `<a href="#/e/${e.id}/${k}" class="${active === k ? "on" : ""}">${l}</a>`).join("")}` : "";
+    ${ENTITY_TABS.map(link).join("")}
+    <div class="label">Accountant tools</div>
+    ${ACCOUNTANT_TABS.map(link).join("")}` : "";
   return `${topbar()}
     <div class="wrap shell">
       <nav class="side">
         <a href="#/" class="${active === "home" ? "on" : ""}">Businesses</a>
+        ${nav}
+        <div class="label">Organisation</div>
         <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
         <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
-        ${nav}
       </nav>
       <main>${content}</main>
     </div>`;
@@ -137,8 +162,15 @@ async function homeView() {
   state.entity = null;
   const ents = state.org.entities;
   const canAdd = ["owner", "admin"].includes(state.org.role);
+  const isExample = state.org.org.name.startsWith("Example:");
   app.innerHTML = shell("home", `
     <div class="head"><div><h1>Businesses</h1><p class="muted">Each legal entity keeps its own books, periods and tax settings.</p></div></div>
+    ${isExample ? `<div class="alert warn">These are example books with made-up figures. Use the menu at the top to switch back to your own organisation.</div>` : `
+    <div class="panel ${ents.length ? "" : "hero"}">
+      <h2>${ents.length ? "Want to try something first?" : "New here? Look around an example business first"}</h2>
+      <p class="muted">Sunset Design Studio is a made-up California design studio with a year of invoices, bills, payments and a bank statement waiting to be reviewed. It sits in its own organisation, so nothing in it touches your books.</p>
+      <button class="${ents.length ? "secondary" : ""}" data-action="open-example">Open the example business</button>
+    </div>`}
     <div class="cards">
       ${ents.map((e) => `
         <a class="card" href="#/e/${e.id}/overview">
@@ -163,11 +195,26 @@ async function homeView() {
 }
 
 async function loadEntity(id) {
-  if (state.entity?.entity?.id !== id || !state.entity.fresh) {
-    state.entity = await api(orgPath(`/entities/${id}`));
-    state.entity.fresh = true;
-  }
+  const stale = state.entity?.entity?.id !== id || !state.entity.fresh;
+  const [ent, attention] = await Promise.all([
+    stale ? api(orgPath(`/entities/${id}`)) : state.entity,
+    api(orgPath(`/entities/${id}/attention`)),
+  ]);
+  state.entity = ent;
+  state.entity.fresh = true;
+  state.entity.attention = attention;
   return state.entity;
+}
+
+const CREDIT_NORMAL = new Set(["liability", "equity", "revenue"]);
+/** An account's balance on its normal side, so income and what you owe read as positive. */
+const normalBalance = (a) => (CREDIT_NORMAL.has(a.type) ? -BigInt(a.balance_minor ?? 0) : BigInt(a.balance_minor ?? 0));
+
+/** Opens one account's general ledger, from any screen. */
+function openLedger(code) {
+  rep.tab = "gl";
+  rep.account = code;
+  location.hash = `#/e/${state.entity.entity.id}/reports`;
 }
 
 function accountOptions(selected = "") {
@@ -185,12 +232,20 @@ function lineRow(i, l = {}) {
   </tr>`;
 }
 
+const jr = { q: "" };
+
 async function journalView(id) {
   await loadEntity(id);
-  const { entries } = await api(entPath("/journal"));
+  const { entries } = await api(entPath(`/journal${jr.q ? `?q=${encodeURIComponent(jr.q)}` : ""}`));
   const acct = Object.fromEntries(state.entity.accounts.map((a) => [a.code, a.name]));
   app.innerHTML = shell("journal", `
-    <div class="head"><div><h1>Journal</h1><p class="muted">Posted entries can't be edited. To correct one, reverse it and post a new entry.</p></div></div>
+    <div class="head"><div><h1>Journal</h1><p class="muted">Posted entries can't be edited. To correct one, reverse it and post a new entry.</p></div>
+      <form data-form="journal-search" class="row">
+        <label>Find an entry<input name="q" type="search" value="${esc(jr.q)}" placeholder="Memo, description, #12 or 1450.00" style="width:260px"></label>
+        <button type="submit" class="secondary">Search</button>
+        ${jr.q ? `<button type="button" class="link" data-action="journal-clear">Show all</button>` : ""}
+      </form>
+    </div>
     <div class="panel">
       <h2>New entry</h2>
       <form data-form="journal">
@@ -211,7 +266,7 @@ async function journalView(id) {
       </form>
     </div>
     <div class="panel">
-      <h2>Posted entries</h2>
+      <h2>${jr.q ? `Entries matching “${esc(jr.q)}”` : "Posted entries"}</h2>
       ${entries.length ? entries.map((e) => {
         const total = e.lines.reduce((s, l) => s + BigInt(l.debitMinor), 0n);
         return `<div class="entry">
@@ -232,7 +287,7 @@ async function journalView(id) {
           </form>
           <div class="hash" style="padding:4px 12px 8px">Posted by ${esc(e.postedBy)}</div>
         </div>`;
-      }).join("") : `<p class="muted">Nothing posted yet.</p>`}
+      }).join("") : `<p class="muted">${jr.q ? "No entries match." : "Nothing posted yet."}</p>`}
     </div>`);
   updateTotals();
 }
@@ -303,23 +358,48 @@ function netSide(rows, sign) {
   }, 0n);
 }
 
+const monthName = (d) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+const longDate = (d) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+
+/** Last day of the unbroken run of closed months from the start of the books. */
+function closedThroughOf(periods) {
+  let through = null;
+  for (const p of periods) { if (p.status === "open") break; through = p.end_date; }
+  return through;
+}
+
 async function periodsView(id) {
   await loadEntity(id);
   const canClose = ["owner", "admin", "accountant"].includes(state.org.role);
   const canReopen = ["owner", "accountant"].includes(state.org.role);
+  const periods = state.entity.periods;
+  const through = closedThroughOf(periods);
+  const ended = periods.filter((p) => p.end_date < today() && p.status !== "locked");
+  const anyOpenLater = through && periods.some((p) => p.end_date > through && p.status !== "open");
   app.innerHTML = shell("periods", `
-    <div class="head"><div><h1>Periods</h1><p class="muted">Soft-close a month so only accountants can post adjustments, then lock it. Reopening needs a reason and is recorded in the audit log.</p></div></div>
-    <div class="panel table-wrap"><table>
+    <div class="head"><div><h1>Close the books</h1><p class="muted">Once you've reconciled the bank and checked the month, close the books through that date so nothing dated on or before it can change by accident.</p></div></div>
+    <div class="panel">
+      <div class="stat" style="font-family:inherit">${through ? `Closed through ${longDate(through)}` : "Nothing closed yet"}</div>
+      ${anyOpenLater ? `<p class="hash">Some later months are closed too, but an earlier one is open.</p>` : ""}
+      ${canClose && ended.length ? `<form data-form="close-through" class="row" style="margin-top:12px">
+        <label>Close through<select name="through">${ended.map((p, i) => `<option value="${p.end_date}" ${i === ended.length - 1 ? "selected" : ""}>${longDate(p.end_date)}</option>`).join("")}</select></label>
+        <label>How<select name="status"><option value="locked">Lock: nobody can post</option><option value="soft_closed">Soft-close: accountants can still adjust</option></select></label>
+        <button type="submit">Close the books</button>
+      </form>` : canClose ? `<p class="muted" style="margin-top:8px">Every month that has ended is already locked.</p>` : ""}
+      <p class="hash" style="margin-top:8px">Reopening a month needs ${canReopen ? "" : "an owner or accountant and "}a reason, and is recorded in the audit log.</p>
+    </div>
+    <details class="panel"${anyOpenLater ? " open" : ""}><summary><strong>Month by month</strong></summary>
+    <div class="table-wrap" style="margin-top:12px"><table>
       <thead><tr><th>Month</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>${state.entity.periods.map((p) => {
-        const month = new Date(p.start_date + "T00:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+      <tbody>${periods.map((p) => {
+        const month = monthName(p.start_date);
         const acts = [];
         if (canClose && p.status === "open") acts.push(`<button class="secondary" data-action="period" data-id="${p.id}" data-status="soft_closed">Soft-close</button>`);
         if (canClose && p.status !== "locked") acts.push(`<button class="secondary" data-action="period" data-id="${p.id}" data-status="locked">Lock</button>`);
         if (canReopen && p.status !== "open") acts.push(`<form class="row" data-form="reopen" data-id="${p.id}"><input name="reason" placeholder="Reason for reopening" required><button class="secondary" type="submit">Reopen</button></form>`);
         return `<tr><td>${month}</td><td><span class="${STATUS_PILL[p.status]}">${STATUS_LABEL[p.status]}</span></td><td><div class="row">${acts.join("") || `<span class="muted">No actions for your role</span>`}</div></td></tr>`;
       }).join("")}</tbody>
-    </table></div>`);
+    </table></div></details>`);
 }
 
 const TYPE_LABEL = { asset: "Asset", liability: "Liability", equity: "Equity", revenue: "Income", expense: "Expense" };
@@ -338,14 +418,16 @@ async function accountsView(id) {
   const rows = state.entity.accounts.filter((a) => coa.showInactive || a.is_active);
   const hidden = state.entity.accounts.length - rows.length;
   app.innerHTML = shell("accounts", `
-    <div class="head"><div><h1>Chart of accounts</h1><p class="muted">Every account maps to a financial-statement line, a cash-flow class and a ${esc(RETURN_LABEL[e.taxReturnType])} tax line. Codes and kinds never change once created; an account can be switched off only at a zero balance.</p></div></div>
+    <div class="head"><div><h1>Chart of accounts</h1><p class="muted">Every account maps to a financial-statement line, a cash-flow class and a ${esc(RETURN_LABEL[e.taxReturnType])} tax line. Click a balance to see every entry behind it. Codes and kinds never change once created; an account can be switched off only at a zero balance.</p></div></div>
     <div class="panel table-wrap"><table>
-      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Statement line</th><th>Tax line</th><th></th></tr></thead>
+      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th class="num">Balance</th><th>Statement line</th><th>Tax line</th><th></th></tr></thead>
       <tbody>${rows.map((a) => `<tr class="${a.is_active ? "" : "muted"}">
         <td class="mono">${a.code}</td><td>${esc(a.name)}${a.is_active ? "" : ` <span class="pill grey">Inactive</span>`}${a.system_key ? ` <span class="pill grey" title="Used by invoices, bills, payroll or the bank feed">System</span>` : ""}</td>
-        <td>${TYPE_LABEL[a.type]}</td><td class="mono muted">${esc(a.statement_line)}</td><td class="mono">${esc(a.tax_line ?? "—")}</td>
+        <td>${TYPE_LABEL[a.type]}</td>
+        <td class="num"><button class="link mono" data-action="open-ledger" data-code="${a.code}" title="Open this account's ledger">${usd(normalBalance(a))}</button></td>
+        <td class="mono muted">${esc(a.statement_line)}</td><td class="mono">${esc(a.tax_line ?? "—")}</td>
         <td>${canEdit ? `<button class="link" data-action="acct-edit" data-id="${a.id}">Edit</button>` : ""}</td></tr>
-        <tr data-acct-edit="${a.id}" hidden><td></td><td colspan="5">
+        <tr data-acct-edit="${a.id}" hidden><td></td><td colspan="6">
           <form data-form="account-edit" data-id="${a.id}" class="row">
             <label>Name<input name="name" value="${esc(a.name)}" required maxlength="120"></label>
             <label>Tax line<select name="taxLine">${taxLineChoices(a.type, a.tax_line)}</select></label>
@@ -521,12 +603,11 @@ async function docsView(id, kind) {
           <td class="num">${usd(x.totalMinor)}</td><td class="num">${usd(x.dueMinor, { blankZero: true })}</td>
           <td><span class="${STATUS_PILL[x.status]}">${STATUS_LABEL[x.status]}</span></td>
           <td><div class="row">
-            <button class="link" data-action="doc-detail" data-id="${x.id}">Details</button>
+            <a href="#/e/${id}/${d.path}/${x.id}">View</a>
             ${canWrite && x.status !== "void" && x.dueMinor !== "0" ? `<button class="link" data-action="doc-toggle" data-form="pay" data-id="${x.id}">${kind === "invoice" ? "Receive payment" : "Pay"}</button>` : ""}
             ${canWrite && x.status !== "void" && x.paidMinor === "0" ? `<button class="link" data-action="doc-toggle" data-form="void" data-id="${x.id}">Void</button>` : ""}
           </div></td>
         </tr>
-        <tr hidden data-detail="${x.id}"><td colspan="8" id="detail-${x.id}"></td></tr>
         <tr hidden data-pay="${x.id}"><td colspan="8">
           <form data-form="pay" data-kind="${kind}" data-id="${x.id}" class="row">
             <label>Date<input type="date" name="date" value="${bookDate() < x.issueDate ? x.issueDate : bookDate()}" min="${x.issueDate}" required></label>
@@ -545,15 +626,59 @@ async function docsView(id, kind) {
   updateDocTotals();
 }
 
-function docDetail(x) {
-  return `<div class="entry" style="margin:0">
-    <table><thead><tr><th>Account</th><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th><th class="num">Tax</th></tr></thead>
-    <tbody>${x.lines.map((l) => `<tr><td>${l.accountCode} · ${esc(l.accountName)}</td><td>${esc(l.description)}</td><td class="num">${esc(l.quantity)}</td>
-      <td class="num">${usd(l.unitPriceMinor)}</td><td class="num">${usd(l.amountMinor)}</td><td class="num">${usd(l.taxMinor, { blankZero: true })}</td></tr>`).join("")}</tbody></table>
-    <div class="hash" style="padding:6px 12px">${x.taxRateBps ? `Sales tax ${(x.taxRateBps / 100).toFixed(2)}% (entered by user) · ` : ""}Created by ${esc(x.createdBy.replace("user:", ""))}</div>
-    ${x.payments.length ? `<div style="padding:0 12px 8px"><strong>Payments</strong>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}</div>` : ""}
-    ${x.status === "void" ? `<div class="alert warn" style="margin:0 12px 10px">Voided ${x.voidDate}: ${esc(x.voidReason)}</div>` : ""}
-  </div>`;
+/** One invoice or bill as a document: what the customer sees, plus its payments. Prints cleanly. */
+async function docPageView(id, kind, docId) {
+  await loadEntity(id);
+  const d = DOC[kind];
+  const [x, { contacts }] = await Promise.all([api(entPath(`/${d.path}/${docId}`)), api(entPath("/contacts"))]);
+  const e = state.entity.entity;
+  const who = contacts.find((c) => c.id === x.contactId);
+  const invoice = kind === "invoice";
+  const status = x.status === "void" ? "void" : BigInt(x.totalMinor) - BigInt(x.paidMinor) <= 0n ? "paid" : x.dueDate < today() ? "overdue" : BigInt(x.paidMinor) > 0n ? "partial" : "open";
+  const due = status === "void" ? 0n : BigInt(x.totalMinor) - BigInt(x.paidMinor);
+  app.innerHTML = shell(d.path, `
+    <div class="head no-print">
+      <div><a href="#/e/${id}/${d.path}">← All ${d.title.toLowerCase()}</a></div>
+      <div class="row"><button class="secondary" data-action="print">Print or save as PDF</button></div>
+    </div>
+    <article class="panel doc">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <div class="doc-title">${invoice ? "Invoice" : "Bill"} ${esc(x.number)}</div>
+          ${x.reference ? `<div class="muted">Vendor's invoice no. ${esc(x.reference)}</div>` : ""}
+          <span class="${STATUS_PILL[status]}">${STATUS_LABEL[status]}</span>
+        </div>
+        <div style="text-align:right"><strong>${esc(e.legalName)}</strong></div>
+      </div>
+      <div class="row" style="gap:40px;margin:20px 0">
+        <div><div class="muted">${invoice ? "Bill to" : "From"}</div><strong>${esc(x.contactName)}</strong>${who?.email ? `<div>${esc(who.email)}</div>` : ""}</div>
+        <div><div class="muted">${invoice ? "Invoice date" : "Bill date"}</div>${longDate(x.issueDate)}</div>
+        <div><div class="muted">Due</div>${longDate(x.dueDate)}</div>
+        <div><div class="muted">Balance due</div><strong class="mono">${usd(due)}</strong></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.taxable ? ` <span class="hash">taxable</span>` : ""}</td>
+          <td class="num">${esc(l.quantity)}</td><td class="num">${usd(l.unitPriceMinor)}</td><td class="num">${usd(l.amountMinor)}</td></tr>`).join("")}</tbody>
+        <tfoot>
+          <tr><td colspan="3" class="num muted">Subtotal</td><td class="num">${usd(x.subtotalMinor)}</td></tr>
+          ${invoice && BigInt(x.taxMinor) ? `<tr><td colspan="3" class="num muted">Sales tax ${(x.taxRateBps / 100).toFixed(2)}%</td><td class="num">${usd(x.taxMinor)}</td></tr>` : ""}
+          <tr><td colspan="3" class="num">Total</td><td class="num">${usd(x.totalMinor)}</td></tr>
+          ${BigInt(x.paidMinor) ? `<tr><td colspan="3" class="num muted">Paid</td><td class="num">${usd(-BigInt(x.paidMinor))}</td></tr><tr><td colspan="3" class="num">Balance due</td><td class="num">${usd(due)}</td></tr>` : ""}
+        </tfoot>
+      </table></div>
+      ${x.memo ? `<p style="margin-top:16px">${esc(x.memo)}</p>` : ""}
+    </article>
+    ${x.status === "void" ? `<div class="alert warn">Voided ${x.voidDate}: ${esc(x.voidReason)}</div>` : ""}
+    <div class="panel no-print">
+      <h2>Behind the scenes</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Account</th><th>Line</th><th class="num">Amount</th><th class="num">Tax</th></tr></thead>
+        <tbody>${x.lines.map((l) => `<tr><td>${l.accountCode} · ${esc(l.accountName)}</td><td>${esc(l.description)}</td><td class="num">${usd(l.amountMinor)}</td><td class="num">${usd(l.taxMinor, { blankZero: true })}</td></tr>`).join("")}</tbody>
+      </table></div>
+      <p class="hash" style="margin-top:8px">${x.taxRateBps ? `Sales tax rate ${(x.taxRateBps / 100).toFixed(2)}% (entered by user) · ` : ""}Created by ${esc(x.createdBy.replace("user:", ""))}</p>
+      ${x.payments.length ? `<h3>Payments</h3>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}` : ""}
+    </div>`);
 }
 
 async function contactsView(id) {
@@ -644,51 +769,113 @@ async function bankView(id) {
 
 // ------------------------------------------------------------ overview
 
+const SOURCE_LABEL = { journal_voucher: "Journal entry", invoice: "Invoice", bill: "Bill", payment: "Payment", opening_balance: "Opening balance", reversal: "Reversal", bank_line: "Bank", pay_run: "Payroll" };
+
 async function overviewView(id) {
   await loadEntity(id);
-  const { checks } = await api(entPath("/health"));
+  const [{ checks }, g] = await Promise.all([api(entPath("/health")), api(entPath("/glance"))]);
   const e = state.entity.entity;
+  const attn = state.entity.attention;
   const canSettings = ["owner", "admin"].includes(state.org.role);
+  const canWrite = !["read_only", "approver"].includes(state.org.role);
   const problems = checks.filter((c) => !c.ok && !c.warn).length;
   const warnings = checks.filter((c) => !c.ok && c.warn).length;
   const summary = problems ? `<div class="alert bad">${problems} thing${problems === 1 ? " needs" : "s need"} fixing in the books.</div>`
     : warnings ? `<div class="alert warn">The books are sound. ${warnings} housekeeping item${warnings === 1 ? " is" : "s are"} worth a look.</div>`
     : `<div class="alert good">Everything checks out.</div>`;
   const einMissing = checks.some((c) => c.key === "ein" && !c.ok);
+  const go = (k) => `#/e/${e.id}/${k}`;
+  const kpi = (label, minor, href, note = "") => `<a class="card kpi" href="${href}"><div class="muted">${label}</div><div class="stat">${usd(minor)}</div>${note ? `<div class="hash">${note}</div>` : ""}</a>`;
+  const todo = [
+    [attn.bankToReview, `bank line${attn.bankToReview === 1 ? "" : "s"} to review`, "bank"],
+    [attn.overdueInvoices, `invoice${attn.overdueInvoices === 1 ? " is" : "s are"} overdue`, "invoices"],
+    [attn.billsDueSoon, `bill${attn.billsDueSoon === 1 ? " is" : "s are"} due within a week`, "bills"],
+    [attn.payRunsToApprove, `pay run${attn.payRunsToApprove === 1 ? "" : "s"} waiting for approval`, "payroll"],
+  ].filter(([n]) => n);
   app.innerHTML = shell("overview", `
-    <div class="head"><div><h1>${esc(e.legalName)}</h1><p class="muted">Books health for today. These are bookkeeping checks, not a tax or compliance review.</p></div></div>
-    ${summary}
-    <div class="panel table-wrap"><table>
+    <div class="head"><div><h1>${esc(e.legalName)}</h1><p class="muted">${g.closedThrough ? `Books closed through ${longDate(g.closedThrough)}.` : "Your money at a glance, as of today."}</p></div>
+      ${canWrite ? `<div class="row">
+        <a class="btn" href="${go("invoices")}">New invoice</a>
+        <a class="btn secondary" href="${go("bills")}">Record a bill</a>
+        <a class="btn secondary" href="${go("bank")}">Import bank statement</a>
+      </div>` : ""}
+    </div>
+    <div class="cards kpis">
+      ${kpi("Cash in the bank", g.cashMinor, go("bank"), "per the books")}
+      ${kpi("Customers owe you", g.owedToYouMinor, go("invoices"))}
+      ${kpi("You owe vendors", g.youOweMinor, go("bills"))}
+      ${kpi("Profit this year", g.profitThisYearMinor, go("reports"), `since ${longDate(g.fiscalYearFrom)}`)}
+      ${BigInt(g.salesTaxHeldMinor) ? kpi("Sales tax to set aside", g.salesTaxHeldMinor, go("reports"), "collected, not yet paid to the CDTFA") : ""}
+    </div>
+    <div class="split">
+      <div class="panel">
+        <h2>To do</h2>
+        ${todo.length ? `<ul class="todo">${todo.map(([n, what, k]) => `<li><a href="${go(k)}"><span class="badge">${n}</span> ${what}</a></li>`).join("")}</ul>` : `<p class="muted">Nothing waiting on you.</p>`}
+      </div>
+      <div class="panel">
+        <h2>Recent activity</h2>
+        ${g.recent.length ? `<table><tbody>${g.recent.map((r) => `<tr><td>${r.date}</td><td>${esc(r.memo || SOURCE_LABEL[r.sourceType] || r.sourceType)}<div class="hash">${SOURCE_LABEL[r.sourceType] ?? r.sourceType} #${r.entryNumber}</div></td><td class="num">${usd(r.amountMinor)}</td></tr>`).join("")}</tbody></table>`
+          : `<p class="muted">Nothing posted yet. Start with an invoice, a bill or a bank statement.</p>`}
+      </div>
+    </div>
+    <details class="panel"${problems ? " open" : ""}><summary><strong>Books health</strong> <span class="muted">· bookkeeping checks, not a tax or compliance review</span></summary>
+    <div style="margin-top:12px">${summary}</div>
+    <div class="table-wrap"><table>
       <thead><tr><th></th><th>Check</th><th>Detail</th><th></th></tr></thead>
       <tbody>${checks.map((c) => `<tr>
         <td><span class="${c.ok ? "pill" : c.warn ? "pill warn" : "pill bad"}">${c.ok ? "OK" : c.warn ? "Review" : "Fix"}</span></td>
         <td>${esc(c.title)}</td><td class="muted">${esc(c.detail)}</td>
-        <td>${!c.ok && c.go ? `<a href="#/e/${e.id}/${c.go}">Go there</a>` : ""}</td></tr>`).join("")}</tbody>
+        <td>${!c.ok && c.go ? `<a href="${go(c.go)}">Go there</a>` : ""}</td></tr>`).join("")}</tbody>
     </table></div>
-    ${einMissing && canSettings ? `<div class="panel">
-      <h2>Add the EIN</h2>
-      <form data-form="ein" class="row">
-        <label>EIN<input name="ein" placeholder="12-3456789" required pattern="\\d{2}-?\\d{7}" class="mono"></label>
+    ${einMissing && canSettings ? `<form data-form="ein" class="row" style="margin-top:12px">
+        <label>Add the EIN<input name="ein" placeholder="12-3456789" required pattern="\\d{2}-?\\d{7}" class="mono"></label>
         <button type="submit">Save</button>
-      </form>
-    </div>` : ""}`);
+      </form>` : ""}
+    </details>`);
 }
 
 // ------------------------------------------------------------- reports
 
 const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"]];
-const rep = { tab: "pl", from: "", to: "", asOf: "", account: "" };
+const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all" };
+
+const RANGE_PRESETS = [["this-month", "This month"], ["last-month", "Last month"], ["this-quarter", "This quarter"], ["last-quarter", "Last quarter"], ["this-year", "This year to date"], ["last-year", "Last year"], ["custom", "Custom dates"]];
+const ASOF_PRESETS = [["today", "Today"], ["end-last-month", "End of last month"], ["end-last-quarter", "End of last quarter"], ["end-last-year", "End of last year"], ["custom", "Custom date"]];
+
+const ymd = (y, m, d) => new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10);
+/** Months are 1-based; day 0 of the next month is this month's last day, and Date handles the year rollover. */
+const monthEnd = (y, m) => ymd(y, m + 1, 0);
+
+/** Date ranges people actually ask for. Years follow the business's fiscal year; quarters are calendar quarters. */
+function presetRange(k) {
+  const t = today();
+  const [y, m] = t.split("-").map(Number);
+  const fm = state.entity.entity.fiscalYearStartMonth ?? 1;
+  const fy = m >= fm ? y : y - 1;
+  const q = Math.floor((m - 1) / 3) * 3 + 1;
+  return {
+    "this-month": [ymd(y, m, 1), t],
+    "last-month": [ymd(y, m - 1, 1), monthEnd(y, m - 1)],
+    "this-quarter": [ymd(y, q, 1), t],
+    "last-quarter": [ymd(y, q - 3, 1), monthEnd(y, q - 1)],
+    "this-year": [ymd(fy, fm, 1), t],
+    "last-year": [ymd(fy - 1, fm, 1), ymd(fy, fm, 0)],
+  }[k];
+}
+
+function presetAsOf(k) {
+  const t = today();
+  const [y, m] = t.split("-").map(Number);
+  const fm = state.entity.entity.fiscalYearStartMonth ?? 1;
+  const fy = m >= fm ? y : y - 1;
+  const q = Math.floor((m - 1) / 3) * 3 + 1;
+  return { today: t, "end-last-month": monthEnd(y, m - 1), "end-last-quarter": monthEnd(y, q - 1), "end-last-year": ymd(fy, fm, 0) }[k];
+}
 
 function reportDefaults() {
-  const t = today();
-  if (!rep.to) rep.to = t;
-  if (!rep.asOf) rep.asOf = t;
-  if (!rep.from) {
-    const m = state.entity.entity.fiscalYearStartMonth ?? 1;
-    const [y, mo] = t.split("-").map(Number);
-    rep.from = `${mo >= m ? y : y - 1}-${String(m).padStart(2, "0")}-01`;
-  }
-  if (!rep.account) rep.account = state.entity.accounts.find((a) => a.subtype === "bank")?.code ?? state.entity.accounts[0]?.code ?? "";
+  if (rep.preset !== "custom" || !rep.from) [rep.from, rep.to] = presetRange(rep.preset === "custom" ? "this-year" : rep.preset);
+  if (rep.asPreset !== "custom" || !rep.asOf) rep.asOf = presetAsOf(rep.asPreset === "custom" ? "today" : rep.asPreset);
+  if (rep.account !== "all" && !state.entity.accounts.some((a) => a.code === rep.account)) rep.account = "all";
 }
 
 function reportQuery() {
@@ -698,6 +885,13 @@ function reportQuery() {
   const kind = rep.tab === "ar" ? "receivables" : "payables";
   return [`/reports/${kind}-aging`, `asOf=${rep.asOf}`, `${kind}-aging-${rep.asOf}`];
 }
+
+const ledgerTable = (gl) => `<table>
+  <thead><tr><th>Date</th><th>Entry</th><th>Memo</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+  <tbody><tr><td>${gl.from}</td><td></td><td class="muted">Opening balance</td><td></td><td></td><td class="num">${usd(gl.openingMinor)}</td></tr>
+  ${gl.lines.map((l) => `<tr><td>${l.date}</td><td class="mono">#${l.entryNumber}</td><td>${esc(l.memo || l.description)}</td>
+    <td class="num">${usd(l.debitMinor, { blankZero: true })}</td><td class="num">${usd(l.creditMinor, { blankZero: true })}</td><td class="num">${usd(l.balanceMinor)}</td></tr>`).join("")}</tbody>
+  <tfoot><tr><td colspan="5">Closing balance</td><td class="num">${usd(gl.closingMinor)}</td></tr></tfoot></table>`;
 
 const sectionRows = (s) => `
   <tr><th colspan="3">${esc(s.label)}</th></tr>
@@ -731,12 +925,9 @@ async function reportsView(id) {
       <tfoot><tr><td></td><td>Liabilities and equity</td><td class="num">${usd(BigInt(bs.totalLiabilitiesMinor) + BigInt(bs.totalEquityMinor))}</td></tr></tfoot></table>`;
   } else if (rep.tab === "gl") {
     const gl = await api(entPath(`${path}?${q}`));
-    body = `<table>
-      <thead><tr><th>Date</th><th>Entry</th><th>Memo</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
-      <tbody><tr><td>${gl.from}</td><td></td><td class="muted">Opening balance</td><td></td><td></td><td class="num">${usd(gl.openingMinor)}</td></tr>
-      ${gl.lines.map((l) => `<tr><td>${l.date}</td><td class="mono">#${l.entryNumber}</td><td>${esc(l.memo || l.description)}</td>
-        <td class="num">${usd(l.debitMinor, { blankZero: true })}</td><td class="num">${usd(l.creditMinor, { blankZero: true })}</td><td class="num">${usd(l.balanceMinor)}</td></tr>`).join("")}</tbody>
-      <tfoot><tr><td colspan="5">Closing balance</td><td class="num">${usd(gl.closingMinor)}</td></tr></tfoot></table>`;
+    body = rep.account === "all"
+      ? gl.ledgers.map((g) => `<h3>${g.account.code} · ${esc(g.account.name)}</h3>${ledgerTable(g)}`).join("") || `<p class="muted">No activity in these dates.</p>`
+      : ledgerTable(gl);
   } else {
     const ag = await api(entPath(`/${rep.tab === "ar" ? "invoices" : "bills"}/aging?asOf=${rep.asOf}`));
     body = `<div class="row" style="gap:24px;margin-bottom:12px">
@@ -752,9 +943,12 @@ async function reportsView(id) {
     <div class="row" style="margin-bottom:12px">${REPORTS.map(([k, l]) => `<button class="${rep.tab === k ? "" : "secondary"}" data-action="report-tab" data-tab="${k}">${l}</button>`).join("")}</div>
     <div class="panel">
       <form data-form="report" class="row" style="margin-bottom:12px">
-        ${rep.tab === "gl" ? `<label>Account<select name="account">${accountOptions(rep.account)}</select></label>` : ""}
-        ${range ? `<label>From<input type="date" name="from" value="${rep.from}" required></label><label>To<input type="date" name="to" value="${rep.to}" required></label>`
-          : `<label>As of<input type="date" name="asOf" value="${rep.asOf}" required></label>`}
+        ${rep.tab === "gl" ? `<label>Account<select name="account" data-autosubmit><option value="all">All accounts</option>${state.entity.accounts.map((a) => `<option value="${a.code}" ${a.code === rep.account ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>` : ""}
+        ${range
+          ? `<label>Dates<select name="preset" data-autosubmit>${RANGE_PRESETS.map(([k, l]) => `<option value="${k}" ${rep.preset === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+             <label>From<input type="date" name="from" value="${rep.from}" required data-custom="preset"></label><label>To<input type="date" name="to" value="${rep.to}" required data-custom="preset"></label>`
+          : `<label>As of<select name="asPreset" data-autosubmit>${ASOF_PRESETS.map(([k, l]) => `<option value="${k}" ${rep.asPreset === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+             <label>Date<input type="date" name="asOf" value="${rep.asOf}" required data-custom="asPreset"></label>`}
         <button type="submit" class="secondary">Update</button>
         <button type="button" data-action="report-csv">Download CSV</button>
       </form>
@@ -1095,6 +1289,7 @@ async function route() {
     }
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
+      if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
       const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
     }
@@ -1115,6 +1310,7 @@ document.addEventListener("input", (ev) => {
   if (t.closest("#lines")) updateTotals();
   if (t.closest("form[data-form=document]")) updateDocTotals();
   if (t.dataset.rc !== undefined) updateRecon();
+  if (t.dataset.custom && t.form) t.form.elements.namedItem(t.dataset.custom).value = "custom";
   if (t.dataset.emp !== undefined) {
     const e = employees[Number(t.dataset.emp)];
     if (t.dataset.field === "daily") e.dailyHours[Number(t.dataset.day)] = t.value;
@@ -1127,6 +1323,7 @@ document.addEventListener("input", (ev) => {
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.dataset.autosubmit !== undefined && t.form) t.form.requestSubmit();
   if (t.name === "contactId" && t.closest("form[data-form=document]")) {
     const box = t.form.querySelector("[data-new-contact]");
     box.hidden = t.value !== "__new";
@@ -1165,7 +1362,26 @@ document.addEventListener("click", async (ev) => {
   if (!b || b.tagName === "SELECT") return;
   const a = b.dataset.action;
   try {
-    if (a === "logout") {
+    if (a === "theme") {
+      const next = THEMES[(THEMES.indexOf(theme()) + 1) % THEMES.length];
+      try { localStorage.setItem("altqbo_theme", next); } catch {}
+      applyTheme(next);
+      b.textContent = { auto: "Theme: device", dark: "Theme: dark", light: "Theme: light" }[next];
+    } else if (a === "open-example") {
+      b.disabled = true;
+      b.textContent = "Setting up the example…";
+      const r = await api("/api/example", { body: {} });
+      state.me = null; state.org = null; state.orgId = r.orgId;
+      try { localStorage.setItem("altqbo_org", r.orgId); } catch {}
+      location.hash = `#/e/${r.entityId}/overview`;
+    } else if (a === "open-ledger") {
+      openLedger(b.dataset.code);
+    } else if (a === "journal-clear") {
+      jr.q = "";
+      await journalView(state.entity.entity.id);
+    } else if (a === "print") {
+      window.print();
+    } else if (a === "logout") {
       await api("/api/auth/logout", { body: {} });
       state.me = null; state.org = null; state.orgId = null;
       location.hash = "#/login";
@@ -1185,13 +1401,6 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "doc-toggle") {
       const row = document.querySelector(`tr[data-${b.dataset.form}="${b.dataset.id}"]`);
       row.hidden = !row.hidden;
-    } else if (a === "doc-detail") {
-      const row = document.querySelector(`tr[data-detail="${b.dataset.id}"]`);
-      row.hidden = !row.hidden;
-      if (!row.hidden) {
-        const kind = location.hash.includes("/bills") ? "bills" : "invoices";
-        document.getElementById(`detail-${b.dataset.id}`).innerHTML = docDetail(await api(entPath(`/${kind}/${b.dataset.id}`)));
-      }
     } else if (a === "acct-edit") {
       const row = document.querySelector(`tr[data-acct-edit="${b.dataset.id}"]`);
       row.hidden = !row.hidden;
@@ -1349,7 +1558,17 @@ document.addEventListener("submit", async (ev) => {
       await journalView(state.entity.entity.id);
     } else if (kind === "report") {
       Object.assign(rep, d);
+      if (d.preset && d.preset !== "custom") [rep.from, rep.to] = presetRange(d.preset);
+      if (d.asPreset && d.asPreset !== "custom") rep.asOf = presetAsOf(d.asPreset);
       await reportsView(state.entity.entity.id);
+    } else if (kind === "journal-search") {
+      jr.q = d.q.trim();
+      await journalView(state.entity.entity.id);
+    } else if (kind === "close-through") {
+      const r = await api(entPath("/close-through"), { body: d });
+      state.entity.fresh = false;
+      toast(r.closed ? `Closed ${r.closed} month${r.closed === 1 ? "" : "s"}. Books closed through ${longDate(r.closedThrough ?? d.through)}` : "Those months were already closed");
+      await periodsView(state.entity.entity.id);
     } else if (kind === "ein") {
       await api(entPath("/settings"), { body: { ein: d.ein } });
       toast("EIN saved");

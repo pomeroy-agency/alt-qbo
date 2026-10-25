@@ -189,6 +189,24 @@ export async function generalLedger(tx: Tx, entityId: string, accountKey: string
   return { account: { code: a.code, name: a.name, type: a.type }, from, to, openingMinor: open * sign, lines, closingMinor: run };
 }
 
+/** Every account with an opening balance or activity in the range, one ledger each, in code order. */
+export async function generalLedgerAll(tx: Tx, entityId: string, from: string, to: string): Promise<GeneralLedger[]> {
+  if (from > to) throw new LedgerError("INVALID", "the start date is after the end date");
+  const { rows } = await tx.query(
+    `SELECT DISTINCT a.code FROM accounts a
+       JOIN journal_lines l ON l.account_id = a.id JOIN journal_entries e ON e.id = l.entry_id
+      WHERE a.entity_id = $1 AND e.entry_date <= $2
+      ORDER BY a.code`,
+    [entityId, to],
+  );
+  const out: GeneralLedger[] = [];
+  for (const r of rows) {
+    const gl = await generalLedger(tx, entityId, r.code, from, to);
+    if (gl.lines.length || gl.openingMinor !== 0n) out.push(gl);
+  }
+  return out;
+}
+
 // --------------------------------------------------------------------- CSV
 
 const money = (m: bigint) => toMajor(m).toFixed(2);
@@ -216,12 +234,20 @@ export function balanceSheetCsv(bs: BalanceSheet): string {
   return out.join("\n") + "\n";
 }
 
-export function generalLedgerCsv(gl: GeneralLedger): string {
-  const out = [`General ledger,${gl.account.code} ${cell(gl.account.name)},${gl.from} to ${gl.to}`, "Date,Entry,Type,Memo,Description,Debit,Credit,Balance",
-    `${gl.from},,,Opening balance,,,,${money(gl.openingMinor)}`];
-  for (const l of gl.lines) {
-    out.push([l.date, String(l.entryNumber), l.sourceType, cell(l.memo), cell(l.description),
-      l.debitMinor ? money(l.debitMinor) : "", l.creditMinor ? money(l.creditMinor) : "", money(l.balanceMinor)].join(","));
+export function generalLedgerCsv(gl: GeneralLedger | GeneralLedger[]): string {
+  const all = Array.isArray(gl);
+  const ledgers = all ? gl : [gl];
+  const head = all
+    ? [`General ledger,all accounts,${ledgers[0]?.from ?? ""} to ${ledgers[0]?.to ?? ""}`, "Account,Name,Date,Entry,Type,Memo,Description,Debit,Credit,Balance"]
+    : [`General ledger,${gl.account.code} ${cell(gl.account.name)},${gl.from} to ${gl.to}`, "Date,Entry,Type,Memo,Description,Debit,Credit,Balance"];
+  const out = [...head];
+  for (const g of ledgers) {
+    const pre = all ? [g.account.code, cell(g.account.name)] : [];
+    out.push([...pre, g.from, "", "", "Opening balance", "", "", "", money(g.openingMinor)].join(","));
+    for (const l of g.lines) {
+      out.push([...pre, l.date, String(l.entryNumber), l.sourceType, cell(l.memo), cell(l.description),
+        l.debitMinor ? money(l.debitMinor) : "", l.creditMinor ? money(l.creditMinor) : "", money(l.balanceMinor)].join(","));
+    }
   }
   return out.join("\n") + "\n";
 }
