@@ -16,7 +16,7 @@ const CAN_CLOSE: Role[] = ["owner", "admin", "accountant"];
 const CAN_REOPEN: Role[] = ["owner", "accountant"];
 
 export type SourceType =
-  | "journal_voucher" | "invoice" | "bill" | "bank_line" | "payment" | "pay_run" | "reversal" | "opening_balance";
+  | "journal_voucher" | "invoice" | "bill" | "bank_line" | "payment" | "pay_run" | "reversal" | "opening_balance" | "tax_deposit";
 
 export interface LineInput {
   /** Account code ("1000") or system key ("cash_operating"). */

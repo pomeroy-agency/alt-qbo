@@ -562,3 +562,58 @@ describe("direct deposit", () => {
     expect(JSON.stringify(backup.data.tables.employees)).toContain("6789");
   });
 });
+
+describe("payroll tax deposits", () => {
+  it("lists deposits from posted runs, records a payment against the liabilities, and sends reminders once", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    const approver = await join(s, `approver${Date.now()}${n++}@example.com`, "approver");
+    const m = (await call(`${base}/employees`, { cookie: s.cookie, body: maya })).data;
+    const run = (await call(`${base}/pay-runs`, { cookie: s.cookie, body: runFor([m.id], "2026-06-19") })).data;
+    expect((await call(`${base}/tax-deposits?year=2026`, { cookie: s.cookie })).data.deposits).toEqual([]);
+    expect((await call(`${base}/pay-runs/${run.id}/approve`, { cookie: approver.cookie, body: {} })).status).toBe(201);
+
+    const list = await call(`${base}/tax-deposits?year=2026`, { cookie: s.cookie });
+    expect(list.data.federalSchedule).toBe("monthly");
+    const kinds = list.data.deposits.map((d: any) => [d.kind, d.dueDate]);
+    expect(kinds).toEqual(expect.arrayContaining([["federal_941", "2026-07-15"], ["ca_ui_ett", "2026-07-31"]]));
+    const fed = list.data.deposits.find((d: any) => d.kind === "federal_941");
+    const taxes = run.run.paychecks[0].taxes;
+    const sum = (codes: string[]) => taxes.filter((t: any) => codes.includes(t.code)).reduce((s: bigint, t: any) => s + BigInt(t.amountMinor), 0n);
+    expect(BigInt(fed.amountMinor)).toBe(sum(["FIT", "SS_EE", "SS_ER", "MEDICARE_EE", "MEDICARE_ER"]));
+    expect(fed).toMatchObject({ agency: "IRS", period: "June 2026" });
+
+    expect((await call(`${base}/tax-deposits/pay`, { cookie: s.cookie, body: { key: fed.key, paidDate: "2099-01-01" } })).status).toBe(400);
+    expect((await call(`${base}/tax-deposits/pay`, { cookie: s.cookie, body: { key: "federal_941:m:2026-01", paidDate: "2026-07-10" } })).status).toBe(422);
+    const paid = await call(`${base}/tax-deposits/pay`, { cookie: s.cookie, body: { key: fed.key, paidDate: "2026-07-10", confirmation: "EFT 27064" } });
+    expect(paid.status).toBe(201);
+    expect(paid.data).toMatchObject({ amountMinor: fed.amountMinor, late: false });
+    expect((await call(`${base}/tax-deposits/pay`, { cookie: s.cookie, body: { key: fed.key, paidDate: "2026-07-10" } })).status).toBe(422);
+
+    const after = (await call(`${base}/tax-deposits?year=2026`, { cookie: s.cookie })).data.deposits.find((d: any) => d.key === fed.key);
+    expect(after).toMatchObject({ status: "paid", remainingMinor: "0", payments: [{ paidDate: "2026-07-10", confirmation: "EFT 27064" }] });
+    // The liabilities it paid are cleared: FIT and FICA payable are back to zero.
+    const { rows: owed } = await pool.query(
+      `SELECT a.system_key, sum(l.credit_minor - l.debit_minor)::text AS owed FROM journal_lines l JOIN accounts a ON a.id = l.account_id
+        WHERE l.entity_id = $1 AND a.system_key IN ('fit_payable', 'fica_payable', 'ca_ui_payable') GROUP BY a.system_key ORDER BY 1`, [ent]);
+    expect(owed.map((r) => [r.system_key, r.owed !== "0"])).toEqual([["ca_ui_payable", true], ["fica_payable", false], ["fit_payable", false]]);
+    const entry = (await pool.query("SELECT source_type, memo FROM journal_entries WHERE id = $1", [paid.data.entryId])).rows[0];
+    expect(entry).toMatchObject({ source_type: "tax_deposit" });
+    expect(entry.memo).toContain("EFT 27064");
+
+    // Reminders: the open deposits are overdue on Aug 5 (due Jul 31) and each is emailed once.
+    const sent: { to: string; subject: string; text: string }[] = [];
+    const mailer = async (m: { to: string; subject: string; text: string }) => { sent.push(m); };
+    const { sendDepositReminders } = await import("../src/payroll/deposit-reminders.js");
+    await sendDepositReminders(pool, mailer, "2026-08-05", "https://alt-qbo.test");
+    const mine = sent.filter((x) => x.to === s.email);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.subject).toContain("past due");
+    expect(mine[0]!.text).toContain("California UI and ETT");
+    expect(mine[0]!.text).not.toContain("Form 941)");
+    expect(sent.some((x) => x.to === approver.email)).toBe(false);
+    await sendDepositReminders(pool, mailer, "2026-08-06");
+    expect(sent.filter((x) => x.to === s.email)).toHaveLength(1);
+  });
+});

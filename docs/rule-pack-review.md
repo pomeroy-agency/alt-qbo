@@ -13,6 +13,7 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 | 2026 brackets, all statuses | as in file | Rev. Proc. 2025-32, Tables 1-4 | ✅ matches the IRS PDF, including head of household (17,700 / 67,450 / 105,700 / 201,750 / 256,200 / 640,600) |
 | Standard deductions | $16,100 / $32,200 / $24,150 | Rev. Proc. 2025-32 §3.14 | ✅ matches |
 | Worksheet 1A line 1g | $12,900 MFJ, $8,600 other | Pub 15-T (2026) | ✅ matches |
+| Deposit rules | $50,000 lookback; monthly by the 15th; semiweekly Wed/Fri with 3 business days after the period; $100,000 next day; $2,500 pay with return; FUTA over $500 quarterly | Pub 15 (2026) §11, §14 Table 4 | ✅ matches the IRS PDF, including the 2026 DC legal holidays (tests reproduce Pub 15's examples) |
 | Withholding schedules, all six | derived from brackets | Pub 15-T (2026) page 11 | ✅ all six now reproduce the published table exactly (tests). **Fixed:** single Step 2 thresholds were off by 50 cents because the IRS rounds halved thresholds to the dollar |
 
 ## us-ca 2026.1 (`src/rules/us-ca-2026.ts`)
@@ -28,6 +29,8 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 | Minimum wage | $16.90 statewide | Dept. of Finance; Labor Code 1182.12 | ✅ matches. ⚠️ About 40 cities and counties are higher (Los Angeles city $18.42, LA County unincorporated $18.47, San Francisco $19.61 from July 1, 2026). Not modelled yet |
 | Exempt salary floor | $70,304 | Labor Code 515(a): 2 × $16.90 × 2,080 | ✅ matches |
 | Sick leave | 1 hour per 30 worked; 40-hour use cap; 80-hour accrual cap | Labor Code 246 (SB 616) | ✅ matches; unchanged for 2026. Some cities are more generous |
+| PIT and SDI deposits | under $350 quarterly; $350 to $400 monthly by the 15th; over $400 on the federal semiweekly or next-day timing | EDD Payroll Tax Deposits page (2026) | ⚠️ from search results (EDD site blocked here). The 2025 DE 44 used $500 where 2026 uses $400; confirm against the 2026 DE 44 table |
+| UI and ETT deposits | quarterly with the DE 9; 2026 dates Apr 30, Jul 31, Nov 2, Feb 1 2027 | EDD Required Filings and Due Dates | ✅ the computed dates match the EDD's list |
 | Remote-seller threshold | $500,000 | R&TC 6203 (AB 147) | ✅ matches |
 | Franchise tax minimum | $800 | R&TC 17941, 23153 | ✅ matches; the first-year LLC exemption (AB 85) ended with 2023 |
 
