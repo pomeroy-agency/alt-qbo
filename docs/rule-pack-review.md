@@ -66,6 +66,26 @@ Also to confirm:
 - **Rate lookup.** The rate comes from the CDTFA's tax rate API. It was spot-checked for four cities on 2026-10-25, and the live site returned 10.25% for Los Angeles City Hall the same day. Addresses on district boundaries still need checking.
 - **Design charges.** CDTFA annotations (430.0194, 100.0103, 100.0159, 100.0162, still in the 2026 law guide) say finished or sketched designs handed over in physical form are taxable, while preliminary art billed separately is not. Designs delivered only electronically are not tangible, which is why "professional or creative service" defaults to not taxable.
 
+### us-ca-sales-tax 2027.1 (same file, draft; rule watch and legal review 2026-10-25)
+
+Legal review: https://claude.ai/artifact/KNyqBmPyM1axk2JoiLD44n. ca.gov was blocked from the build machines, so the statute and CDTFA text were read through search extracts; check the citations against the chaptered SB 122 and the adopted regulations before release.
+
+| Change | 2027 value | Source | Check |
+|---|---|---|---|
+| Prewritten software, including downloads and SaaS ("Software or app access") | taxable for access from 2027-01-01; not taxable in the 2026 pack (on a disk, use "Physical goods") | Rev. & Tax. Code §§6016.1, 6016.2 (SB 122, Stats. 2026, ch. 23); draft Reg. 1600 | ⚠️ confirm against the chaptered text |
+| "Prewritten" test in the help text | offered to customers generally, even if first built custom | §6010.9 ("held or existing for general or repeated sale or lease"); Reg. 1502 | ⚠️ same |
+| Custom software (new choice, both packs) | not taxable | §6010.9; Reg. 1502 (moving to proposed Reg. 1502.2) | ⚠️ same |
+| Digital works and digital infrastructure ("Delivered electronically") | not taxable | §6016.1(b) | ⚠️ same |
+| Services delivered through software ("Professional or creative service") | not taxable when the customer pays for a person's work done after they asked | §6372.1; draft Reg. 1600(g)(3) | ⚠️ CDTFA hasn't settled the line |
+| Everything else | carried over from 2026 | | carried over; without a 2027 pack, invoices dated 2027 could not be issued |
+
+How the app applies it (`src/core/sales-tax.ts`):
+- **Timing.** A software line can carry the period the customer has access. Its tax follows the pack for the start of that period, not the invoice date. A period that runs across a change in taxability is refused with a request to split it. An invoice dated within about two months before the change must give the start date. One prepaid period that began in 2026 is unsettled at CDTFA; the split is the conservative reading.
+- **Sourcing.** Software is taxed at the customer's own address (draft Reg. 1600(d)(2)(A): billing, shipping, payment instrument, mailing). With no customer address, a taxable software line is refused rather than taxed at the business's address.
+- **$5,000,000 direct payment.** An owner or accountant can record a customer's use tax direct payment permit. Software lines to that customer are then not taxed, and the return figures show them on their own line. A warning appears once a customer's software billing for the year passes $4,000,000 without a permit.
+- **Multiple points of use.** An owner or accountant can record the California share and date from a customer's certificate (proposed Reg. 1600.2). Software lines are taxed on that share only; the rest shows on the return figures as software used outside California. Recheck when 1600.2 is adopted.
+- **Release.** Keep the pack in draft until OAL approves CDTFA's emergency regulations and the adopted text is read.
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. Alt-QBO doesn't file them.
