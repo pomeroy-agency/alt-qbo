@@ -39,7 +39,6 @@ Until these are set, nothing changes for anyone: every organisation keeps full u
 - **Partner firms.** For a client a firm brought in with the 20% discount, set it once: `UPDATE subscriptions SET partner_org_id = '<firm org id>', partner_discount_pct = 20 WHERE org_id = '<client org id>';` Referral fees are paid outside the app.
 - **Price changes** for existing customers: every subscription keeps the price list it started with, so a change in `src/billing/plans.ts` only affects new sign-ups. Moving existing customers is a deliberate update after the 60-day notice, at most once a year and at most 10%.
 - **Held charges** (an invoice that couldn't be made, or Stripe didn't answer): `OPS_EMAIL` gets a list. Check the Stripe dashboard before charging again.
-- **Security contact.** `web/security.html` says "to be added before launch" where the address for reporting a security problem goes.
 
 ## Two-factor sign-in
 
