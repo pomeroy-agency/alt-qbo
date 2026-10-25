@@ -18,7 +18,7 @@ Alt-QBO has no subscription billing of its own. The plan is for the selling busi
 
 The full reasoning, the draft Terms of Service and the partner firm addendum are in the [Terms of service and 2027 sales tax decisions](https://claude.ai/artifact/DrN5xh3U7RnPHrF2HKwxHa) doc.
 
-- **Seller:** a dedicated single-member LLC, formed now. Its name stays generic until the product is named.
+- **Seller:** Greg's existing California LLC (taxed as an S corp), not the BC company. File a fictitious business name statement once the product is named. (Changed 2026-10-25 from a new LLC.)
 - **Pricing:** every price excludes tax. The Terms of Service (section 6) has the customer agree to pay California sales tax reimbursement (Civ. Code §1656.1). Invoices show the tax as its own line.
 - **Accounting and HR firms:** no resale. The client business is always the customer of record, billed and taxed at its own billing address. A firm may pay as the client's agent under the partner firm addendum. A firm's own seats are taxed at the firm's address. Partner pricing is a discount on the client's invoice or a referral fee, never a wholesale price.
 - **Services:** onboarding, conversion and training are separate optional lines (kind of sale "Professional or creative service"). There are no bundled prices.
