@@ -96,6 +96,8 @@ function topbar() {
       <button class="secondary" data-action="logout">Sign out</button>
     </header>
     <div class="banner"><span class="long">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</span><span class="short">Preview build: use test data only.</span></div>
+    ${state.org?.access?.level === "read_only" ? `<div class="banner bad">Changes are paused: ${esc(state.org.access.reason)}. ${["owner", "admin"].includes(state.org.role) ? `<a href="#/billing">Go to Billing</a>` : "Ask an owner to check Billing."}</div>`
+      : state.org?.access?.warning ? `<div class="banner info">${esc(state.org.access.warning)} ${["owner", "admin"].includes(state.org.role) ? `<a href="#/billing">Go to Billing</a>` : ""}</div>` : ""}
     ${state.me?.emailEnabled && state.me.user && !state.me.user.emailVerified ? `<div class="banner info">Please confirm your email: we sent a link to ${esc(state.me.user.email)}. <button class="link" data-action="resend-verify">Send it again</button></div>` : ""}`;
 }
 
@@ -128,13 +130,14 @@ function shell(active, content) {
   const btn = (href, k, l, n = 0, what = "") =>
     `<a href="${href}" class="${active === k ? "on" : ""}">${esc(l)}${n ? `<span class="badge" title="${n} ${what}">${n}</span>` : ""}</a>`;
   const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
-  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ["account", "#/account", "Your account"]];
+  const billing = ["owner", "admin"].includes(state.org?.role) ? [["billing", "#/billing", "Billing"]] : [];
+  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ["account", "#/account", "Your account"]];
   const main = e ? ENTITY_TABS.map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
     ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
     ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
   ];
-  const moreOn = e && (["home", "team", "audit", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const moreOn = e && (["home", "team", "audit", "billing", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
   const mobile = `
       <nav class="mobile">
         <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
@@ -148,6 +151,7 @@ function shell(active, content) {
         <div class="label">Organisation</div>
         <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
         <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
+        ${billing.length ? `<a href="#/billing" class="${active === "billing" ? "on" : ""}">Billing</a>` : ""}
         <a href="#/account" class="${active === "account" ? "on" : ""}">Your account</a>
       </nav>
       ${mobile}
@@ -1991,6 +1995,110 @@ async function joined(orgId) {
   toast("You've joined the team");
 }
 
+// ------------------------------------------------------------------ billing
+
+const PLAN_LABEL = { books: "Books", books_payroll: "Books + Payroll" };
+const CHARGE_LABEL = { renewal: "Subscription", people: "People paid", upgrade: "Upgrade" };
+const CHARGE_STATUS = { pending: "Due", processing: "Charging", paid: "Paid", failed: "Payment failed", held: "Being checked", waived: "Waived" };
+const bill = { interval: null };
+
+async function billingView() {
+  const b = await api(orgPath("/billing"));
+  if (b.free) {
+    app.innerHTML = shell("billing", `<div class="head"><div><h1>Billing</h1></div></div><div class="panel"><p>This organisation doesn't pay for Alt-QBO.</p></div>`);
+    return;
+  }
+  const owner = state.org.role === "owner";
+  const interval = bill.interval ?? b.nextInterval ?? b.interval;
+  const per = interval === "month" ? "a month" : "a year";
+  const price = (minor) => usd(minor).replace(/\.00$/, "");
+  const status = {
+    trialing: b.access.level === "full"
+      ? `<span class="pill">Free trial</span> Everything is included until ${longDate(b.trialEndsOn)}.${b.card ? " Your card is charged the day after." : " Add a card before then to keep making changes."}`
+      : `<span class="pill bad">Trial ended</span> Your books are read-only. Add a card to keep going; nothing has been deleted.`,
+    active: b.cancelAtPeriodEnd
+      ? `<span class="pill warn">Ending</span> ${PLAN_LABEL[b.plan]} ends on ${longDate(b.periodEnd)}. After that the books stay readable and downloadable.`
+      : `<span class="pill">Active</span> ${PLAN_LABEL[b.plan]}, paid ${b.interval === "month" ? "monthly" : "yearly"}, through ${longDate(b.periodEnd)}.`,
+    past_due: `<span class="pill bad">Payment failed</span> ${esc(b.access.warning ?? b.access.reason ?? "")}`,
+    canceled: `<span class="pill grey">Ended</span> The subscription has ended. Your books stay readable and downloadable.`,
+  }[b.status];
+  const planCard = (k, blurb) => {
+    const on = (b.nextPlan ?? b.plan) === k;
+    return `<label class="card plan ${on ? "on" : ""}">
+      <input type="radio" name="plan" value="${k}" ${on ? "checked" : ""} ${owner || state.org.role === "admin" ? "" : "disabled"}>
+      <div class="muted">${PLAN_LABEL[k]}</div>
+      <div class="stat">${price(b.prices.plan[k][interval])} <span class="muted" style="font-size:14px">${per}</span></div>
+      ${k === "books_payroll" ? `<div>plus ${price(b.prices.perPersonMonth)} for each person paid in a month</div>` : ""}
+      <div class="muted">${blurb}</div>
+      <div class="hash">Each extra business ${price(b.prices.extraBusiness[k][interval])} ${per}</div>
+    </label>`;
+  };
+  const next = b.next ? `<p>Next charge on ${longDate(b.next.periodStart)}: <strong>${usd(b.next.subtotalMinor)}</strong> plus California sales tax where it applies, for ${longDate(b.next.periodStart)} to ${longDate(b.next.periodEnd)}.</p>
+      <ul class="muted">${b.next.lines.map((l) => `<li>${esc(l.description)}${l.quantity > 1 ? ` × ${l.quantity}` : ""}: ${usd(l.quantity * l.unitMinor)}</li>`).join("")}</ul>` : "";
+  const addr = b.billing.address ?? {};
+  app.innerHTML = shell("billing", `
+    <div class="head"><div><h1>Billing</h1><p class="muted">One price per business, unlimited users, invoices and bills. Prices are before sales tax. <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a> · <a href="/promises.html" target="_blank" rel="noopener">Our promises</a></p></div></div>
+    <div class="panel"><p>${status}</p>
+      ${b.founding ? `<p><span class="pill">Founding customer</span> Your prices are locked until ${longDate(b.priceLockedUntil)}.</p>`
+        : b.status === "trialing" && b.foundingSeatsLeft ? `<p class="muted">Founding offer: the first 100 businesses to start paying keep their price for 24 months. ${b.foundingSeatsLeft} places left.</p>` : ""}
+      ${next}
+    </div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between"><h2>Plan</h2>
+        <div class="row seg"><button class="${interval === "month" ? "" : "secondary"}" data-action="bill-interval" data-v="month">Monthly</button><button class="${interval === "year" ? "" : "secondary"}" data-action="bill-interval" data-v="year">Yearly, 2 months free</button></div></div>
+      <form data-form="bill-plan" data-interval="${interval}">
+        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, California sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: California overtime, pay stubs, direct-deposit file, prepared 941, DE 9 and W-2 forms.")}</div>
+        <p class="muted">You have ${b.businesses} business${b.businesses === 1 ? "" : "es"} here. ${b.status === "trialing" ? "Changes apply right away." : "Moving up to Books + Payroll applies now, charged for the days left; anything else applies at the next renewal."}</p>
+        <button type="submit">Save plan</button>
+      </form>
+    </div>
+    <div class="panel"><h2>Billing details</h2>
+      <p class="muted">The name and address on your invoices. California sales tax is worked out from this address.</p>
+      <form data-form="bill-details">
+        <div class="grid two">
+          <label>Business name<input name="name" required value="${esc(b.billing.name ?? state.org.org.name)}"></label>
+          <label>Billing email<input name="email" type="email" required value="${esc(b.billing.email ?? state.me.user.email)}"></label>
+          <label>Street address<input name="line1" required value="${esc(addr.line1 ?? "")}"></label>
+          <label>City<input name="city" required value="${esc(addr.city ?? "")}"></label>
+          <label>State<input name="state" required maxlength="2" value="${esc(addr.state ?? "CA")}"></label>
+          <label>ZIP code<input name="zip" required value="${esc(addr.zip ?? "")}"></label>
+        </div>
+        <button type="submit" class="secondary">Save details</button>
+      </form>
+    </div>
+    <div class="panel"><h2>Card</h2>
+      ${b.card ? `<p>${esc(b.card.brand.toUpperCase())} ending ${esc(b.card.last4)}, expires ${esc(b.card.exp)}.</p>` : `<p class="muted">No card yet.</p>`}
+      ${b.cardPayments
+        ? b.billing.address ? `<button data-action="bill-card">${b.card ? "Replace card" : "Add a card"}</button>
+          <p class="muted">You type the card on our payment processor's secure page (Stripe). Alt-QBO never sees or stores the card number.</p>` : `<p class="muted">Save the billing details first.</p>`
+        : `<p class="muted">Card payments aren't switched on yet. Your trial carries on in the meantime.</p>`}
+    </div>
+    ${b.charges.length ? `<div class="panel table-wrap"><h2>Payments</h2><table>
+      <thead><tr><th>Date</th><th>For</th><th>Invoice</th><th class="num">Amount</th><th class="num">Tax</th><th class="num">Total</th><th>Status</th></tr></thead>
+      <tbody>${b.charges.map((c) => `<tr><td>${c.created_at.slice(0, 10)}</td><td>${CHARGE_LABEL[c.kind]}, ${c.period_start} to ${c.period_end}</td><td class="mono">${esc(c.invoice_number ?? "")}</td>
+        <td class="num">${usd(c.subtotal_minor)}</td><td class="num">${c.tax_minor == null ? "" : usd(c.tax_minor)}</td><td class="num">${c.total_minor == null ? "" : usd(c.total_minor)}</td>
+        <td>${CHARGE_STATUS[c.status]}${c.failure ? `<div class="hash">${esc(c.failure)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    ${owner ? `<div class="panel"><h2>${b.status === "canceled" || b.cancelAtPeriodEnd ? "Restart" : "Cancel"}</h2>
+      ${b.status === "canceled" || b.cancelAtPeriodEnd
+        ? `<p>Pick up where you left off.${b.status === "canceled" ? " Billing starts again today." : ""}</p><button data-action="bill-resume">Restart subscription</button>`
+        : `<p class="muted">Cancel any time. ${b.status === "trialing" ? "The trial ends now." : `You keep full use until ${longDate(b.periodEnd)}.`} Your books stay readable and downloadable for 7 years, free. A yearly plan cancelled within 60 days of paying is refunded for the unused months.</p>
+          <button class="secondary" data-action="bill-cancel">Cancel subscription</button>`}
+    </div>` : ""}`);
+}
+
+/** Where the card processor sends people back after saving a card. */
+async function cardReturnView(sessionId) {
+  app.innerHTML = shell("billing", `<div class="panel"><p>Saving your card…</p></div>`);
+  try {
+    const r = await api(orgPath("/billing/card/confirm"), { body: { sessionId } });
+    state.org.stale = true;
+    toast(r.charged ? `Card saved and charged. Thank you!` : r.failed ? "Card saved, but the payment didn't go through" : `Card ending ${r.card.last4} saved`);
+  } catch (err) {
+    toast(err.message);
+  }
+  location.hash = "#/billing";
+}
+
 // ------------------------------------------------------------------ account
 
 const acct = { setup: null, codes: null };
@@ -2088,6 +2196,8 @@ async function route() {
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
+    if (parts[0] === "billing" && parts[1] === "card" && parts[2]) return await cardReturnView(parts[2]);
+    if (parts[0] === "billing") return await billingView();
     if (parts[0] === "audit") return await auditView();
     return await homeView();
   } catch (err) {
@@ -2257,6 +2367,26 @@ document.addEventListener("click", async (ev) => {
       state.entity.fresh = false;
       toast(b.dataset.active === "true" ? "Account reactivated" : "Account deactivated");
       await accountsView(state.entity.entity.id);
+    } else if (a === "bill-interval") {
+      bill.interval = b.dataset.v;
+      await billingView();
+    } else if (a === "bill-card") {
+      b.disabled = true;
+      const r = await api(orgPath("/billing/card"), { body: {} });
+      location.href = r.url;
+    } else if (a === "bill-cancel") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Cancel the subscription? Click again"; return; }
+      b.disabled = true;
+      await api(orgPath("/billing/cancel"), { body: {} });
+      state.org.stale = true;
+      toast("Subscription cancelled. Your books stay readable and downloadable");
+      await billingView();
+    } else if (a === "bill-resume") {
+      b.disabled = true;
+      await api(orgPath("/billing/resume"), { body: {} });
+      state.org.stale = true;
+      toast("Subscription restarted");
+      await route();
     } else if (a === "mfa-setup") {
       b.disabled = true;
       acct.setup = await api("/api/me/mfa/setup", { body: {} });
@@ -2440,6 +2570,16 @@ document.addEventListener("submit", async (ev) => {
       state.me = null; state.org = null; state.orgId = null;
       location.hash = "#/";
       await route();
+    } else if (kind === "bill-plan") {
+      await api(orgPath("/billing/plan"), { body: { plan: d.plan, interval: f.dataset.interval } });
+      bill.interval = null;
+      state.org.stale = true;
+      toast("Plan saved");
+      await billingView();
+    } else if (kind === "bill-details") {
+      await api(orgPath("/billing/details"), { body: { name: d.name, email: d.email, address: { line1: d.line1, city: d.city, state: d.state, zip: d.zip } } });
+      toast("Billing details saved");
+      await billingView();
     } else if (kind === "mfa-enable") {
       const r = await api("/api/me/mfa/enable", { body: d });
       state.me = null;

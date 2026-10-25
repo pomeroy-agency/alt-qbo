@@ -14,6 +14,11 @@ import { completeReconciliation, listReconciliations, reconciliationItems } from
 import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
 import { backupEntity } from "../core/backup.js";
 import { listRestorePoints, readRestorePoint, type BackupStore } from "../core/nightly-backups.js";
+import {
+  BillingError, billingSummary, cancel as cancelSubscription, checkAccess, choosePlan, ensureSubscription, resume as resumeSubscription,
+  runBilling, saveBillingDetails, saveCard, type BillingConfig,
+} from "../billing/billing.js";
+import { GatewayError } from "../billing/gateway.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
@@ -47,6 +52,8 @@ export interface ApiOptions {
   taxRates?: RateLookup;
   /** Where the nightly encrypted backups are kept, and their key. Without it, restore points can't be downloaded. */
   backups?: { store: BackupStore; key: Buffer };
+  /** Alt-QBO's own subscriptions: card processor, seller's books, and whether unpaid organisations become read-only. */
+  billing?: BillingConfig;
 }
 
 /** Where emailed and copied links point. */
@@ -148,16 +155,18 @@ async function ensureEntity(tx: Tx, entityId: string) {
 
 // ------------------------------------------------------------ organisation
 
-route("GET", "/api/orgs/:org", async (_req, _p, ctx) =>
-  tenant(ctx, async (tx) => {
+route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
+  // Whether changes are paused for an unpaid subscription, so every page can say so.
+  const access = ctx.opts.billing?.enforce ? await checkAccess(ctx.pool, ctx.orgId, ctx.opts.billing, pacificToday()) : { level: "full" };
+  return tenant(ctx, async (tx) => {
     const org = (await tx.query("SELECT id, name, kind FROM organizations WHERE id = $1", [ctx.orgId])).rows[0];
     const entities = (await tx.query(
       `SELECT id, legal_name, entity_type, region, framework, functional_currency, tax_return_type
          FROM entities ORDER BY created_at`,
     )).rows;
-    return json({ org, role: ctx.role, entities });
-  }),
-);
+    return json({ org, role: ctx.role, entities, access });
+  });
+});
 
 route("POST", "/api/orgs/:org/entities", async (req, _p, ctx) => {
   requireRole(ctx, ["owner", "admin"]);
@@ -256,6 +265,80 @@ route("POST", "/api/orgs/:org/security", async (req, _p, ctx) => {
     });
   });
   return json({ ok: true, requireMfa });
+});
+
+// ----------------------------------------------------------------- billing
+
+const billingCfg = (ctx: Ctx): BillingConfig => ({ ...ctx.opts.billing, mailer: ctx.opts.mailer, taxRates: ctx.opts.taxRates, appUrl: ctx.opts.appUrl });
+
+route("GET", "/api/orgs/:org/billing", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  return withSystem(ctx.pool, async (tx) => json(await billingSummary(tx, ctx.orgId, pacificToday(), billingCfg(ctx))));
+});
+
+route("POST", "/api/orgs/:org/billing/details", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => saveBillingDetails(tx, ctx.orgId, pacificToday(), b));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/billing/plan", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  const today = pacificToday();
+  const out = await withSystem(ctx.pool, (tx) => choosePlan(tx, ctx.orgId, today, b.plan, b.interval));
+  if (out.upgradeChargeId) await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/billing/cancel", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner"]);
+  await withSystem(ctx.pool, (tx) => cancelSubscription(tx, ctx.orgId, pacificToday()));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/billing/resume", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner"]);
+  const today = pacificToday();
+  await withSystem(ctx.pool, (tx) => resumeSubscription(tx, ctx.orgId, today));
+  await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  return json({ ok: true });
+});
+
+// Card details are typed on the card processor's own page, never here.
+route("POST", "/api/orgs/:org/billing/card", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const gateway = ctx.opts.billing?.gateway;
+  if (!gateway || !ctx.opts.billing?.seller) throw new HttpError(503, "card payments aren't switched on yet");
+  const sub = await withSystem(ctx.pool, (tx) => ensureSubscription(tx, ctx.orgId, pacificToday()));
+  if (!sub.address_line1) throw new HttpError(400, "add the billing name, email and address first");
+  const base = appUrl(req, ctx.opts);
+  const out = await gateway.startCardSetup({
+    orgId: ctx.orgId, customerId: sub.processor_customer, email: sub.billing_email!, name: sub.billing_name!,
+    successUrl: `${base}/#/billing/card/{CHECKOUT_SESSION_ID}`, cancelUrl: `${base}/#/billing`,
+  });
+  if (!sub.processor_customer) await ctx.pool.query("UPDATE subscriptions SET processor_customer = $2 WHERE org_id = $1", [ctx.orgId, out.customerId]);
+  return json({ url: out.url });
+});
+
+route("POST", "/api/orgs/:org/billing/card/confirm", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const gateway = ctx.opts.billing?.gateway;
+  if (!gateway) throw new HttpError(503, "card payments aren't switched on yet");
+  const b = await body(req);
+  const card = await gateway.finishCardSetup(str(b.sessionId, "card setup", 300));
+  const today = pacificToday();
+  await withSystem(ctx.pool, async (tx) => {
+    await saveCard(tx, ctx.orgId, card, today);
+    await appendAudit(tx, {
+      orgId: ctx.orgId, actor: ctx.actor.id, action: "billing.card_saved", objectType: "organization", objectId: ctx.orgId,
+      after: { brand: card.brand, last4: card.last4 }, context: { role: ctx.role },
+    });
+  });
+  // Anything due (a trial that already ended, a failed payment) is charged to the new card straight away.
+  const run = await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  return json({ ok: true, card: { brand: card.brand, last4: card.last4 }, charged: run.charged, failed: run.failed });
 });
 
 route("GET", "/api/orgs/:org/audit", async (_req, _p, ctx) =>
@@ -1335,6 +1418,9 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
 
 // --------------------------------------------------------------- dispatch
 
+/** Still allowed when unpaid books are read-only: paying, leaving, security (removing people), and taking the books away. */
+const ALWAYS_ALLOWED = /\/(billing(\/.*)?|leave|security|backup|backups\/[^/]+\/download|members\/[^/]+\/remove|invitations\/[^/]+\/revoke)$/;
+
 const ROLE_NAMES: Record<string, string> = { admin: "an admin", bookkeeper: "a bookkeeper", approver: "an approver", accountant: "an accountant", read_only: "a viewer" };
 
 const EMAIL_ROUTE: Record<string, EmailPurpose> = { "email-link": "sign_in", reset: "reset", verify: "verify" };
@@ -1591,6 +1677,10 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       const role = await membershipRole(pool, user.id, params.org!);
       if (!role) throw new HttpError(404, "organisation not found");
       if (!path.endsWith("/leave")) await requireMfaIfOrgDoes(pool, params.org!, user.id);
+      if (req.method !== "GET" && opts.billing?.enforce && !ALWAYS_ALLOWED.test(path)) {
+        const access = await checkAccess(pool, params.org!, opts.billing, pacificToday(), path);
+        if (access.level === "read_only") throw new HttpError(402, access.reason!);
+      }
       if (req.method !== "GET" && role === "read_only") throw new HttpError(403, "read-only users cannot make changes");
       const ctx: Ctx = { pool, opts, user, orgId: params.org!, role, actor: { id: `user:${user.email}`, role } };
       return await r.handler(req, params, ctx);
@@ -1603,6 +1693,8 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       const status = err.code === "FORBIDDEN" ? 403 : err.code === "IDEMPOTENCY_CONFLICT" ? 409 : 422;
       return json({ error: err.message, code: err.code }, status);
     }
+    if (err instanceof BillingError) return json({ error: err.message }, err.status);
+    if (err instanceof GatewayError) return json({ error: err.message }, 502);
     if (err instanceof JurisdictionError) return json({ error: err.message, code: "JURISDICTION" }, 422);
     console.error(err);
     return json({ error: "something went wrong on our side" }, 500);
