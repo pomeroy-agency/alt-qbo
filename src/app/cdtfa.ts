@@ -40,8 +40,9 @@ export function parseCdtfaRate(body: any): { rate: string; jurisdiction: string;
   if (!rates.length) throw new Error("the CDTFA couldn't find a rate for that address");
   if (rates.length > 1) throw new Error("that address sits on a boundary between tax areas; check it, or have an accountant set the rate");
   const info = infos.find((i) => Number(i?.rate) === rates[0]);
-  const place = [info?.jurisdiction, info?.city, info?.county ? `${String(info.county).trim()} County` : ""]
-    .map((s) => String(s ?? "").trim()).filter(Boolean);
+  // The CDTFA answers in capitals ("SAN FRANCISCO"); people read "San Francisco".
+  const title = (v: unknown) => String(v ?? "").trim().toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  const place = [title(info?.jurisdiction), title(info?.city), info?.county ? `${title(info.county)} County` : ""].filter(Boolean);
   return {
     rate: rates[0]!.toFixed(5),
     jurisdiction: [...new Set(place)].join(", ") || "California",

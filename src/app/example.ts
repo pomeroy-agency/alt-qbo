@@ -47,7 +47,7 @@ export async function createExampleBusiness(pool: pg.Pool, user: { id: string; e
     const design = await item("Design work (per hour)", "professional_service", "125.00");
     const brochures = await item("Printed brochures", "printed_materials", "1.20");
     // The example is made without asking the CDTFA, so its one taxable invoice carries a rate set by hand.
-    const exampleRate = { ratePercent: "9.75", reason: "Example business: the Los Angeles rate, entered by hand" };
+    const exampleRate = { ratePercent: "9.75", reason: "Example business: a sample rate entered by hand" };
     const invoice = async (contactId: string, issueDate: string, dueDate: string, lines: InvoiceLineInput[], manual?: typeof exampleRate) =>
       issueInvoice(tx, { ...base, contactId, issueDate, dueDate, lines, manual, idempotencyKey: key() });
     const service = (description: string, unitPrice: string, quantity = "1"): InvoiceLineInput => ({ itemId: design, description, quantity, unitPrice });
@@ -56,7 +56,7 @@ export async function createExampleBusiness(pool: pg.Pool, user: { id: string; e
     const pay = async (documentId: string, date: string, amount: bigint) =>
       recordPayment(tx, { ...base, documentId, date, amount, idempotencyKey: key() });
 
-    // Design work isn't taxable in California; the printed brochures are, at the Los Angeles rate.
+    // Design work isn't taxable in California; the printed brochures are, here at a sample 9.75% rate.
     const i1 = await invoice(harbor, "2026-02-03", "2026-03-05", [service("Brand identity: logo and style guide", "4800.00")]);
     await pay(i1.id, "2026-03-01", i1.totalMinor);
     const i2 = await invoice(dental, "2026-04-14", "2026-05-14", [

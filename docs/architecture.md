@@ -49,4 +49,4 @@ Each event's hash is SHA-256 over the canonical JSON (sorted keys) of its fields
 - Persisted employees, pay runs, NACHA files, deposit schedules and prepared forms (941, 940, DE 9, DE 9C, W-2, DE 34).
 - HTTP API, authentication, MFA; roles are passed in by the caller.
 - City minimum wages, regular-rate overtime for bonuses, supplemental-rate withholding.
-- Sales tax outside California, use tax on purchases, prepayments, and checking the CDTFA rate lookup against the live service (see the rule pack's review notes).
+- Sales tax outside California, use tax on purchases, prepayments.

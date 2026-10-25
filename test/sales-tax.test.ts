@@ -147,7 +147,7 @@ describe("issuing invoices with automatic sales tax", () => {
 describe("the CDTFA rate lookup", () => {
   it("reads one rate and refuses an ambiguous answer", () => {
     expect(parseCdtfaRate({ taxRateInfo: [{ rate: 0.08625, jurisdiction: "SAN FRANCISCO", city: "SAN FRANCISCO", county: "SAN FRANCISCO" }] }))
-      .toEqual({ rate: "0.08625", jurisdiction: "SAN FRANCISCO, SAN FRANCISCO County", matchedAddress: undefined });
+      .toEqual({ rate: "0.08625", jurisdiction: "San Francisco, San Francisco County", matchedAddress: undefined });
     expect(() => parseCdtfaRate({ taxRateInfo: [] })).toThrow(/couldn't find/);
     expect(() => parseCdtfaRate({ taxRateInfo: [{ rate: 0.0725 }, { rate: 0.0975 }] })).toThrow(/boundary/);
   });

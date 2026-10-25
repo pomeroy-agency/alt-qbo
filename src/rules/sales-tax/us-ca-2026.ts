@@ -84,7 +84,7 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
     "Out-of-state delivery is treated as exempt interstate sales (Regulation 1620) only when the customer's address is outside California.",
     "Sales for resale are exempt only with a timely, good-faith resale certificate (Regulation 1668). Alt-QBO records the customer's seller's permit number but does not verify it with the CDTFA.",
     "Shipping is nontaxable only when separately stated and by common carrier or mail direct to the customer; delivery in the seller's own vehicle can be taxable (Regulation 1628). The category help says so; consider a separate 'own delivery' category.",
-    "The CDTFA rate API response format was written from documentation, not tested against the live service from this environment. Check a few addresses against the CDTFA's own lookup before release.",
+    "The CDTFA rate API was checked on the deploy preview on 2026-10-25 (San Francisco 8.625%, Los Angeles 10.25%, San Diego 7.75%, Sacramento 8.75%). Spot-check addresses on district boundaries before release.",
   ],
 };
 
