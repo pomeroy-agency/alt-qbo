@@ -43,10 +43,11 @@ describe("rule packs", () => {
       `us-ca@2026.1#${rulePackHash(usCalifornia2026).slice(0, 12)}`,
     ]);
     expect(() => resolveRules(CA, "2027-01-01")).toThrow(JurisdictionError);
-    expect(() => resolveRules(CA, "2026-06-15", { requireReleased: true })).toThrow(/draft/);
+    // Greg signed off the 2026 packs on 2026-10-27.
+    expect(resolveRules(CA, "2026-06-15", { requireReleased: true }).federal.status).toBe("released");
     for (const p of allRulePacks()) {
       expect(p.sources.length).toBeGreaterThan(0);
-      expect(p.status).toBe("draft");
+      expect(p.status).toBe("released");
     }
   });
 
@@ -174,8 +175,9 @@ describe("pay runs", () => {
     live: false,
   };
 
-  it("refuses live runs on draft rule packs", () => {
-    expect(() => calculatePayRun({ ...runInput, live: true })).toThrow(/draft/);
+  it("calculates live runs on the released 2026 packs, and refuses a date with no pack", () => {
+    expect(calculatePayRun({ ...runInput, live: true }).paychecks).toHaveLength(1);
+    expect(() => calculatePayRun({ ...runInput, payDate: "2027-01-08", live: true })).toThrow(JurisdictionError);
   });
 
   it("produces a balanced journal with a liability per tax", () => {

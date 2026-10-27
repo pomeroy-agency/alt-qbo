@@ -60,7 +60,7 @@ export async function payRunInputFromEmployees(tx: Tx, entityId: string, req: Pa
   return {
     payRunId, kind: "regular", periodStart: req.periodStart, periodEnd: req.periodEnd, payDate: req.payDate, place: CA,
     employer: entity?.ca_ui_rate ? { caUiRate: new D(entity.ca_ui_rate).toString() } : {},
-    employees, live: false,
+    employees, live: true,
   };
 }
 
@@ -170,8 +170,9 @@ export async function yearToDate(
 /** Calculates a saved run with year-to-date wages as of now. */
 export async function calculateSavedRun(tx: Tx, entityId: string, input: PayRunInput): Promise<PayRun> {
   const ytd = await yearToDate(tx, entityId, input.payDate, { excludeRunId: input.payRunId });
+  // Saved runs are real payroll: only released rule packs may calculate them.
   return calculatePayRun({
-    ...input,
+    ...input, live: true,
     employees: input.employees.map((e) => {
       const y = ytd.get(e.employeeId);
       return y ? { ...e, ytd: { socialSecurityWages: y.socialSecurityWages, medicareWages: y.medicareWages, futaWages: y.futaWages, caUiWages: y.caUiWages } } : e;
