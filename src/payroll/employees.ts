@@ -5,6 +5,7 @@ import type { Actor, Role } from "../core/ledger.js";
 import { D, toMinor } from "../core/money.js";
 import { cleanSsn, seal } from "../core/pii.js";
 import { cleanAddress, type Address } from "../core/sales-tax.js";
+import { localWagePlace } from "../rules/local-minimum-wage.js";
 import { cleanAccountNumber, validRouting } from "./nacha.js";
 import type { DE4 } from "./california.js";
 import type { W4 } from "./federal.js";
@@ -32,6 +33,8 @@ export interface Employee {
   name: string;
   email: string | null;
   address: Address | null;
+  /** The city where they work, for a local minimum wage; null when not given. */
+  workCity: string | null;
   hireDate: string;
   terminationDate: string | null;
   status: "active" | "terminated";
@@ -55,6 +58,7 @@ export interface EmployeeFields {
   name?: string;
   email?: string | null;
   address?: unknown;
+  workCity?: string | null;
   hireDate?: string;
   terminationDate?: string | null;
   payType?: string;
@@ -73,7 +77,7 @@ export interface EmployeeFields {
   directDeposit?: { routing?: unknown; accountType?: unknown; account?: unknown } | null;
 }
 
-const COLS = `id, name, email, address_line1, address_city, address_state, address_zip, hire_date::text, termination_date::text,
+const COLS = `id, name, email, address_line1, address_city, address_state, address_zip, work_city, hire_date::text, termination_date::text,
   pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, deductions, sick_balance_hours::text,
   ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4`;
 
@@ -81,6 +85,7 @@ function employeeOf(r: any): Employee {
   return {
     id: r.id, name: r.name, email: r.email,
     address: r.address_line1 ? { line1: r.address_line1, city: r.address_city, state: r.address_state, zip: r.address_zip } : null,
+    workCity: r.work_city,
     hireDate: r.hire_date, terminationDate: r.termination_date,
     status: r.termination_date ? "terminated" : "active",
     payType: r.pay_type, payFrequency: r.pay_frequency, payRate: trimZeros(r.pay_rate), usualHours: r.usual_hours ? trimZeros(r.usual_hours) : null,
@@ -198,6 +203,11 @@ function columns(f: EmployeeFields): Record<string, unknown> {
     out.address_city = a?.city ?? null;
     out.address_state = a?.state ?? null;
     out.address_zip = a?.zip ?? null;
+  }
+  if (f.workCity !== undefined) {
+    const city = typeof f.workCity === "string" ? f.workCity.trim().replace(/\s+/g, " ") : "";
+    if (city.length > 60) invalid("that city name is too long");
+    out.work_city = city ? localWagePlace(city) ?? city : null;
   }
   if (f.hireDate !== undefined) {
     if (!DATE.test(f.hireDate)) invalid("the hire date should be a date");

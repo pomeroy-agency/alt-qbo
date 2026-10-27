@@ -1454,7 +1454,7 @@ function updateRecon() {
 const FREQ_LABEL = { weekly: "Weekly", biweekly: "Every two weeks", semimonthly: "Twice a month", monthly: "Monthly" };
 const FREQ_DAYS = { weekly: 7, biweekly: 14, semimonthly: 15, monthly: 30 };
 const DEDUCTION_LABEL = { traditional401k: "401(k)", section125: "Health premium (pre-tax)", post_tax: "After-tax deduction" };
-const pay = { employees: [], caUiRate: null, adding: false };
+const pay = { employees: [], caUiRate: null, adding: false, workCities: [] };
 
 /** Hours to two decimals at most: 2.6667 reads as 2.67. */
 const hrs = (h) => String(Math.round(Number(h) * 100) / 100);
@@ -1478,6 +1478,7 @@ function employeeForm(e = null) {
       <label>Pay type${sel("payType", [["salary", "Salary"], ["hourly", "Hourly"]], e?.payType ?? "salary")}</label>
       <label><span data-pay-label>${hourly ? "Hourly rate ($)" : "Annual salary ($)"}</span><input name="payRate" value="${v(e?.payRate)}" inputmode="decimal" required placeholder="${hourly ? "25.00" : "65000"}"></label>
       <label>How often they're paid${sel("payFrequency", Object.entries(FREQ_LABEL), e?.payFrequency ?? "biweekly")}</label>
+      <label>City where they work<input name="workCity" value="${v(e?.workCity)}" list="work-cities" placeholder="e.g. San Jose"><span class="hash">Some cities have a higher minimum wage than the state.</span></label>
       <label data-only="hourly" ${hourly ? "" : "hidden"}>Usual hours each pay period<input name="usualHours" value="${v(e?.usualHours)}" inputmode="decimal" placeholder="80"></label>
       <label class="check" data-only="salary" ${hourly ? "hidden" : ""}><input type="checkbox" name="overtimeExempt" ${e ? (e.overtimeExempt ? "checked" : "") : "checked"}> Exempt from overtime</label>
       <label>Social Security number<input name="ssn" autocomplete="off" inputmode="numeric" placeholder="${e?.ssnLast4 ? `On file, ends ${e.ssnLast4}` : "123-45-6789"}"></label>
@@ -1537,7 +1538,7 @@ function employeeBody(f) {
   const body = {
     name: d.name, email: d.email, hireDate: d.hireDate, payType: d.payType, payRate: d.payRate.replace(/[$,\s]/g, ""), payFrequency: d.payFrequency,
     usualHours: d.payType === "hourly" ? d.usualHours : "", overtimeExempt: d.payType === "salary" && f.querySelector("[name=overtimeExempt]").checked,
-    address: addressOf(d),
+    address: addressOf(d), workCity: d.workCity.trim(),
     w4: { filingStatus: d.w4Status, step2Checked: f.querySelector("[name=w4Step2]").checked, step3Credits: d.w4Step3, step4aOtherIncome: d.w4Step4a, step4bDeductions: d.w4Step4b, step4cExtraWithholding: d.w4Step4c },
     de4: { filingStatus: d.de4Status, regularAllowances: d.de4Allowances, additionalWithholding: d.de4Extra },
     deductions: [{ kind: "traditional401k", amount: d.k401 }, { kind: "section125", amount: d.section125 }, { kind: "post_tax", amount: d.postTax }],
@@ -1622,9 +1623,10 @@ function runTable(run) {
 
 async function payrollView(id) {
   await loadEntity(id);
-  const [{ employees, caUiRate, directDeposit }, { payRuns }, deposits] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs")), api(entPath("/tax-deposits"))]);
+  const [{ employees, caUiRate, directDeposit, workCities }, { payRuns }, deposits] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs")), api(entPath("/tax-deposits"))]);
   pay.employees = employees;
   pay.caUiRate = caUiRate;
+  pay.workCities = workCities ?? [];
   const canSetUpBank = ["owner", "admin", "accountant"].includes(state.org.role);
   const me = `user:${state.me.user.email}`;
   const canApprove = ["owner", "admin", "approver"].includes(state.org.role);
@@ -1640,11 +1642,12 @@ async function payrollView(id) {
       <div class="table-wrap"><table>
         <thead><tr><th>Name</th><th>Pay</th><th>Paid</th><th>Status</th><th></th></tr></thead>
         <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">SSN ends ${e.ssnLast4}</div>` : `<div class="hash">No SSN on file yet</div>`}<div class="hash">${e.directDeposit ? `Direct deposit to ${e.directDeposit.accountType} ending ${esc(e.directDeposit.accountLast4)}` : "Paid by check"}</div></td>
-            <td>${payLabel(e)}${e.payType === "salary" && !e.overtimeExempt ? `<div class="hash">gets overtime</div>` : ""}</td><td>${FREQ_LABEL[e.payFrequency]}</td>
+            <td>${payLabel(e)}${e.payType === "salary" && !e.overtimeExempt ? `<div class="hash">gets overtime</div>` : ""}${e.belowLocalMinimum ? `<div class="alert warn">Below the ${esc(e.belowLocalMinimum.place)} minimum wage of ${usd(Math.round(Number(e.belowLocalMinimum.rate) * 100))} an hour</div>` : ""}</td><td>${FREQ_LABEL[e.payFrequency]}</td>
             <td>${e.status === "active" ? `<span class="pill">Active</span>` : `<span class="pill grey">Left ${e.terminationDate}</span>`}</td>
             <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="emp-edit" data-id="${e.id}">Edit</button>` : ""}</td></tr>
           ${canWrite ? `<tr hidden data-emp-edit="${e.id}"><td colspan="5">${employeeForm(e)}</td></tr>` : ""}`).join("") || `<tr><td colspan="5" class="muted">No employees yet. Add the people you pay to run payroll.</td></tr>`}</tbody>
       </table></div>
+      <datalist id="work-cities">${pay.workCities.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
       <form data-form="ui-rate" class="row" style="margin-top:12px">
         <label>Your California UI rate (%)<input name="caUiRatePercent" value="${caUiRate ? esc(String(Number(caUiRate) * 100)) : ""}" placeholder="3.4 (new employer)" style="width:170px" ${canWrite ? "" : "disabled"}></label>
         ${canWrite ? `<button type="submit" class="secondary">Save rate</button>` : ""}

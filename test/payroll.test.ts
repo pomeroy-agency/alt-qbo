@@ -9,6 +9,7 @@ import { usCalifornia2026 } from "../src/rules/us-ca-2026.js";
 import { federalSchedule } from "../src/payroll/federal.js";
 import { splitCaliforniaWeek } from "../src/payroll/hours.js";
 import { calculatePaycheck, type EmployeePayInput } from "../src/payroll/gross-to-net.js";
+import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove, localMinimumWage, localWagePlace } from "../src/rules/local-minimum-wage.js";
 import { approveAndPostPayRun, calculatePayRun, payRunJournalLines } from "../src/payroll/pay-run.js";
 import { approver, bookkeeper, pool, setupCaliforniaBusiness } from "./helpers.js";
 
@@ -85,6 +86,39 @@ describe("rule packs", () => {
       [0, 0, 0], [12075, 0, 0.1], [20925, 885, 0.12], [45800, 3870, 0.22], [64925, 8077.5, 0.24],
       [112950, 19603.5, 0.32], [140175, 28315.5, 0.35], [332375, 95585.5, 0.37],
     ]);
+  });
+});
+
+describe("local minimum wages", () => {
+  it("finds the rate in force for a city on a date", () => {
+    expect(localWagePlace("  city of  san jose ")).toBe("San Jose");
+    expect(localWagePlace("Fresno")).toBeNull();
+    expect(localMinimumWage("San Jose", "2026-03-01", 3)).toMatchObject({ place: "San Jose", rate: "18.45", from: "2026-01-01" });
+    expect(localMinimumWage("palo alto", "2026-12-31", 3)?.rate).toBe("18.70");
+    expect(localMinimumWage("palo alto", "2027-01-01", 3)?.rate).toBe("19.25");
+    // July cities aren't checked before their 2026 rate.
+    expect(localMinimumWage("San Francisco", "2026-06-30", 3)).toBeNull();
+    expect(localMinimumWage("San Francisco", "2026-07-01", 3)?.rate).toBe("19.61");
+    expect(LOCAL_MINIMUM_WAGE_PLACES).toContain("Los Angeles County (unincorporated)");
+  });
+
+  it("applies size tiers, and ignores local rates at or below the state's", () => {
+    expect(localMinimumWage("Hayward", "2026-05-01", 25)).toBeNull();
+    expect(localMinimumWage("Hayward", "2026-05-01", 26)).toMatchObject({ rate: "17.79", sizeNote: expect.stringContaining("26 on file") });
+    expect(localMinimumWage("Novato", "2026-05-01", 50)?.rate).toBe("17.46");
+    expect(localMinimumWage("Novato", "2026-05-01", 120)?.rate).toBe("17.73");
+    expect(localMinimumAbove("16.90", "Oakland", "2026-05-01", 1)?.rate).toBe("17.34");
+    // From 2027 the state's 17.40 is above Oakland's 2026 rate.
+    expect(localMinimumAbove("17.40", "Oakland", "2027-01-01", 1)).toBeNull();
+  });
+
+  it("warns, rather than blocks, when an hourly rate is below the local minimum", () => {
+    const hourly: EmployeePayInput = { ...salaried, salaryPerPeriod: undefined, overtimeExempt: undefined, hourlyRate: "18.00", regularHours: "80" };
+    const p = calculatePaycheck({ ...hourly, localMinimumWage: { place: "Mountain View", rate: "19.70" } }, rules);
+    expect(p.blockers).toEqual([]);
+    expect(p.warnings).toContain("hourly rate 18.00 is below the Mountain View minimum wage of 19.70");
+    expect(calculatePaycheck({ ...hourly, localMinimumWage: { place: "Oakland", rate: "17.34" } }, rules).warnings
+      .some((w) => w.includes("minimum wage"))).toBe(false);
   });
 });
 
