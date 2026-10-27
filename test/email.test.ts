@@ -28,7 +28,7 @@ function lastLink(to: string) {
 }
 
 async function signup(email = uniq("ann"), password = "first-password-1") {
-  const r = await call("/api/auth/signup", { body: { name: "Ann", email, password, orgName: "Ann Co" } });
+  const r = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Ann", email, password, orgName: "Ann Co" } });
   expect(r.status).toBe(201);
   return { email, cookie: r.cookie! };
 }

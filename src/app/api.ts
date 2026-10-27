@@ -27,6 +27,7 @@ import { acceptInvitation, changeRole, invite, listInvitations, listMembers, pre
 import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
 import { beginMfaSetup, checkSecondFactor, disableMfa, enableMfa, issueMfaTicket, mfaStatus, redeemMfaTicket, regenerateRecoveryCodes } from "./mfa.js";
 import type { Mailer } from "./mail.js";
+import { TERMS_VERSION, acceptTerms, orgsAccepted } from "./terms.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { JurisdictionError, allRulePacks } from "../rules/index.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
@@ -1629,6 +1630,8 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     // Someone joining through an invitation doesn't need the sign-up code or a business of their own.
     const inviteToken = typeof b.inviteToken === "string" && b.inviteToken ? b.inviteToken : null;
     if (!inviteToken && opts.signupCode && b.inviteCode !== opts.signupCode) throw new AuthError("that invite code isn't valid", 403);
+    // Whoever creates an organisation accepts the terms of service for it.
+    if (!inviteToken && b.acceptTerms !== true) throw new HttpError(400, "to create an account, agree to the Terms of Service for your business");
     const email = normaliseEmail(b.email);
     const name = str(b.name, "name", 100);
     const orgName = inviteToken ? null : str(b.orgName, "business name");
@@ -1646,6 +1649,7 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       } else {
         const org = await createOrganization(tx, { name: orgName!, actor: { id: `user:${email}`, role: "owner" } });
         await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [uid, org.id]);
+        await acceptTerms(tx, org.id, uid);
       }
       return uid;
     });
@@ -1694,7 +1698,34 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     );
     const verified = (await pool.query("SELECT email_verified_at IS NOT NULL AS v FROM users WHERE id = $1", [user.id])).rows[0].v;
     const mfa = await mfaStatus(pool, user.id);
-    return json({ user: { ...user, emailVerified: verified, mfa }, orgs: rows, emailEnabled: Boolean(opts.mailer) });
+    const accepted = await withSystem(pool, (tx) => orgsAccepted(tx, rows.map((r) => r.id)));
+    return json({
+      user: { ...user, emailVerified: verified, mfa }, orgs: rows.map((r) => ({ ...r, termsAccepted: accepted.has(r.id) || r.name === EXAMPLE_ORG_NAME })),
+      emailEnabled: Boolean(opts.mailer), termsVersion: TERMS_VERSION,
+    });
+  }
+  // An owner or admin accepts the current terms for their organisation.
+  const termsPath = /^\/api\/orgs\/([0-9a-f-]{36})\/terms\/accept$/.exec(path);
+  if (req.method === "POST" && termsPath) {
+    const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+    if (!user) throw new AuthError("not signed in");
+    const b = await body(req);
+    if (b.version !== TERMS_VERSION) throw new HttpError(409, "the terms have changed since you opened them; reload and read the current version");
+    await withSystem(pool, async (tx) => {
+      const m = (await tx.query("SELECT role FROM memberships WHERE user_id = $1 AND org_id = $2", [user.id, termsPath[1]])).rows[0];
+      if (!m) throw new HttpError(404, "organisation not found");
+      if (!["owner", "admin"].includes(m.role)) throw new HttpError(403, "only an owner or admin can accept the terms for the business");
+      await acceptTerms(tx, termsPath[1]!, user.id);
+    });
+    return json({ ok: true, version: TERMS_VERSION });
+  }
+  // For the public terms page: the version and who the agreement is with.
+  if (req.method === "GET" && path === "/api/terms") {
+    const seller = opts.billing?.seller;
+    const company = seller
+      ? await withSystem(pool, async (tx) => (await tx.query("SELECT legal_name FROM entities WHERE id = $1 AND org_id = $2", [seller.entityId, seller.orgId])).rows[0]?.legal_name ?? null)
+      : null;
+    return json({ version: TERMS_VERSION, company });
   }
   if (path.startsWith("/api/me/mfa/") && req.method === "POST") return mfaRoutes(req, path, pool, opts);
   return null;
