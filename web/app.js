@@ -2076,7 +2076,7 @@ async function billingView() {
     </div>
     ${b.charges.length ? `<div class="panel table-wrap"><h2>Payments</h2><table>
       <thead><tr><th>Date</th><th>For</th><th>Invoice</th><th class="num">Amount</th><th class="num">Tax</th><th class="num">Total</th><th>Status</th></tr></thead>
-      <tbody>${b.charges.map((c) => `<tr><td>${c.created_at.slice(0, 10)}</td><td>${CHARGE_LABEL[c.kind]}, ${c.period_start} to ${c.period_end}</td><td class="mono">${esc(c.invoice_number ?? "")}</td>
+      <tbody>${b.charges.map((c) => `<tr><td>${new Date(c.created_at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" })}</td><td>${CHARGE_LABEL[c.kind]}, ${c.period_start} to ${c.period_end}</td><td class="mono">${esc(c.invoice_number ?? "")}</td>
         <td class="num">${usd(c.subtotal_minor)}</td><td class="num">${c.tax_minor == null ? "" : usd(c.tax_minor)}</td><td class="num">${c.total_minor == null ? "" : usd(c.total_minor)}</td>
         <td>${CHARGE_STATUS[c.status]}${c.failure ? `<div class="hash">${esc(c.failure)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
     ${owner ? `<div class="panel"><h2>${b.status === "canceled" || b.cancelAtPeriodEnd ? "Restart" : "Cancel"}</h2>
