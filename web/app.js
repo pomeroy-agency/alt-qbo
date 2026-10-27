@@ -91,11 +91,13 @@ function topbar() {
       <a class="brand" href="#/"><img src="/favicon.svg" alt=""><span>Alt-QBO</span></a>
       ${orgs.length > 1 ? `<select data-action="switch-org" aria-label="Organisation">${orgs.map((o) => `<option value="${o.id}" ${o.id === state.orgId ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : `<span>${esc(state.org?.org?.name ?? "")}</span>`}
       <span class="spacer"></span>
-      <span class="who">${esc(state.me?.user?.name)} · ${esc(state.org?.role ?? "")}</span>
+      <a class="who" href="#/account" title="Your account and sign-in security">${esc(state.me?.user?.name)} · ${esc(state.org?.role ?? "")}</a>
       <button class="link" data-action="theme" title="Switch between light, dark and your device's setting">${{ auto: "Theme: device", dark: "Theme: dark", light: "Theme: light" }[t]}</button>
       <button class="secondary" data-action="logout">Sign out</button>
     </header>
     <div class="banner"><span class="long">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</span><span class="short">Preview build: use test data only.</span></div>
+    ${state.org?.access?.level === "read_only" ? `<div class="banner bad">Changes are paused: ${esc(state.org.access.reason)}. ${["owner", "admin"].includes(state.org.role) ? `<a href="#/billing">Go to Billing</a>` : "Ask an owner to check Billing."}</div>`
+      : state.org?.access?.warning ? `<div class="banner info">${esc(state.org.access.warning)} ${["owner", "admin"].includes(state.org.role) ? `<a href="#/billing">Go to Billing</a>` : ""}</div>` : ""}
     ${state.me?.emailEnabled && state.me.user && !state.me.user.emailVerified ? `<div class="banner info">Please confirm your email: we sent a link to ${esc(state.me.user.email)}. <button class="link" data-action="resend-verify">Send it again</button></div>` : ""}`;
 }
 
@@ -128,13 +130,14 @@ function shell(active, content) {
   const btn = (href, k, l, n = 0, what = "") =>
     `<a href="${href}" class="${active === k ? "on" : ""}">${esc(l)}${n ? `<span class="badge" title="${n} ${what}">${n}</span>` : ""}</a>`;
   const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
-  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"]];
+  const billing = ["owner", "admin"].includes(state.org?.role) ? [["billing", "#/billing", "Billing"]] : [];
+  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ["account", "#/account", "Your account"]];
   const main = e ? ENTITY_TABS.map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
     ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
     ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
   ];
-  const moreOn = e && (active === "home" || active === "team" || active === "audit" || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const moreOn = e && (["home", "team", "audit", "billing", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
   const mobile = `
       <nav class="mobile">
         <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
@@ -148,6 +151,8 @@ function shell(active, content) {
         <div class="label">Organisation</div>
         <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
         <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
+        ${billing.length ? `<a href="#/billing" class="${active === "billing" ? "on" : ""}">Billing</a>` : ""}
+        <a href="#/account" class="${active === "account" ? "on" : ""}">Your account</a>
       </nav>
       ${mobile}
       <main>${content}</main>
@@ -168,6 +173,7 @@ const authPage = (inner) => `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>Alt-QBO</h1></div>
         ${inner}
       </div>
+      <p class="muted" style="text-align:center;font-size:14px"><a href="/pricing.html">Pricing</a> · <a href="/promises.html">Our promises</a> · <a href="/security.html">Security</a> · <a href="/status.html">Status</a></p>
     </div>`;
 
 async function authView(mode, error = "", notice = "") {
@@ -202,6 +208,22 @@ async function authView(mode, error = "", notice = "") {
         <p style="margin-top:14px">${signup ? `Already have an account? <a href="#/login">Sign in</a>` : `New here? <a href="#/signup">Create an account</a>`}</p>`);
 }
 
+/**
+ * The second sign-in step for someone with two-factor on. `then` says where
+ * to go after: "home", or "join" with the invitation's token.
+ */
+function mfaView(ticket, then = "home", inviteToken = "", error = "") {
+  app.innerHTML = authPage(`
+    <p class="muted">Enter the 6-digit code from your authenticator app. Lost your phone? Enter one of your recovery codes instead.</p>
+    ${error ? `<div class="alert bad">${esc(error)}</div>` : ""}
+    <form data-form="mfa" data-ticket="${esc(ticket)}" data-then="${esc(then)}" data-invite="${esc(inviteToken)}">
+      <label>Code<input name="code" required autocomplete="one-time-code" inputmode="text" maxlength="20" autofocus></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <p style="margin-top:14px"><a href="#/login">Start over</a></p>`);
+  app.querySelector("input[name=code]")?.focus();
+}
+
 /** Pages opened from an emailed link. */
 async function emailLinkView(kind, token, error = "") {
   if (kind === "reset") {
@@ -217,6 +239,7 @@ async function emailLinkView(kind, token, error = "") {
   try {
     const r = await api(`/api/auth/${kind}/${token}`, { body: {} });
     state.me = null; state.org = null;
+    if (r.mfaRequired) return mfaView(r.ticket);
     if (kind === "verify") {
       app.innerHTML = authPage(`<div class="alert good">Thanks, ${esc(r.email)} is confirmed.</div><p><a href="#/">Go to your books</a></p>`);
       return;
@@ -1105,7 +1128,7 @@ const SOURCE_LABEL = { journal_voucher: "Journal entry", invoice: "Invoice", bil
 
 async function overviewView(id) {
   await loadEntity(id);
-  const [{ checks }, g] = await Promise.all([api(entPath("/health")), api(entPath("/glance"))]);
+  const [{ checks }, g, bk] = await Promise.all([api(entPath("/health")), api(entPath("/glance")), api(entPath("/backups")).catch(() => null)]);
   const e = state.entity.entity;
   const attn = state.entity.attention;
   const canSettings = ["owner", "admin"].includes(state.org.role);
@@ -1172,10 +1195,28 @@ async function overviewView(id) {
         <button type="submit">Save</button>
       </form>` : ""}
     </details>
-    ${["owner", "admin", "accountant"].includes(state.org.role) ? `<div class="panel row" style="justify-content:space-between">
-      <div><strong>Backup</strong><div class="muted">Save a complete copy of these books (every entry, invoice, bill, bank line and the audit log) as one file on your computer.</div></div>
-      <button class="secondary" data-action="backup">Download a backup</button>
+    ${["owner", "admin", "accountant"].includes(state.org.role) ? `<div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <div><strong>Backup</strong><div class="muted">Save a complete copy of these books (every entry, invoice, bill, bank line and the audit log) as one file on your computer.</div></div>
+        <button class="secondary" data-action="backup">Download a backup</button>
+      </div>
+      ${backupPanel(bk)}
     </div>` : ""}`);
+}
+
+/** The nightly copies: the latest one, and the last 30 days to download from. */
+function backupPanel(bk) {
+  const points = bk?.restorePoints ?? [];
+  if (!points.length) return `<p class="muted" style="margin-top:10px">Nightly backups start after the first night. Each copy is encrypted, stored apart from the database, read back and checked, and kept for 30 days.</p>`;
+  const last = points[0];
+  return `<p style="margin-top:10px">${last.verified
+      ? `<span class="pill">Checked</span> Last nightly backup ${longDate(last.date)}: read back and matched the books.`
+      : `<span class="pill bad">Problem</span> The nightly backup on ${longDate(last.date)} didn't pass its check (${esc(last.problem)}). We've been alerted.`}</p>
+    <details><summary>Restore points (${points.length})</summary><div class="table-wrap"><table>
+      <thead><tr><th>Night of</th><th>Check</th><th>Size</th><th></th></tr></thead>
+      <tbody>${points.map((r) => `<tr><td>${longDate(r.date)}</td><td>${r.verified ? "Passed" : esc(r.problem)}</td><td>${Math.max(1, Math.round(r.bytes / 1024))} KB</td>
+        <td>${r.verified && bk.downloadable ? `<button class="link" data-action="restore-point" data-id="${r.id}">Download</button>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div></details>`;
 }
 
 // ------------------------------------------------------------- reports
@@ -1906,7 +1947,8 @@ const ROLE_HELP = {
 const team = { link: null };
 
 async function teamView() {
-  const { members, invitations } = await api(orgPath("/members"));
+  const [{ members, invitations }, security] = await Promise.all([api(orgPath("/members")), api(orgPath("/security"))]);
+  const mfaOf = new Map(security.members.map((m) => [m.email, m.mfa]));
   const mine = state.org.role;
   const canManage = ["owner", "admin"].includes(mine);
   const me = state.me.user.id;
@@ -1920,13 +1962,24 @@ async function teamView() {
     ${link ? `<div class="alert good">${link.emailed ? `We emailed the invitation to ${esc(link.email)}. You can also copy the link below; it` : `Invitation ready. Send this link to ${esc(link.email)}; it`} works once, for that email, for 14 days.
       <div class="row" style="margin-top:8px"><input id="invite-link" class="mono" readonly value="${esc(link.link)}" style="flex:1;min-width:260px"><button class="secondary" data-action="copy-invite">Copy link</button></div></div>` : ""}
     <div class="panel table-wrap"><table>
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Email</th>${canManage ? "<th>Two-factor</th>" : ""}<th>Role</th><th>Joined</th><th></th></tr></thead>
       <tbody>${members.map((m) => `<tr><td>${esc(m.name)}${m.userId === me ? ` <span class="muted">(you)</span>` : ""}</td><td>${esc(m.email)}</td>
+        ${canManage ? `<td>${mfaOf.get(m.email) ? `<span class="pill">On</span>` : `<span class="pill grey">Off</span>`}</td>` : ""}
         <td>${canManage && manageable(m) ? `<select data-action="member-role" data-id="${m.userId}" aria-label="Role for ${esc(m.name)}">${roleChoices(m.role)}</select>` : ROLE_LABEL[m.role]}</td>
         <td>${m.createdAt.slice(0, 10)}</td>
         <td>${canManage && manageable(m) ? `<button class="link" data-action="member-remove" data-id="${m.userId}" data-name="${esc(m.name)}">Remove</button>`
           : m.userId === me ? `<button class="link" data-action="leave-org">Leave</button>` : ""}</td></tr>`).join("")}</tbody>
     </table></div>
+    <div class="panel"><h2>Two-factor sign-in</h2>
+      ${security.requireMfa
+        ? `<p><span class="pill">Required</span> Everyone in this organisation must sign in with a code from an authenticator app.</p>`
+        : `<p><span class="pill grey">Optional</span> Each person can turn it on under <a href="#/account">Your account</a>.</p>`}
+      ${mine === "owner" ? (security.requireMfa
+        ? `<button class="secondary" data-action="require-mfa" data-on="0">Make it optional</button>`
+        : state.me.user.mfa?.enabled
+          ? `<button data-action="require-mfa" data-on="1">Require it for everyone</button>`
+          : `<p class="muted">To require it for everyone, first turn it on for yourself under <a href="#/account">Your account</a>.</p>`) : ""}
+    </div>
     ${canManage ? `<div class="panel">
       <h2>Invite someone</h2>
       <p class="muted">They join by signing up, or signing in, with this email through the link you send them. You never set a password for anyone.</p>
@@ -1994,6 +2047,162 @@ async function joined(orgId) {
   toast("You've joined the team");
 }
 
+// ------------------------------------------------------------------ billing
+
+const PLAN_LABEL = { books: "Books", books_payroll: "Books + Payroll" };
+const CHARGE_LABEL = { renewal: "Subscription", people: "People paid", upgrade: "Upgrade" };
+const CHARGE_STATUS = { pending: "Due", processing: "Charging", paid: "Paid", failed: "Payment failed", held: "Being checked", waived: "Waived" };
+const bill = { interval: null };
+
+async function billingView() {
+  const b = await api(orgPath("/billing"));
+  if (b.free) {
+    app.innerHTML = shell("billing", `<div class="head"><div><h1>Billing</h1></div></div><div class="panel"><p>This organisation doesn't pay for Alt-QBO.</p></div>`);
+    return;
+  }
+  const owner = state.org.role === "owner";
+  const interval = bill.interval ?? b.nextInterval ?? b.interval;
+  const per = interval === "month" ? "a month" : "a year";
+  const price = (minor) => usd(minor).replace(/\.00$/, "");
+  const status = {
+    trialing: b.access.level === "full"
+      ? `<span class="pill">Free trial</span> Everything is included until ${longDate(b.trialEndsOn)}.${b.card ? " Your card is charged the day after." : " Add a card before then to keep making changes."}`
+      : `<span class="pill bad">Trial ended</span> Your books are read-only. Add a card to keep going; nothing has been deleted.`,
+    active: b.cancelAtPeriodEnd
+      ? `<span class="pill warn">Ending</span> ${PLAN_LABEL[b.plan]} ends on ${longDate(b.periodEnd)}. After that the books stay readable and downloadable.`
+      : `<span class="pill">Active</span> ${PLAN_LABEL[b.plan]}, paid ${b.interval === "month" ? "monthly" : "yearly"}, through ${longDate(b.periodEnd)}.`,
+    past_due: `<span class="pill bad">Payment failed</span> ${esc(b.access.warning ?? b.access.reason ?? "")}`,
+    canceled: `<span class="pill grey">Ended</span> The subscription has ended. Your books stay readable and downloadable.`,
+  }[b.status];
+  const planCard = (k, blurb) => {
+    const on = (b.nextPlan ?? b.plan) === k;
+    return `<label class="card plan ${on ? "on" : ""}">
+      <input type="radio" name="plan" value="${k}" ${on ? "checked" : ""} ${owner || state.org.role === "admin" ? "" : "disabled"}>
+      <div class="muted">${PLAN_LABEL[k]}</div>
+      <div class="plan-price">${price(b.prices.plan[k][interval])} <span class="muted">${per}</span></div>
+      ${k === "books_payroll" ? `<div>plus ${price(b.prices.perPersonMonth)} for each person paid in a month</div>` : ""}
+      <div class="muted">${blurb}</div>
+      <div class="muted small">Each extra business ${price(b.prices.extraBusiness[k][interval])} ${per}</div>
+    </label>`;
+  };
+  const next = b.next ? `<p>Next charge on ${longDate(b.next.periodStart)}: <strong>${usd(b.next.subtotalMinor)}</strong> plus California sales tax where it applies, for ${longDate(b.next.periodStart)} to ${longDate(b.next.periodEnd)}.</p>
+      <ul class="muted">${b.next.lines.map((l) => `<li>${esc(l.description)}${l.quantity > 1 ? ` × ${l.quantity}` : ""}: ${usd(l.quantity * l.unitMinor)}</li>`).join("")}</ul>` : "";
+  const addr = b.billing.address ?? {};
+  app.innerHTML = shell("billing", `
+    <div class="head"><div><h1>Billing</h1><p class="muted">One price per business, unlimited users, invoices and bills. Prices are before sales tax. <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a> · <a href="/promises.html" target="_blank" rel="noopener">Our promises</a></p></div></div>
+    <div class="panel"><p>${status}</p>
+      ${b.founding ? `<p><span class="pill">Founding customer</span> Your prices are locked until ${longDate(b.priceLockedUntil)}.</p>`
+        : b.status === "trialing" && b.foundingSeatsLeft ? `<p class="muted">Founding offer: the first 100 businesses to start paying keep their price for 24 months. ${b.foundingSeatsLeft} places left.</p>` : ""}
+      ${next}
+    </div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between"><h2>Plan</h2>
+        <div class="row seg"><button class="${interval === "month" ? "" : "secondary"}" data-action="bill-interval" data-v="month">Monthly</button><button class="${interval === "year" ? "" : "secondary"}" data-action="bill-interval" data-v="year">Yearly, 2 months free</button></div></div>
+      <form data-form="bill-plan" data-interval="${interval}">
+        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, California sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: California overtime, pay stubs, direct-deposit file, prepared 941, DE 9 and W-2 forms.")}</div>
+        <p class="muted">${b.businesses ? `You have ${b.businesses} business${b.businesses === 1 ? "" : "es"} here.` : "No businesses added yet; the plan price covers the first one."} ${b.status === "trialing" ? "Changes apply right away." : "Moving up to Books + Payroll applies now, charged for the days left; anything else applies at the next renewal."}</p>
+        <button type="submit">Save plan</button>
+      </form>
+    </div>
+    <div class="panel"><h2>Billing details</h2>
+      <p class="muted">The name and address on your invoices. California sales tax is worked out from this address.</p>
+      <form data-form="bill-details">
+        <div class="grid two">
+          <label>Business name<input name="name" required value="${esc(b.billing.name ?? state.org.org.name)}"></label>
+          <label>Billing email<input name="email" type="email" required value="${esc(b.billing.email ?? state.me.user.email)}"></label>
+          <label>Street address<input name="line1" required value="${esc(addr.line1 ?? "")}"></label>
+          <label>City<input name="city" required value="${esc(addr.city ?? "")}"></label>
+          <label>State<input name="state" required maxlength="2" value="${esc(addr.state ?? "CA")}"></label>
+          <label>ZIP code<input name="zip" required value="${esc(addr.zip ?? "")}"></label>
+        </div>
+        <button type="submit" class="secondary">Save details</button>
+      </form>
+    </div>
+    <div class="panel"><h2>Card</h2>
+      ${b.card ? `<p>${esc(b.card.brand.toUpperCase())} ending ${esc(b.card.last4)}, expires ${esc(b.card.exp)}.</p>` : `<p class="muted">No card yet.</p>`}
+      ${b.cardPayments
+        ? b.billing.address ? `<button data-action="bill-card">${b.card ? "Replace card" : "Add a card"}</button>
+          <p class="muted">You type the card on our payment processor's secure page (Stripe). Alt-QBO never sees or stores the card number.</p>` : `<p class="muted">Save the billing details first.</p>`
+        : `<p class="muted">Card payments aren't switched on yet. Your trial carries on in the meantime.</p>`}
+    </div>
+    ${b.charges.length ? `<div class="panel table-wrap"><h2>Payments</h2><table>
+      <thead><tr><th>Date</th><th>For</th><th>Invoice</th><th class="num">Amount</th><th class="num">Tax</th><th class="num">Total</th><th>Status</th></tr></thead>
+      <tbody>${b.charges.map((c) => `<tr><td>${c.created_at.slice(0, 10)}</td><td>${CHARGE_LABEL[c.kind]}, ${c.period_start} to ${c.period_end}</td><td class="mono">${esc(c.invoice_number ?? "")}</td>
+        <td class="num">${usd(c.subtotal_minor)}</td><td class="num">${c.tax_minor == null ? "" : usd(c.tax_minor)}</td><td class="num">${c.total_minor == null ? "" : usd(c.total_minor)}</td>
+        <td>${CHARGE_STATUS[c.status]}${c.failure ? `<div class="hash">${esc(c.failure)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    ${owner ? `<div class="panel"><h2>${b.status === "canceled" || b.cancelAtPeriodEnd ? "Restart" : "Cancel"}</h2>
+      ${b.status === "canceled" || b.cancelAtPeriodEnd
+        ? `<p>Pick up where you left off.${b.status === "canceled" ? " Billing starts again today." : ""}</p><button data-action="bill-resume">Restart subscription</button>`
+        : `<p class="muted">Cancel any time. ${b.status === "trialing" ? "The trial ends now." : `You keep full use until ${longDate(b.periodEnd)}.`} Your books stay readable and downloadable for 7 years, free. A yearly plan cancelled within 60 days of paying is refunded for the unused months.</p>
+          <button class="secondary" data-action="bill-cancel">Cancel subscription</button>`}
+    </div>` : ""}`);
+}
+
+/** Where the card processor sends people back after saving a card. */
+async function cardReturnView(sessionId) {
+  app.innerHTML = shell("billing", `<div class="panel"><p>Saving your card…</p></div>`);
+  try {
+    const r = await api(orgPath("/billing/card/confirm"), { body: { sessionId } });
+    state.org.stale = true;
+    toast(r.charged ? `Card saved and charged. Thank you!` : r.failed ? "Card saved, but the payment didn't go through" : `Card ending ${r.card.last4} saved`);
+  } catch (err) {
+    toast(err.message);
+  }
+  location.hash = "#/billing";
+}
+
+// ------------------------------------------------------------------ account
+
+const acct = { setup: null, codes: null };
+
+async function accountView() {
+  if (!state.me) state.me = await api("/api/me");
+  const u = state.me.user;
+  const codes = acct.codes;
+  acct.codes = null;
+  const setup = acct.setup;
+  let mfa;
+  if (codes) {
+    mfa = `<div class="alert good">Save these recovery codes now. Each one works once if you lose your phone. They won't be shown again.</div>
+      <pre class="mono recovery">${codes.map(esc).join("\n")}</pre>
+      <div class="row"><button class="secondary" data-action="copy-codes" data-codes="${esc(codes.join("\n"))}">Copy codes</button><button class="secondary" data-action="print">Print</button></div>`;
+  } else if (u.mfa.enabled) {
+    mfa = `<p><span class="pill">On</span> Signing in needs your password and a code from your authenticator app. ${u.mfa.recoveryCodesLeft} recovery code${u.mfa.recoveryCodesLeft === 1 ? "" : "s"} left.</p>
+      <details><summary>Make new recovery codes</summary>
+        <form data-form="mfa-codes" class="row">
+          <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+          <label>Code from your app<input name="code" required autocomplete="one-time-code" maxlength="20"></label>
+          <button type="submit" class="secondary">Make new codes</button>
+        </form></details>
+      <details><summary>Turn two-factor off</summary>
+        <form data-form="mfa-disable" class="row">
+          <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+          <label>Code from your app<input name="code" required autocomplete="one-time-code" maxlength="20"></label>
+          <button type="submit" class="secondary">Turn off</button>
+        </form></details>`;
+  } else if (setup) {
+    mfa = `<ol class="steps">
+        <li>Open an authenticator app on your phone (Google Authenticator, Microsoft Authenticator, 1Password, Authy and others all work) and scan this code.
+          <div class="qr">${setup.qrSvg}</div>
+          <p class="muted">Can't scan? Enter this key instead: <span class="mono">${esc(setup.secret.replace(/(.{4})/g, "$1 ").trim())}</span></p></li>
+        <li>Type the 6-digit code the app shows.
+          <form data-form="mfa-enable" class="row">
+            <label>Code<input name="code" required inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"></label>
+            <button type="submit">Turn on</button>
+          </form></li>
+      </ol>`;
+    acct.setup = setup;
+  } else {
+    mfa = `<p><span class="pill warn">Off</span> Add a second step to signing in: a 6-digit code from an app on your phone. Someone who learns your password still can't get in.</p>
+      <button data-action="mfa-setup">Set up two-factor sign-in</button>`;
+  }
+  app.innerHTML = shell("account", `
+    <div class="head"><div><h1>Your account</h1><p class="muted">${esc(u.name)} · ${esc(u.email)}${u.emailVerified ? "" : " (not confirmed yet)"}</p></div></div>
+    <div class="panel"><h2>Two-factor sign-in</h2>${mfa}</div>
+    <div class="panel"><h2>Safety and privacy</h2>
+      <p>How we protect your books, and what we promise about prices and your data: <a href="/security.html" target="_blank" rel="noopener">Security</a> · <a href="/promises.html" target="_blank" rel="noopener">Our promises</a> · <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a></p></div>`);
+}
+
 async function auditView() {
   const { events, verification } = await api(orgPath("/audit"));
   app.innerHTML = shell("audit", `
@@ -2026,6 +2235,8 @@ async function route() {
       try { saved = localStorage.getItem("altqbo_org"); } catch {}
       state.orgId = state.me.orgs.some((o) => o.id === saved) ? saved : state.me.orgs[0].id;
     }
+    // Before the organisation loads: one that requires two-factor refuses everything until it's on.
+    if (parts[0] === "account") return await accountView();
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
     if (parts[0] === "e" && parts[1]) {
       if (parts[2] === "reports" && REPORTS.some(([k]) => k === parts[3])) rep.tab = parts[3];
@@ -2039,6 +2250,8 @@ async function route() {
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
+    if (parts[0] === "billing" && parts[1] === "card" && parts[2]) return await cardReturnView(parts[2]);
+    if (parts[0] === "billing") return await billingView();
     if (parts[0] === "audit") return await auditView();
     return await homeView();
   } catch (err) {
@@ -2211,6 +2424,38 @@ document.addEventListener("click", async (ev) => {
       state.entity.fresh = false;
       toast(b.dataset.active === "true" ? "Account reactivated" : "Account deactivated");
       await accountsView(state.entity.entity.id);
+    } else if (a === "bill-interval") {
+      bill.interval = b.dataset.v;
+      await billingView();
+    } else if (a === "bill-card") {
+      b.disabled = true;
+      const r = await api(orgPath("/billing/card"), { body: {} });
+      location.href = r.url;
+    } else if (a === "bill-cancel") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Cancel the subscription? Click again"; return; }
+      b.disabled = true;
+      await api(orgPath("/billing/cancel"), { body: {} });
+      state.org.stale = true;
+      toast("Subscription cancelled. Your books stay readable and downloadable");
+      await billingView();
+    } else if (a === "bill-resume") {
+      b.disabled = true;
+      await api(orgPath("/billing/resume"), { body: {} });
+      state.org.stale = true;
+      toast("Subscription restarted");
+      await route();
+    } else if (a === "mfa-setup") {
+      b.disabled = true;
+      acct.setup = await api("/api/me/mfa/setup", { body: {} });
+      await accountView();
+    } else if (a === "copy-codes") {
+      await navigator.clipboard.writeText(b.dataset.codes).catch(() => {});
+      toast("Recovery codes copied");
+    } else if (a === "require-mfa") {
+      b.disabled = true;
+      await api(orgPath("/security"), { body: { requireMfa: b.dataset.on === "1" } });
+      toast(b.dataset.on === "1" ? "Everyone here now needs two-factor sign-in" : "Two-factor sign-in is now optional here");
+      await teamView();
     } else if (a === "copy-invite") {
       const input = document.getElementById("invite-link");
       await navigator.clipboard.writeText(input.value).catch(() => { input.select(); document.execCommand("copy"); });
@@ -2244,6 +2489,15 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);
+    } else if (a === "restore-point") {
+      b.disabled = true;
+      const res = await api(entPath(`/backups/${b.dataset.id}/download`), { body: {}, raw: true });
+      if (!res.ok) throw new Error((await res.json()).error);
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "alt-qbo-backup.json";
+      const url = URL.createObjectURL(await res.blob());
+      Object.assign(document.createElement("a"), { href: url, download: name }).click();
+      URL.revokeObjectURL(url);
+      b.disabled = false;
     } else if (a === "backup") {
       b.disabled = true;
       const res = await api(entPath("/backup"), { body: {}, raw: true });
@@ -2349,14 +2603,57 @@ document.addEventListener("submit", async (ev) => {
   try {
     const d = formData(f);
     if (kind === "login" || kind === "signup") {
+      let r;
       try {
-        await api(`/api/auth/${kind}`, { body: d });
+        r = await api(`/api/auth/${kind}`, { body: d });
       } catch (err) {
         return authView(kind, err.message);
       }
+      if (r.mfaRequired) return mfaView(r.ticket);
       state.me = null; state.org = null; state.orgId = null;
       location.hash = "#/";
       await route();
+    } else if (kind === "mfa") {
+      const { ticket, then, invite } = f.dataset;
+      let r;
+      try {
+        r = await api("/api/auth/mfa", { body: { ticket, code: d.code, inviteToken: invite || undefined } });
+      } catch (err) {
+        // A ticket that ran out of tries or time can't be used again.
+        if (/sign in again/.test(err.message)) return then === "join" ? joinView(invite, err.message) : authView("login", err.message);
+        return mfaView(ticket, then, invite, err.message);
+      }
+      if (then === "join") return joined(r.joined);
+      state.me = null; state.org = null; state.orgId = null;
+      location.hash = "#/";
+      await route();
+    } else if (kind === "bill-plan") {
+      await api(orgPath("/billing/plan"), { body: { plan: d.plan, interval: f.dataset.interval } });
+      bill.interval = null;
+      state.org.stale = true;
+      toast("Plan saved");
+      await billingView();
+    } else if (kind === "bill-details") {
+      await api(orgPath("/billing/details"), { body: { name: d.name, email: d.email, address: { line1: d.line1, city: d.city, state: d.state, zip: d.zip } } });
+      toast("Billing details saved");
+      await billingView();
+    } else if (kind === "mfa-enable") {
+      const r = await api("/api/me/mfa/enable", { body: d });
+      state.me = null;
+      acct.codes = r.recoveryCodes;
+      await accountView();
+      toast("Two-factor sign-in is on");
+    } else if (kind === "mfa-disable") {
+      await api("/api/me/mfa/disable", { body: d });
+      state.me = null;
+      await accountView();
+      toast("Two-factor sign-in is off");
+    } else if (kind === "mfa-codes") {
+      const r = await api("/api/me/mfa/recovery-codes", { body: d });
+      state.me = null;
+      acct.codes = r.recoveryCodes;
+      await accountView();
+      toast("New recovery codes made; the old ones no longer work");
     } else if (kind === "forgot" || kind === "magic") {
       try {
         await api(`/api/auth/${kind === "forgot" ? "reset" : "email-link"}`, { body: d });
@@ -2365,10 +2662,15 @@ document.addEventListener("submit", async (ev) => {
       }
       return authView(kind, "", `If ${d.email} has an Alt-QBO account, a link is on its way. Check your inbox and spam folder.`);
     } else if (kind === "reset-password") {
+      let r;
       try {
-        await api(`/api/auth/reset/${f.dataset.token}`, { body: d });
+        r = await api(`/api/auth/reset/${f.dataset.token}`, { body: d });
       } catch (err) {
         return emailLinkView("reset", f.dataset.token, err.message);
+      }
+      if (r.mfaRequired) {
+        toast("Password changed");
+        return mfaView(r.ticket);
       }
       state.me = null; state.org = null; state.orgId = null;
       location.hash = "#/";
@@ -2538,6 +2840,7 @@ document.addEventListener("submit", async (ev) => {
       } catch (err) {
         return joinView(token, err.message);
       }
+      if (r.mfaRequired) return mfaView(r.ticket, "join", token);
       await joined(r.joined);
     }
   } catch (err) {

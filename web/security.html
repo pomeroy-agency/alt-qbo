@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security · Alt-QBO</title>
+  <meta name="description" content="How Alt-QBO protects your books: two-factor sign-in, encryption of private details, separated businesses, nightly checked backups and card payments handled by Stripe.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<div class="site">
+  <header class="top">
+    <a class="brand" href="/"><img src="/favicon.svg" width="28" height="28" alt=""><span>Alt-QBO</span></a>
+    <nav><a href="/pricing.html">Pricing</a><a href="/promises.html">Our promises</a><a href="/security.html">Security</a><a href="/status.html">Status</a><a href="/#/login">Sign in</a></nav>
+  </header>
+
+  <h1>How we keep your books safe</h1>
+  <p class="lead">What we do today, in plain words. We only list what is built and running.</p>
+
+  <div class="promises">
+    <section>
+      <h2>Signing in</h2>
+      <ul>
+        <li>Two-factor sign-in with an authenticator app, plus one-time recovery codes. An owner can require it for everyone in the business.</li>
+        <li>Passwords are stored only as salted scrypt hashes. Emailed sign-in and reset links work once, expire quickly, and are stored only as hashes.</li>
+        <li>Sessions live in secure, HTTP-only cookies. Changing your password signs you out everywhere else.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Private details</h2>
+      <ul>
+        <li>Social Security numbers, bank account numbers and two-factor secrets are encrypted with AES-256-GCM before they are saved, with a key kept outside the database.</li>
+        <li>Everything travels over HTTPS.</li>
+        <li>Card numbers never reach us: you type them on Stripe's secure page, and we keep only the brand and last four digits.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Your business, kept apart</h2>
+      <ul>
+        <li>Every row of data belongs to one organisation, and the database itself (row-level security) hides every other organisation's rows.</li>
+        <li>Roles decide who can post, close months and approve payroll. Payroll needs two people: one prepares, another approves.</li>
+        <li>Every change goes in a hash-chained audit log you can check yourself.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Backups</h2>
+      <ul>
+        <li>Every night, a full copy of each business's books is encrypted and stored apart from the database.</li>
+        <li>Each copy is read back and checked the same night: it opens, nothing in it changed, every entry balances, and every account matches your live books. We keep 30 days of copies.</li>
+        <li>Owners, admins and accountants can download today's books, or any of the nightly copies, at any time.</li>
+      </ul>
+    </section>
+  </div>
+
+  <h2>Found a problem?</h2>
+  <p>If you think you've found a security issue, please tell us before telling anyone else, and we'll reply within one business day. Contact: <a id="security-contact" href="mailto:security@pomeroyagency.com">security@pomeroyagency.com</a>.</p>
+
+  <footer>See <a href="/promises.html">our promises</a> and the <a href="/status.html">service status</a>.</footer>
+</div>
+</body>
+</html>

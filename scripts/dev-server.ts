@@ -8,6 +8,9 @@ import { migrate } from "../src/db/migrate.js";
 import { handleApi } from "../src/app/api.js";
 import { mailerFromEnv, type Mailer } from "../src/app/mail.js";
 import { cdtfaRateLookup, sampleRateLookup } from "../src/app/cdtfa.js";
+import { billingFromEnv } from "../src/app/billing-config.js";
+import { memoryStore } from "../src/core/nightly-backups.js";
+import { randomBytes } from "node:crypto";
 
 const pool = createPool();
 await migrate(pool);
@@ -21,6 +24,9 @@ const mailer = mailerFromEnv() ?? (process.env.DEV_MAIL === "log" ? logMailer : 
 const taxRates = process.env.DEV_TAX_RATES === "sample" ? sampleRateLookup : cdtfaRateLookup();
 // Local data only: a fixed key for sealing Social Security numbers when PII_KEY isn't set.
 process.env.PII_KEY ??= Buffer.alloc(32, 1).toString("base64");
+// Billing settings come from the same variables as production (see docs/launch-setup.md); restore points stay in memory.
+const billing = billingFromEnv();
+const backups = { store: memoryStore(), key: randomBytes(32) };
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
@@ -32,7 +38,7 @@ createServer(async (req, res) => {
       headers: req.headers as Record<string, string>,
       body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
     });
-    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates });
+    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups });
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
     return;

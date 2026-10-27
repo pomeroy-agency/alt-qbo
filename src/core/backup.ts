@@ -59,7 +59,10 @@ export interface Backup {
 }
 
 /** Copies one entity's books. Downloading a backup is itself recorded in the audit log. */
-export async function backupEntity(tx: Tx, input: { orgId: string; entityId: string; actor: Actor }): Promise<Backup> {
+export async function backupEntity(
+  tx: Tx,
+  input: { orgId: string; entityId: string; actor: Actor; /** The nightly copy is logged as its own kind of event. */ scheduled?: boolean },
+): Promise<Backup> {
   if (!CAN_BACK_UP.includes(input.actor.role)) throw new LedgerError("FORBIDDEN", `role ${input.actor.role} cannot download a backup`);
   const entity = (await tx.query("SELECT * FROM entities WHERE id = $1", [input.entityId])).rows[0];
   if (!entity) throw new LedgerError("INVALID", "entity not found");
@@ -70,7 +73,7 @@ export async function backupEntity(tx: Tx, input: { orgId: string; entityId: str
 
   // Recorded before the copy of the chain is taken, so the backup includes its own download.
   await appendAudit(tx, {
-    orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "entity.backup_downloaded",
+    orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: input.scheduled ? "entity.backup_scheduled" : "entity.backup_downloaded",
     objectType: "entity", objectId: input.entityId, after: { counts }, context: { role: input.actor.role },
   });
   const events = (await tx.query("SELECT * FROM audit_events WHERE org_id = $1 ORDER BY seq", [input.orgId])).rows;
