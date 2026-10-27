@@ -95,7 +95,6 @@ function topbar() {
       <button class="link" data-action="theme" title="Switch between light, dark and your device's setting">${{ auto: "Theme: device", dark: "Theme: dark", light: "Theme: light" }[t]}</button>
       <button class="secondary" data-action="logout">Sign out</button>
     </header>
-    <div class="banner"><span class="long">Preview build. The 2026 federal and California tax figures are drafts awaiting review, so use test data only.</span><span class="short">Preview build: use test data only.</span></div>
     ${state.org?.access?.level === "read_only" ? `<div class="banner bad">Changes are paused: ${esc(state.org.access.reason)}. ${["owner", "admin"].includes(state.org.role) ? `<a href="#/billing">Go to Billing</a>` : "Ask an owner to check Billing."}</div>`
       : state.org?.access?.warning ? `<div class="banner info">${esc(state.org.access.warning)} ${["owner", "admin"].includes(state.org.role) ? `<a href="#/billing">Go to Billing</a>` : ""}</div>` : ""}
     ${state.me?.emailEnabled && state.me.user && !state.me.user.emailVerified ? `<div class="banner info">Please confirm your email: we sent a link to ${esc(state.me.user.email)}. <button class="link" data-action="resend-verify">Send it again</button></div>` : ""}`;
