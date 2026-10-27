@@ -28,13 +28,25 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 | SDI | 1.3%, no wage limit | EDD rates page; SCO letter 25-019 | ✅ matches |
 | UI | $7,000 base; schedule F+ (1.5% to 6.2%); 3.4% new employer | EDD | ✅ matches |
 | ETT | 0.1% on first $7,000 | EDD | ✅ matches |
-| Minimum wage | $16.90 statewide | Dept. of Finance; Labor Code 1182.12 | ✅ matches. ⚠️ About 40 cities and counties are higher (Los Angeles city $18.42, LA County unincorporated $18.47, San Francisco $19.61 from July 1, 2026). Not modelled yet |
+| Minimum wage | $16.90 statewide | Dept. of Finance; Labor Code 1182.12 | ✅ matches. ⚠️ About 40 cities and counties are higher (Los Angeles city $18.42, LA County unincorporated $18.47, San Francisco $19.61 from July 1, 2026). See local minimum wages below |
 | Exempt salary floor | $70,304 | Labor Code 515(a): 2 × $16.90 × 2,080 | ✅ matches |
 | Sick leave | 1 hour per 30 worked; 40-hour use cap; 80-hour accrual cap | Labor Code 246 (SB 616) | ✅ matches; unchanged for 2026. Some cities are more generous |
 | PIT and SDI deposits | under $350 quarterly; $350 to $400 monthly by the 15th; over $400 on the federal semiweekly or next-day timing | EDD Payroll Tax Deposits page (2026) | ✅ accepted 2026-10-27 ⚠️ recheck: from search results (EDD site blocked here). The 2025 DE 44 used $500 where 2026 uses $400; confirm against the 2026 DE 44 table |
 | UI and ETT deposits | quarterly with the DE 9; 2026 dates Apr 30, Jul 31, Nov 2, Feb 1 2027 | EDD Required Filings and Due Dates | ✅ the computed dates match the EDD's list |
 | Remote-seller threshold | $500,000 | R&TC 6203 (AB 147) | ✅ matches |
 | Franchise tax minimum | $800 | R&TC 17941, 23153 | ✅ matches; the first-year LLC exemption (AB 85) ended with 2023 |
+
+### Local minimum wages (`src/rules/local-minimum-wage.ts`, added 2026-10-27, awaiting Greg's review)
+
+Each employee can have a city where they work. When it has its own minimum wage above the state's, a pay run warns (it doesn't block) for an hourly rate below it, using the rate in force on the last day of the pay period, and the employee list flags anyone paid below today's rate.
+
+| What | Covered | Check |
+|---|---|---|
+| Rates from Jan 1, 2026 | 28 cities and San Mateo County unincorporated, incl. San Jose $18.45, San Diego $17.75, Oakland $17.34, Mountain View $19.70, Sunnyvale $19.50, West Hollywood $20.25 | ⚠️ from CalChamber, Davis Wright Tremaine and CDF summaries; city sites and the Berkeley Labor Center list are blocked here |
+| Rates from Jul 1, 2026 | Alameda, Berkeley, Emeryville, Fremont, Los Angeles, LA County unincorporated, Malibu, Milpitas, Pasadena, San Francisco, Santa Monica | ⚠️ same sources. Pay periods ending before Jul 1, 2026 aren't checked for these 11 |
+| Announced for Jan 1, 2027 | Burlingame, Half Moon Bay, Hayward, Novato, Palo Alto, Petaluma, San Diego, San Mateo, San Mateo County, Santa Clara, West Hollywood | ⚠️ the other cities announce in Nov and Dec; the daily rule watch adds them. Local rates below the 2027 state $17.40 (e.g. Oakland's 2026 rate) are ignored |
+| Size tiers | Hayward (26+ employees), Novato (26 to 99, 100+) | ⚠️ counts employees on file in Alt-QBO, which may miss staff paid elsewhere |
+| Not covered | hotel and health-care worker rates, salaried non-exempt staff, local sick-leave rules | known gap |
 
 ### Already announced for 2027 (a 2027 pack is needed before the first 2027 pay date)
 
@@ -141,4 +153,4 @@ Tax-line codes for Schedule C, 1065, 1120S and 1120 are from working knowledge a
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA and FTB for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
