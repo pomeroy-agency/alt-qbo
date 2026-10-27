@@ -59,6 +59,9 @@ const CAN_SET_RATE: Role[] = ["owner", "accountant", "system"];
 const DIRECT_PAY_THRESHOLD_MINOR = 500_000_000n;
 const DIRECT_PAY_WARNING_MINOR = 400_000_000n;
 
+export const NO_PERMIT_WARNING =
+  "This invoice charges California sales tax, but no seller's permit is recorded for your business. Get one from the CDTFA before you collect tax, and record its number on the Sales tax page";
+
 const addDays = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 const dollars = (minor: bigint) => `$${(Number(minor) / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 
@@ -166,7 +169,7 @@ export async function decideSalesTax(
     manual?: { ratePercent: string; reason: string; actor: Actor };
   },
 ): Promise<TaxDecision> {
-  const ent = (await tx.query("SELECT region, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1", [input.entityId])).rows[0];
+  const ent = (await tx.query("SELECT region, seller_permit, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1", [input.entityId])).rows[0];
   if (!ent) throw new LedgerError("INVALID", "entity not found");
   const pack = rulesFor(ent.region, input.date);
   const { lines, rules } = lineRules(ent.region, input.date, input.categories, input.lines);
@@ -203,7 +206,9 @@ export async function decideSalesTax(
   const delivery = addressOf(contact) ?? addressOf(ent);
   const decision = (source: TaxSource, rate = "0.00000", extra: Partial<TaxDecision> = {}): TaxDecision => ({
     rate, source, jurisdiction: null, address: delivery ? formatAddress(delivery) : null, note: notes.join(". ") || null,
-    taxable, taxShare, exemptions, warnings, rules, ...extra,
+    taxable, taxShare, exemptions, rules, ...extra,
+    // Charging tax needs a seller's permit (Rev. & Tax. Code §6066); this doesn't stop the invoice.
+    warnings: (source === "lookup" || source === "manual") && !ent.seller_permit ? [...warnings, NO_PERMIT_WARNING] : warnings,
   });
 
   if (input.manual) {

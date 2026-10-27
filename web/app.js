@@ -107,7 +107,7 @@ const ENTITY_TABS = [
   ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["items", "Products and services"], ["reports", "Reports"], ["payroll", "Payroll", "payrollToDo", "to approve or pay"],
 ];
 const ACCOUNTANT_TABS = [
-  ["reconcile", "Reconcile"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"],
+  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"],
 ];
 
 // Shorter names for the phone menu, where buttons sit three to a row.
@@ -1869,6 +1869,57 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
     ${slug === "w2" ? table : ""}`);
 }
 
+// ------------------------------------------------------------- sales tax
+
+async function salesTaxView(id, yearParam) {
+  await loadEntity(id);
+  const year = Number(yearParam) || Number(bookDate().slice(0, 4));
+  const t = await api(entPath(`/sales-tax?year=${year}`));
+  const canSet = ["owner", "admin", "accountant"].includes(state.org.role);
+  const freq = Object.entries(t.frequencies).map(([k, l]) => `<option value="${k}" ${k === t.filingFrequency ? "selected" : ""}>${esc(l)}</option>`).join("");
+  app.innerHTML = shell("sales-tax", `
+    <div class="head"><div><h1>Sales tax returns</h1>
+      <p class="muted">Your own California sales and use tax returns. The figures come from the invoices you've issued and the tax on each. Copy them into CDTFA online services (or hand them to your accountant), check them, and file. Alt-QBO doesn't file or pay anything.</p></div>
+      <div class="row"><a class="btn secondary" href="#/e/${id}/sales-tax/${year - 1}">${year - 1}</a>${year <= Number(bookDate().slice(0, 4)) ? `<a class="btn secondary" href="#/e/${id}/sales-tax/${year + 1}">${year + 1}</a>` : ""}</div></div>
+    <div class="panel">
+      <form data-form="sales-tax-settings" class="row" style="margin-bottom:12px">
+        <label>Seller's permit number<input name="sellerPermit" value="${esc(t.sellerPermit ?? "")}" placeholder="As on your permit" style="width:180px" ${canSet ? "" : "disabled"}></label>
+        <label>How often you file<select name="filingFrequency" ${canSet ? "" : "disabled"}><option value="">Not set</option>${freq}</select></label>
+        ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+        <span class="hash">Both are on the permit the CDTFA sends you. You need a permit before you charge sales tax, and from January 1, 2027 that includes software and SaaS.</span>
+      </form>
+      ${t.filingFrequency ? `<div class="table-wrap"><table>
+        <thead><tr><th>Period</th><th>Due</th><th></th></tr></thead>
+        <tbody>${t.periods.map((r) => `<tr><td>${esc(r.label)}${r.prepayments ? `<div class="hash">Prepayments due ${r.prepayments.map((x) => esc(x.dueDate)).join(" and ")}</div>` : ""}</td><td>${esc(r.dueDate)}</td>
+          <td><a href="#/e/${id}/sales-tax/return/${encodeURIComponent(r.key)}">Open</a></td></tr>`).join("") || `<tr><td colspan="3" class="muted">No periods in ${year} yet.</td></tr>`}</tbody>
+      </table></div>` : `<p class="muted">Pick how often you file to see your return periods and due dates.</p>`}
+    </div>`);
+}
+
+async function salesTaxReturnView(id, key) {
+  await loadEntity(id);
+  const f = await api(entPath(`/sales-tax/return?period=${encodeURIComponent(key)}`));
+  const s = f.seller;
+  app.innerHTML = shell("sales-tax", `
+    <div class="head no-print"><div><p><a href="#/e/${id}/sales-tax/${f.period.from.slice(0, 4)}">&larr; Sales tax returns</a></p><h1>${esc(f.title)}</h1>
+      <p class="muted">${esc(f.period.label)} (${esc(f.period.from)} to ${esc(f.period.to)}) · due ${esc(f.period.dueDate)}. ${esc(f.fileAt)}.</p></div>
+      <div class="row"><button class="secondary" data-action="print">Print</button>
+        <button class="secondary" data-action="st-range" data-from="${esc(f.period.from)}" data-to="${esc(f.period.to)}">Sales tax report</button></div></div>
+    ${f.warnings.map((w) => `<div class="alert warn no-print">${esc(w)}</div>`).join("")}
+    <div class="panel">
+      <div><strong>${esc(s.name)}</strong> · seller's permit ${esc(s.sellerPermit ?? "not recorded")}${s.address ? `<div class="hash">${esc(s.address)}</div>` : ""}</div>
+      <div class="table-wrap" style="margin-top:12px"><table>
+        <thead><tr><th>Line</th><th>Description</th><th class="num">Amount</th></tr></thead>
+        <tbody>${f.lines.map((l) => `<tr><td style="white-space:nowrap">${esc(l.line)}</td><td>${esc(l.label)}${l.note ? `<div class="hash">${esc(l.note)}</div>` : ""}</td><td class="num">${fmtLine(l)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      <h3>Schedule A: district taxes</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Place</th><th class="num">Rate</th><th class="num">Taxable sales</th><th class="num">District tax</th></tr></thead>
+        <tbody>${f.districts.map((d) => `<tr><td>${esc(d.jurisdiction)}</td><td class="num">${pct(d.rate)}</td><td class="num">${usd(d.taxableMinor)}</td><td class="num">${usd(d.districtTaxMinor)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No taxable sales this period.</td></tr>`}</tbody>
+      </table></div>
+    </div>`);
+}
+
 async function payRunView(id, runId) {
   await loadEntity(id);
   const r = await api(entPath(`/pay-runs/${runId}`));
@@ -2191,6 +2242,8 @@ async function route() {
       if (parts[2] === "reports" && REPORTS.some(([k]) => k === parts[3])) rep.tab = parts[3];
       if (parts[2] === "payroll" && parts[3] === "run" && parts[4]) return await payRunView(parts[1], parts[4]);
       if (parts[2] === "payroll" && parts[3] === "forms") return await formsView(parts[1], parts[4]);
+      if (parts[2] === "sales-tax" && parts[3] === "return" && parts[4]) return await salesTaxReturnView(parts[1], decodeURIComponent(parts[4]));
+      if (parts[2] === "sales-tax") return await salesTaxView(parts[1], parts[3]);
       if (parts[2] === "payroll" && parts[3] === "form" && parts[4]) return await formView(parts[1], parts[4], parts[5], parts[6]);
       if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
       const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "overview"] ?? overviewView;
@@ -2325,6 +2378,9 @@ document.addEventListener("click", async (ev) => {
       toast("Bank file downloaded. Upload it on your bank's ACH page, then delete it from this computer");
     } else if (a === "form-ssn") {
       await formView(state.entity.entity.id, b.dataset.slug, b.dataset.year, b.dataset.quarter || undefined, true);
+    } else if (a === "st-range") {
+      Object.assign(rep, { tab: "st", preset: "custom", from: b.dataset.from, to: b.dataset.to });
+      location.hash = `#/e/${state.entity.entity.id}/reports/st`;
     } else if (a === "form-csv") {
       const res = await api(entPath(`/payroll-forms/prepared?form=${b.dataset.slug}&year=${b.dataset.year}${b.dataset.quarter ? `&quarter=${b.dataset.quarter}` : ""}&format=csv${document.querySelector("[data-action=form-ssn]") ? "" : "&ssn=full"}`), { raw: true });
       if (!res.ok) throw new Error((await res.json()).error);
@@ -2715,6 +2771,10 @@ document.addEventListener("submit", async (ev) => {
       state.entity.fresh = false;
       toast(r.late ? "Recorded. It was paid after the due date, so a late-deposit penalty may follow" : "Payment recorded and posted to the books");
       await payrollView(state.entity.entity.id);
+    } else if (kind === "sales-tax-settings") {
+      await api(entPath("/sales-tax-settings"), { body: { sellerPermit: d.sellerPermit, filingFrequency: d.filingFrequency } });
+      toast("Sales tax settings saved");
+      await route();
     } else if (kind === "edd-account") {
       await api(entPath("/payroll-settings"), { body: { caEmployerAccount: d.caEmployerAccount } });
       toast("EDD account number saved");
