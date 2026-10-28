@@ -43,6 +43,7 @@ export interface Contact {
   kind: ContactKind;
   name: string;
   email: string | null;
+  phone: string | null;
   /** Where the customer takes delivery; decides the sales tax rate. */
   address: ContactAddress | null;
   /** California seller's permit from the customer's resale certificate. */
@@ -55,11 +56,11 @@ export interface Contact {
   accrueUseTax: boolean;
 }
 
-const CONTACT_COLS = "id, kind, name, email, address_line1, address_city, address_state, address_zip, resale_permit, direct_pay_permit, mpu_ca_percent::text AS mpu_ca_percent, mpu_certificate_date, accrue_use_tax";
+const CONTACT_COLS = "id, kind, name, email, phone, address_line1, address_city, address_state, address_zip, resale_permit, direct_pay_permit, mpu_ca_percent::text AS mpu_ca_percent, mpu_certificate_date, accrue_use_tax";
 
 function contactOf(r: any): Contact {
   return {
-    id: r.id, kind: r.kind, name: r.name, email: r.email,
+    id: r.id, kind: r.kind, name: r.name, email: r.email, phone: r.phone ?? null,
     address: r.address_line1 ? { line1: r.address_line1, city: r.address_city, state: r.address_state, zip: r.address_zip } : null,
     resalePermit: r.resale_permit,
     directPayPermit: r.direct_pay_permit,
@@ -74,6 +75,7 @@ const CAN_SET_TAX_STATUS: Role[] = ["owner", "accountant", "system"];
 interface ContactFields {
   name?: string;
   email?: string | null;
+  phone?: string | null;
   /** Checked by cleanAddress in core/sales-tax.ts before it gets here. */
   address?: ContactAddress | null;
   resalePermit?: string | null;
@@ -92,6 +94,7 @@ function contactColumns(f: ContactFields): Record<string, unknown> {
     out.name = name;
   }
   if (f.email !== undefined) out.email = f.email?.trim().toLowerCase() || null;
+  if (f.phone !== undefined) out.phone = f.phone?.trim().slice(0, 40) || null;
   if (f.address !== undefined) {
     out.address_line1 = f.address?.line1 ?? null;
     out.address_city = f.address?.city ?? null;

@@ -107,6 +107,21 @@ export async function checkAccess(pool: pg.Pool, orgId: string, cfg: BillingConf
   });
 }
 
+/**
+ * The subscription as a connected app sees it: whether the business has
+ * TrailBook now (a trial, a paid plan, or a payment inside the grace period),
+ * which plan, and when it next renews or the trial ends.
+ */
+export async function subscriptionStatus(pool: pg.Pool, orgId: string, cfg: BillingConfig, today: string) {
+  return withSystem(pool, async (tx) => {
+    if (await isFree(tx, orgId, cfg)) return { active: true, status: "free", plan: null, renews_at: null };
+    const sub = await ensureSubscription(tx, orgId, today);
+    const active = accessFor(sub, today).level === "full";
+    const renews = sub.status === "trialing" ? sub.trial_ends_on : sub.cancel_at_period_end ? null : sub.period_end;
+    return { active, status: sub.status, plan: sub.plan, renews_at: active ? renews : null };
+  });
+}
+
 // --------------------------------------------------------------- pricing
 
 async function businessCount(tx: Tx, orgId: string): Promise<number> {

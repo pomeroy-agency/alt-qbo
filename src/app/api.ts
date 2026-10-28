@@ -40,6 +40,11 @@ import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSetti
 import { form940, form941, formDe9, formsFor, formW2, type PreparedForm } from "../payroll/forms.js";
 import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
 import { calculateSavedRun, carrySickLeave, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
+import { CAN_CONNECT, OAuthError, findClient, issueCode, listGrants, parseScopes, redirectWith, revokeGrant, updateGrantSettings, type OAuthClient } from "./oauth.js";
+import { handleOAuth, handlePublicApi } from "./public-api.js";
+import {
+  checkKey, cleanApiKey, getKeyLink, listContacts as listMilePostContacts, needsRecheck, recordCheck, removeKey, saveKey, type MilePostOptions,
+} from "./milepost.js";
 import {
   AuthError, SESSION_COOKIE, checkSignInAllowed, createSession, recordSignIn, endSession, hashPassword, membershipRole, normaliseEmail,
   sessionUser, verifyPassword, type SessionUser,
@@ -58,6 +63,10 @@ export interface ApiOptions {
   backups?: { store: BackupStore; key: Buffer };
   /** TrailBook's own subscriptions: card processor, seller's books, and whether unpaid organisations become read-only. */
   billing?: BillingConfig;
+  /** Apps that may connect to a business with OAuth (MilePost). */
+  oauthClients?: OAuthClient[];
+  /** Where MilePost's REST API lives, for the MilePost tab. */
+  milepost?: MilePostOptions;
 }
 
 /** Where emailed and copied links point. */
@@ -378,7 +387,12 @@ route("GET", "/api/orgs/:org/entities/:entity", async (_req, p, ctx) =>
       "SELECT id, kind, display_name, scopes, status, created_at FROM connections WHERE entity_id = $1 ORDER BY created_at",
       [p.entity],
     )).rows;
-    return json({ entity, accounts, periods, connections, salesTaxCategories: currentCategories(entity.region) });
+    // The MilePost tab shows once MilePost is connected either way, and while its subscription is active.
+    const key = (await tx.query("SELECT active FROM app_links WHERE entity_id = $1 AND app = 'milepost' AND removed_at IS NULL", [p.entity])).rows[0];
+    const grants = await listGrants(ctx.pool, ctx.orgId, p.entity!);
+    const milepostClients = new Set((ctx.opts.oauthClients ?? []).filter((c) => c.app === "milepost").map((c) => c.id));
+    const apps = { milepost: key ? key.active : grants.some((g) => milepostClients.has(g.clientId)) };
+    return json({ entity, accounts, periods, connections, apps, salesTaxCategories: currentCategories(entity.region) });
   }),
 );
 
@@ -513,6 +527,160 @@ route("POST", "/api/orgs/:org/entities/:entity/connections", async (req, p, ctx)
   return json(out, 201);
 });
 
+// ------------------------------------------------------------ integrations
+
+const milepostUrl = (ctx: Ctx) => (ctx.opts.milepost?.url ?? "https://crm.pomeroyagency.com").replace(/\/+$/, "");
+const milepostOpts = (ctx: Ctx): MilePostOptions => ({ ...ctx.opts.milepost, url: milepostUrl(ctx) });
+
+/** The consent page's "Allow": a one-time code for the app, sent back to the app's registered address. */
+route("POST", "/api/orgs/:org/entities/:entity/oauth/approve", async (req, p, ctx) => {
+  requireRole(ctx, CAN_CONNECT);
+  const b = await body(req);
+  const client = findClient(ctx.opts.oauthClients ?? [], b.clientId, b.redirectUri);
+  const scopes = parseScopes(b.scope);
+  await tenant(ctx, (tx) => ensureEntity(tx, p.entity!));
+  const code = await issueCode(ctx.pool, { client, orgId: ctx.orgId, entityId: p.entity!, userId: ctx.user.id, role: ctx.role, redirectUri: b.redirectUri, scopes });
+  const state = typeof b.state === "string" ? b.state.slice(0, 500) : undefined;
+  return json({ redirect: redirectWith(b.redirectUri, { code, state, company_id: p.entity! }) });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/integrations", async (_req, p, ctx) => {
+  const entity = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const key = (await tx.query(
+      "SELECT key_hint, account_name, active, checked_at, created_by, created_at FROM app_links WHERE entity_id = $1 AND app = 'milepost' AND removed_at IS NULL",
+      [p.entity],
+    )).rows[0] ?? null;
+    return { key, region: (await getEntity(tx, p.entity!)).region };
+  });
+  const clients = ctx.opts.oauthClients ?? [];
+  const grants = (await listGrants(ctx.pool, ctx.orgId, p.entity!)).map((g) => ({ ...g, app: clients.find((c) => c.id === g.clientId)?.app ?? g.clientId }));
+  return json({
+    milepost: {
+      url: milepostUrl(ctx),
+      oauthReady: clients.some((c) => c.app === "milepost"),
+      grant: grants.find((g) => g.app === "milepost") ?? null,
+      key: entity.key,
+    },
+    taxCategories: currentCategories(entity.region),
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/integrations/milepost/key", async (req, p, ctx) => {
+  requireRole(ctx, CAN_CONNECT);
+  const b = await body(req);
+  const apiKey = cleanApiKey(b.apiKey);
+  await tenant(ctx, (tx) => ensureEntity(tx, p.entity!));
+  // Ask MilePost first, outside the transaction, so a slow answer never holds the books.
+  const account = await checkKey(milepostOpts(ctx), apiKey);
+  await tenant(ctx, (tx) => saveKey(tx, { orgId: ctx.orgId, entityId: p.entity!, apiKey, account, actor: ctx.actor.id }));
+  return json({ ok: true, account }, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/integrations/milepost/key/remove", async (_req, p, ctx) => {
+  requireRole(ctx, CAN_CONNECT);
+  const removed = await tenant(ctx, (tx) => removeKey(tx, { orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id }));
+  if (!removed) throw new HttpError(404, "MilePost isn't linked to this business");
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/integrations/apps/:grant/revoke", async (_req, p, ctx) => {
+  requireRole(ctx, CAN_CONNECT);
+  if (!(await revokeGrant(ctx.pool, { grantId: p.grant!, orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id }))) throw new HttpError(404, "connection not found");
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/integrations/apps/:grant/settings", async (req, p, ctx) => {
+  // The kind of sale decides sales tax on the app's invoices, so it's an owner's or accountant's call, like a customer's tax status.
+  requireRole(ctx, ["owner", "admin", "accountant"]);
+  const b = await body(req);
+  const region = await tenant(ctx, async (tx) => (await getEntity(tx, p.entity!)).region);
+  if (!currentCategories(region).some((c) => c.id === b.taxCategory)) throw new HttpError(400, "pick a kind of sale");
+  const settings = await updateGrantSettings(ctx.pool, { grantId: p.grant!, orgId: ctx.orgId, entityId: p.entity!, settings: { taxCategory: b.taxCategory }, actor: ctx.actor.id });
+  if (!settings) throw new HttpError(404, "connection not found");
+  return json({ settings });
+});
+
+/** The MilePost tab: what MilePost sent, and, with an API key, MilePost's contacts. */
+route("GET", "/api/orgs/:org/entities/:entity/milepost", async (req, p, ctx) => {
+  const email = new URL(req.url).searchParams.get("email")?.trim() || undefined;
+  const local = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const link = await getKeyLink(tx, p.entity!);
+    const customers = (await tx.query(
+      `SELECT c.id, c.name, c.email, r.external_ref FROM contacts c
+         LEFT JOIN external_refs r ON r.entity_id = c.entity_id AND r.source = 'milepost' AND r.object_type = 'contact' AND r.object_id = c.id
+        WHERE c.entity_id = $1 AND c.kind IN ('customer', 'both')`,
+      [p.entity],
+    )).rows;
+    const invoices = (await tx.query(
+      `SELECT d.id, r.external_ref FROM documents d
+         JOIN external_refs r ON r.entity_id = d.entity_id AND r.source = 'milepost' AND r.object_type = 'invoice' AND r.object_id = d.id
+        WHERE d.entity_id = $1 ORDER BY d.issue_date DESC, d.number DESC LIMIT 100`,
+      [p.entity],
+    )).rows;
+    const docs = [];
+    for (const r of invoices) docs.push({ ...(await getDocument(tx, r.id)), dealId: r.external_ref });
+    return { link, customers, invoices: docs };
+  });
+  let contacts: unknown[] | null = null;
+  let error: string | null = null;
+  let active = local.link?.active ?? null;
+  if (local.link) {
+    try {
+      const mp = milepostOpts(ctx);
+      if (needsRecheck(local.link)) {
+        const account = await checkKey(mp, local.link.apiKey);
+        active = account.active;
+        await tenant(ctx, (tx) => recordCheck(tx, local.link!.id, account));
+      }
+      const byRef = new Map(local.customers.filter((c) => c.external_ref).map((c) => [c.external_ref, c.id]));
+      const byEmail = new Map(local.customers.filter((c) => c.email).map((c) => [String(c.email).toLowerCase(), c.id]));
+      contacts = (await listMilePostContacts(mp, local.link.apiKey, email)).map((c) => ({
+        ...c, customerId: byRef.get(c.id) ?? (c.email ? byEmail.get(c.email.toLowerCase()) : undefined) ?? null,
+      }));
+    } catch (err) {
+      if (!(err instanceof LedgerError)) throw err;
+      error = err.message;
+    }
+  }
+  return json({
+    url: milepostUrl(ctx),
+    key: local.link ? { keyHint: local.link.keyHint, accountName: local.link.accountName, active } : null,
+    contacts, error, invoices: local.invoices,
+  });
+});
+
+/** Adds a MilePost contact to these books as a customer, read again from MilePost so the browser can't change what's added. */
+route("POST", "/api/orgs/:org/entities/:entity/milepost/customers", async (req, p, ctx) => {
+  const b = await body(req);
+  const email = str(b.email, "email", 200);
+  const id = str(b.contactId, "MilePost contact", 100);
+  const link = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return getKeyLink(tx, p.entity!);
+  });
+  if (!link) throw new HttpError(404, "link MilePost with an API key first");
+  const c = (await listMilePostContacts(milepostOpts(ctx), link.apiKey, email)).find((x) => x.id === id);
+  if (!c) throw new HttpError(404, "MilePost doesn't have that contact any more");
+  const contact = await tenant(ctx, async (tx) => {
+    const known = (await tx.query("SELECT object_id FROM external_refs WHERE entity_id = $1 AND source = 'milepost' AND object_type = 'contact' AND external_ref = $2", [p.entity, c.id])).rows[0];
+    if (known) throw new HttpError(409, "that contact is already a customer here");
+    const person = [c.first_name, c.last_name].filter(Boolean).join(" ").trim() || c.email || "MilePost contact";
+    let name = person;
+    for (let i = 2; (await tx.query("SELECT 1 FROM contacts WHERE entity_id = $1 AND lower(name) = lower($2)", [p.entity, name])).rows[0]; i++) {
+      name = i === 2 && c.email ? `${person} (${c.email})` : `${person} (${i})`;
+    }
+    const made = await createContact(tx, { orgId: ctx.orgId, entityId: p.entity!, kind: "customer", name, email: c.email, phone: c.phone, actor: ctx.actor });
+    await tx.query(
+      "INSERT INTO external_refs (org_id, entity_id, source, object_type, object_id, external_ref) VALUES ($1, $2, 'milepost', 'contact', $3, $4)",
+      [ctx.orgId, p.entity, made.id, c.id],
+    );
+    return made;
+  });
+  return json(contact, 201);
+});
+
 // ------------------------------------------------- receivables and payables
 
 route("GET", "/api/orgs/:org/entities/:entity/contacts", async (_req, p, ctx) =>
@@ -550,6 +718,7 @@ function contactFields(b: Record<string, any>) {
   const optional = (v: unknown, field: string, max: number) => (typeof v === "string" && v.trim() ? str(v, field, max) : null);
   return {
     ...(b.email !== undefined ? { email: optional(b.email, "email", 200) } : {}),
+    ...(b.phone !== undefined ? { phone: optional(b.phone, "phone", 40) } : {}),
     ...(b.address !== undefined ? { address: cleanAddress(b.address) } : {}),
     ...(b.resalePermit !== undefined ? { resalePermit: optional(b.resalePermit, "seller's permit", 40) } : {}),
     ...(b.directPayPermit !== undefined ? { directPayPermit: optional(b.directPayPermit, "direct payment permit", 40) } : {}),
@@ -1524,7 +1693,7 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
 // --------------------------------------------------------------- dispatch
 
 /** Still allowed when unpaid books are read-only: paying, leaving, security (removing people), and taking the books away. */
-const ALWAYS_ALLOWED = /\/(billing(\/.*)?|leave|security|backup|backups\/[^/]+\/download|members\/[^/]+\/remove|invitations\/[^/]+\/revoke)$/;
+const ALWAYS_ALLOWED = /\/(billing(\/.*)?|leave|security|backup|backups\/[^/]+\/download|members\/[^/]+\/remove|invitations\/[^/]+\/revoke|integrations\/milepost\/key\/remove|integrations\/apps\/[^/]+\/revoke)$/;
 
 const ROLE_NAMES: Record<string, string> = { admin: "an admin", bookkeeper: "a bookkeeper", approver: "an approver", accountant: "an accountant", read_only: "a viewer" };
 
@@ -1809,6 +1978,9 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "");
   try {
+    // Connected apps: OAuth and the token-authenticated API. Neither uses the session cookie.
+    const app = (await handleOAuth(req, path, pool, opts)) ?? (await handlePublicApi(req, path, pool, opts));
+    if (app) return app;
     if (req.method !== "GET") {
       // Cookie-authenticated writes must come from this site.
       const origin = req.headers.get("origin");
@@ -1847,6 +2019,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
     if (err instanceof BillingError) return json({ error: err.message }, err.status);
     if (err instanceof GatewayError) return json({ error: err.message }, 502);
     if (err instanceof JurisdictionError) return json({ error: err.message, code: "JURISDICTION" }, 422);
+    if (err instanceof OAuthError) return json({ error: err.message, code: err.code }, err.status);
     console.error(err);
     return json({ error: "something went wrong on our side" }, 500);
   }
