@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%%TITLE%%</title>
+<meta name="description" content="%%DESC%%">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+--cream:#f5f1ea; --cream-deep:#ede5d6; --paper:#faf6ee;
+--ink:#1a1714; --ink-warm:#2f2820; --ink-muted:#7a7268; --ink-faint:#a59c8e;
+--rule:#d4cfc6; --rule-soft:#e3ddd0;
+--gold:#b07c10; --gold-bright:#d4a020; --gold-soft:rgba(176,124,16,0.10); --gold-edge:rgba(176,124,16,0.32);
+--ink-deep:#1c1916; --leak:#b5482f;
+--serif:'Fraunces','Georgia',serif;
+--sans:'Geist',system-ui,-apple-system,sans-serif;
+--mono:'JetBrains Mono','Courier New',monospace;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;background:var(--ink-deep)}
+body{
+background:var(--cream); color:var(--ink);
+font-family:var(--sans); font-size:16px; line-height:1.65;
+-webkit-font-smoothing:antialiased;
+}
+.shell{max-width:1180px;margin:0 auto;padding:0 26px}
+a{color:inherit}
+
+/* ============ HERO ============ */
+.hero{background:var(--ink-deep);color:#fff;padding:62px 0 54px;position:relative;overflow:hidden}
+.hero::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg,transparent,var(--gold-edge),transparent)}
+.eyebrow{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:0.22em;text-transform:uppercase;color:var(--gold-bright);margin-bottom:20px}
+.hero h1{font-family:var(--serif);font-weight:400;font-size:clamp(34px,5.4vw,56px);line-height:1.08;letter-spacing:-0.015em;color:#fff;max-width:17ch}
+.hero h1 em{font-style:italic;color:var(--gold-bright)}
+.lede{margin-top:22px;max-width:58ch;font-size:17.5px;line-height:1.62;color:rgba(255,255,255,0.66)}
+.micro{margin-top:26px;font-size:12.5px;color:rgba(255,255,255,0.40);display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.micro .dot{width:4px;height:4px;border-radius:50%;background:var(--gold)}
+
+/* ============ SECTIONS ============ */
+.sec{padding:66px 0}
+.sec.alt{background:var(--paper);border-top:1px solid var(--rule-soft);border-bottom:1px solid var(--rule-soft)}
+.sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:28px}
+.kicker{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--gold);letter-spacing:0.1em;flex-shrink:0}
+.sec-head h2{font-family:var(--serif);font-weight:400;font-size:clamp(25px,3.4vw,36px);line-height:1.16;letter-spacing:-0.01em}
+.sec-intro{max-width:64ch;color:var(--ink-muted);font-size:16.5px;margin-bottom:36px}
+
+/* ============ TIER GRID ============ */
+.tiers{display:grid;grid-template-columns:1fr 1.12fr 1fr;gap:18px;align-items:stretch;padding-top:14px}
+.tiers.two{grid-template-columns:1fr 1fr}
+.tier{background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:30px 26px 26px;display:flex;flex-direction:column;position:relative}
+.tier .step{font-family:var(--mono);font-size:10.5px;letter-spacing:0.18em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:14px}
+.tier h3{font-family:var(--serif);font-weight:500;font-size:24px;line-height:1.2;margin-bottom:4px}
+.tier .sub{font-size:14px;color:var(--ink-muted);margin-bottom:20px}
+.tier .price-row{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;padding-bottom:18px;border-bottom:1px solid var(--rule-soft);margin-bottom:20px}
+.tier .amt{font-family:var(--serif);font-size:38px;font-weight:500;line-height:1;color:var(--ink)}
+.tier .unit{font-family:var(--mono);font-size:11.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-faint)}
+.tier ul{list-style:none}
+.tier li{font-size:14.6px;line-height:1.55;color:var(--ink-warm);padding-left:19px;position:relative;margin-bottom:11px}
+.tier li::before{content:'';position:absolute;left:0;top:8px;width:5px;height:5px;background:var(--gold);border-radius:50%}
+.tier .terms{margin-top:auto;padding-top:16px;border-top:1px solid var(--rule-soft);font-size:13px;color:var(--ink-faint);line-height:1.55}
+.tier .go{margin-top:22px;display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;font-size:14.5px;font-weight:600;text-decoration:none;border-radius:3px;border:1px solid var(--rule);color:var(--ink);background:transparent;transition:border-color .15s,background .15s,color .15s}
+.tier .go:hover{border-color:var(--gold-edge);background:var(--gold-soft)}
+.tier .go.solid{background:var(--gold);border-color:var(--gold);color:#fff}
+.tier .go.solid:hover{background:var(--gold-bright);border-color:var(--gold-bright);color:#fff}
+.tier.feature{background:var(--ink-deep);border-color:var(--ink-deep);box-shadow:0 10px 34px rgba(26,23,20,0.16)}
+.tier.feature .step{color:var(--gold-bright)}
+.tier.feature h3{color:#fff}
+.tier.feature .sub{color:rgba(255,255,255,0.55)}
+.tier.feature .amt{color:#fff}
+.tier.feature .unit{color:rgba(255,255,255,0.45)}
+.tier.feature .price-row{border-bottom-color:rgba(255,255,255,0.12)}
+.tier.feature li{color:rgba(255,255,255,0.80)}
+.tier.feature li::before{background:var(--gold-bright)}
+.tier.feature .terms{color:rgba(255,255,255,0.48);border-top-color:rgba(255,255,255,0.10)}
+.tier .flag{position:absolute;top:-10px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:9.5px;letter-spacing:0.16em;text-transform:uppercase;background:var(--gold);color:#fff;padding:4px 12px;border-radius:2px;white-space:nowrap}
+
+.credit-note{margin-top:30px;padding:20px 24px;background:var(--gold-soft);border:1px solid var(--gold-edge);border-radius:5px;font-size:15.2px;line-height:1.6;color:var(--ink-warm);max-width:76ch}
+.credit-note b{font-weight:600;color:var(--ink)}
+
+/* ============ DETAIL COLUMNS ============ */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:44px}
+.col h4{font-family:var(--serif);font-size:20px;font-weight:500;margin-bottom:12px}
+.col p{font-size:15.4px;color:var(--ink-muted);line-height:1.62;margin-bottom:14px}
+.col ul{list-style:none;margin-top:6px}
+.col li{font-size:14.8px;line-height:1.55;color:var(--ink-warm);padding-left:19px;position:relative;margin-bottom:10px}
+.col li::before{content:'';position:absolute;left:0;top:8px;width:5px;height:5px;background:var(--gold);border-radius:50%}
+
+/* ============ TERMS STRIP ============ */
+.terms-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule-soft);border:1px solid var(--rule-soft)}
+.term-cell{background:var(--paper);padding:26px 24px}
+.sec:not(.alt) .term-cell{background:var(--cream)}
+.term-cell .tnum{font-family:var(--mono);font-size:11px;color:var(--gold);letter-spacing:0.14em;text-transform:uppercase;margin-bottom:10px}
+.term-cell b{display:block;font-size:16px;font-weight:600;margin-bottom:7px}
+.term-cell p{font-size:14.3px;color:var(--ink-muted);line-height:1.58}
+
+/* ============ TABLE ============ */
+.tb-table{width:100%;border-collapse:collapse;background:var(--paper);border:1px solid var(--rule-soft);font-size:14.6px}
+.tb-table th{font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);text-align:left;padding:14px 18px;border-bottom:1px solid var(--rule)}
+.tb-table td{padding:14px 18px;border-bottom:1px solid var(--rule-soft);color:var(--ink-warm);vertical-align:top}
+.tb-table tr:last-child td{border-bottom:0}
+.tb-table td b{color:var(--ink);font-weight:600}
+.tb-scroll{overflow-x:auto}
+
+/* ============ FAQ ============ */
+.faq{border-top:1px solid var(--rule-soft)}
+.faq-item{border-bottom:1px solid var(--rule-soft);padding:24px 0}
+.faq-item h4{font-family:var(--serif);font-size:19.5px;font-weight:500;margin-bottom:9px;line-height:1.3}
+.faq-item p{font-size:15.4px;color:var(--ink-muted);line-height:1.64;max-width:78ch}
+.faq-item p + p{margin-top:10px}
+.faq-item a{color:var(--gold);font-weight:600}
+
+/* ============ CTA ============ */
+.cta{background:var(--ink-deep);color:#fff;padding:64px 0}
+.cta h2{font-family:var(--serif);font-weight:400;font-size:clamp(26px,3.6vw,40px);color:#fff;line-height:1.14;max-width:22ch}
+.cta p{margin-top:18px;max-width:56ch;color:rgba(255,255,255,0.6);font-size:16.5px}
+.cta .why{margin-top:14px;max-width:56ch;color:rgba(255,255,255,0.42);font-size:14px}
+.hero-cta-row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:30px}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:14px 24px;font-size:14.5px;font-weight:600;letter-spacing:0.01em;text-decoration:none;border-radius:3px;transition:background .15s,color .15s,border-color .15s}
+.btn-gold{background:var(--gold);color:#fff;border:1px solid var(--gold)}
+.btn-gold:hover{background:var(--gold-bright);border-color:var(--gold-bright)}
+.btn-ghost{background:transparent;color:rgba(255,255,255,0.82);border:1px solid rgba(255,255,255,0.24)}
+.btn-ghost:hover{border-color:var(--gold-edge);color:#fff}
+.btn-line{background:transparent;color:var(--ink);border:1px solid var(--rule)}
+.btn-line:hover{border-color:var(--gold-edge);background:var(--gold-soft)}
+.arrow{font-family:var(--mono);font-size:15px}
+.fine{margin-top:18px;font-size:13px;color:rgba(255,255,255,0.42);max-width:64ch}
+.fine a{color:rgba(255,255,255,0.7)}
+
+/* ============ FOOTER ============ */
+.pa-footer{background:var(--ink-deep);color:rgba(255,255,255,0.55);padding:48px 0 30px;border-top:1px solid rgba(255,255,255,0.08)}
+.f-cols{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:34px}
+.f-col-title{font-family:var(--mono);font-size:10.5px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.38);margin-bottom:14px}
+.f-links{list-style:none}
+.f-links li{margin-bottom:9px}
+.f-links a{font-size:14px;color:rgba(255,255,255,0.62);text-decoration:none}
+.f-links a:hover{color:var(--gold-bright)}
+.f-brand{font-family:var(--serif);font-size:19px;color:#fff;margin-bottom:10px}
+.f-note{font-size:13.5px;color:rgba(255,255,255,0.45);max-width:34ch;line-height:1.6}
+.f-bottom{margin-top:38px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.08);font-size:12.5px;color:rgba(255,255,255,0.34)}
+
+/* ============ RESPONSIVE ============ */
+@media(max-width:1000px){
+.tiers,.tiers.two{grid-template-columns:1fr;gap:20px}
+.two-col{grid-template-columns:1fr;gap:32px}
+.terms-grid{grid-template-columns:1fr}
+.f-cols{grid-template-columns:1fr 1fr}
+}
+@media(max-width:620px){
+.shell{padding:0 18px}
+.hero{padding:48px 0 44px}
+.sec{padding:48px 0}
+.sec-head{flex-direction:column;gap:8px}
+.tier .amt{font-size:33px}
+.f-cols{grid-template-columns:1fr}
+.tb-table thead{display:none}
+.tb-table tr{display:block;border-bottom:1px solid var(--rule-soft);padding:10px 0}
+.tb-table tr:last-child{border-bottom:0}
+.tb-table td{display:block;border:0;padding:3px 18px}
+.tb-table td:first-child{font-weight:600;color:var(--ink)}
+}
+%%PAGE_CSS%%
+</style>
+
+%%HEADER_CSS%%
+%%ANALYTICS%%
+</head>
+<body>
+
+%%HEADER%%
+
+%%BODY%%
+
+<footer class="pa-footer">
+<div class="shell">
+<div class="f-cols">
+<div>
+<p class="f-brand">Pomeroy Agency</p>
+<p class="f-note">A full revenue operations and marketing agency, and the makers of TrailBook bookkeeping software. A division of Harmony in the Wild.</p>
+</div>
+<div>
+<p class="f-col-title">TrailBook</p>
+<ul class="f-links">
+<li><a href="https://www.pomeroyagency.com/trailbook" target="_top">What it does</a></li>
+<li><a href="https://www.pomeroyagency.com/trailbook-pricing" target="_top">Pricing &middot; from $15/mo</a></li>
+<li><a href="https://www.pomeroyagency.com/trailbook-for-accountants" target="_top">For accountants &amp; HR firms</a></li>
+<li><a href="%%APP%%/#/signup" target="_top" data-pa-event="trailbook_trial_click" data-pa-label="footer">Start a free trial</a></li>
+<li><a href="%%APP%%/#/login" target="_top">Sign in</a></li>
+</ul>
+</div>
+<div>
+<p class="f-col-title">Start here</p>
+<ul class="f-links">
+<li><a href="https://www.pomeroyagency.com/profit-leak-scan" target="_top">Profit Leak Scan &middot; Free</a></li>
+<li><a href="https://www.pomeroyagency.com/lead-machine-blueprint" target="_top">Lead Machine Blueprint &middot; Free</a></li>
+<li><a href="https://www.pomeroyagency.com/two-week-fix" target="_top">Two-Week Fix &middot; $3,500</a></li>
+<li><a href="https://www.pomeroyagency.com/pricing" target="_top">All agency prices</a></li>
+</ul>
+</div>
+<div>
+<p class="f-col-title">Services</p>
+<ul class="f-links">
+<li><a href="https://www.pomeroyagency.com/online-strategy" target="_top">Online Strategy</a></li>
+<li><a href="https://www.pomeroyagency.com/brand-positioning" target="_top">Brand Positioning</a></li>
+<li><a href="https://www.pomeroyagency.com/website-seo" target="_top">Website &amp; SEO</a></li>
+<li><a href="https://www.pomeroyagency.com/social-strategy" target="_top">Social Strategy</a></li>
+<li><a href="https://www.pomeroyagency.com/paid-advertising" target="_top">Paid Advertising</a></li>
+<li><a href="https://www.pomeroyagency.com/systems-automation" target="_top">Systems &amp; Automation</a></li>
+<li><a href="https://www.pomeroyagency.com/creative-content" target="_top">Creative &amp; Content</a></li>
+</ul>
+</div>
+</div>
+<p class="f-bottom">&copy; 2026 Harmony in the Wild, LLC, doing business as Pomeroy Agency. TrailBook prices in US dollars, before sales tax. <a href="%%APP%%/terms.html" target="_top" style="color:inherit">TrailBook Terms</a> &middot; <a href="%%APP%%/privacy.html" target="_top" style="color:inherit">Privacy</a></p>
+</div>
+</footer>
+
+%%TAIL%%
+</body>
+</html>
