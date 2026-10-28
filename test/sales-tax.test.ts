@@ -4,7 +4,8 @@ import { handleApi } from "../src/app/api.js";
 import { cached, parseCdtfaRate } from "../src/app/cdtfa.js";
 import { LedgerError } from "../src/core/errors.js";
 import { createContact, voidDocument } from "../src/core/documents.js";
-import { NO_PERMIT_WARNING, createItem, decideSalesTax, explainTax, issueInvoice, salesTaxReport, setBusinessAddress, updateItem, type RateLookup } from "../src/core/sales-tax.js";
+import { setSalesTaxSettings } from "../src/core/sales-tax-return.js";
+import { NO_PERMIT_WARNING, createItem, permitNotStartedWarning, decideSalesTax, explainTax, issueInvoice, salesTaxReport, setBusinessAddress, updateItem, type RateLookup } from "../src/core/sales-tax.js";
 import { accountant, bookkeeper, owner, pool, setupCaliforniaBusiness } from "./helpers.js";
 
 async function expectLedgerError(p: Promise<unknown>, code: string) {
@@ -156,6 +157,10 @@ describe("software and SaaS from 2027 (SB 122)", () => {
     const sf = await b.contact("Growing Client", { address: SF });
     // Charging tax with no seller's permit on file brings a reminder too.
     expect((await decide(sf.id, "2027-02-01", ["prewritten_software"], [{ amountMinor: 100_000_00n }])).warnings).toEqual([NO_PERMIT_WARNING]);
+    // With a permit that hasn't taken effect yet, the reminder names its start date.
+    await b.t((tx) => setSalesTaxSettings(tx, { ...b.base, sellerPermit: "208-440288", startDate: "2027-03-01", actor: owner }));
+    expect((await decide(sf.id, "2027-02-01", ["prewritten_software"], [{ amountMinor: 100_000_00n }])).warnings).toEqual([permitNotStartedWarning("2027-03-01")]);
+    await b.t((tx) => setSalesTaxSettings(tx, { ...b.base, sellerPermit: "", startDate: null, actor: owner }));
     const warned = await decide(sf.id, "2027-02-01", ["prewritten_software"], [{ amountMinor: 4_500_000_00n }]);
     expect(warned).toMatchObject({ source: "lookup", taxable: [true] });
     expect(warned.warnings[0]).toMatch(/\$4,500,000 for software in 2027.*direct payment permit/);
@@ -322,8 +327,8 @@ describe("sales tax API", () => {
     // Software from 2027: access dates on the line, and the owner records a customer's certificate.
     const saas = await call(`${base}/contacts`, { cookie, body: { kind: "customer", name: "SaaS Buyer", address: { line1: "1 Market St", city: "San Francisco", zip: "94105" } } });
     const line = { taxCategory: "prewritten_software", account: "4000", quantity: "1", unitPrice: "500.00", servicePeriodStart: "2027-01-01", servicePeriodEnd: "2027-12-31" };
-    expect((await call(`${base}/sales-tax-settings`, { cookie, body: { sellerPermit: "sr ab 100-200300", filingFrequency: "quarterly" } })).data)
-      .toEqual({ sellerPermit: "SR AB 100-200300", filingFrequency: "quarterly" });
+    expect((await call(`${base}/sales-tax-settings`, { cookie, body: { sellerPermit: "sr ab 100-200300", cdtfaAccount: "138-237232", filingFrequency: "quarterly", startDate: "2026-12-01" } })).data)
+      .toEqual({ sellerPermit: "SR AB 100-200300", cdtfaAccount: "138-237232", filingFrequency: "quarterly", startDate: "2026-12-01" });
     const p1 = await call(`${base}/invoices/tax-preview`, { cookie, body: { contactId: saas.data.id, issueDate: "2026-12-20", lines: [line] } });
     expect(p1.data).toMatchObject({ source: "lookup", taxable: [true], rules: "us-ca-sales-tax-2027@2027.1.0", warnings: [] });
     const withCert = await call(`${base}/contacts/${saas.data.id}`, { cookie, body: { mpu: { caPercent: "25", certificateDate: "2026-12-01" } } });

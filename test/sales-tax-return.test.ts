@@ -39,6 +39,14 @@ describe("sales tax return periods", () => {
     expect(returnPeriods("quarterly_prepay", 2026, "2027-01-05")).toHaveLength(4);
     expect(returnPeriods("yearly", 2027, "2026-12-01")).toEqual([]);
   });
+
+  it("start with the period the seller's permit takes effect in", () => {
+    // A permit effective December 1, 2026 files its first quarterly return for Q4 2026, due February 1, 2027.
+    expect(returnPeriods("quarterly", 2026, "2027-01-05", "2026-12-01").map((p) => [p.key, p.dueDate])).toEqual([["2026-Q4", "2027-02-01"]]);
+    expect(returnPeriods("monthly", 2026, "2027-01-05", "2026-12-01").map((p) => p.key)).toEqual(["2026-M12"]);
+    expect(returnPeriods("yearly", 2026, "2027-01-05", "2026-12-01").map((p) => p.key)).toEqual(["2026"]);
+    expect(returnPeriods("quarterly", 2027, "2027-05-10", "2026-12-01").map((p) => p.key)).toEqual(["2027-Q2", "2027-Q1"]);
+  });
 });
 
 describe("the business's own sales tax", () => {
@@ -55,14 +63,19 @@ describe("the business's own sales tax", () => {
     await expect(b.t((tx) => setSalesTaxSettings(tx, { ...b.base, filingFrequency: "weekly", actor: owner }))).rejects.toThrow(/how often/);
     await expect(b.t((tx) => setSalesTaxSettings(tx, { ...b.base, sellerPermit: "12", actor: owner }))).rejects.toThrow(/seller's permit/);
     expect(await b.t((tx) => setSalesTaxSettings(tx, { ...b.base, sellerPermit: " sr  ab 100-200300 ", filingFrequency: "quarterly", actor: accountant })))
-      .toEqual({ sellerPermit: "SR AB 100-200300", filingFrequency: "quarterly" });
+      .toEqual({ sellerPermit: "SR AB 100-200300", cdtfaAccount: null, filingFrequency: "quarterly", startDate: null });
     // Changing one leaves the other alone; an empty value clears it.
     await b.t((tx) => setSalesTaxSettings(tx, { ...b.base, filingFrequency: "monthly", actor: owner }));
-    expect(await b.t((tx) => salesTaxSettings(tx, b.entity.id))).toEqual({ sellerPermit: "SR AB 100-200300", filingFrequency: "monthly" });
+    expect(await b.t((tx) => salesTaxSettings(tx, b.entity.id))).toEqual({ sellerPermit: "SR AB 100-200300", cdtfaAccount: null, filingFrequency: "monthly", startDate: null });
     await b.t((tx) => setSalesTaxSettings(tx, { ...b.base, sellerPermit: "", actor: owner }));
     expect((await b.t((tx) => salesTaxSettings(tx, b.entity.id))).sellerPermit).toBeNull();
+    // The CDTFA account number and the permit's start date, from the registration approval.
+    await expect(b.t((tx) => setSalesTaxSettings(tx, { ...b.base, cdtfaAccount: "AB-12", actor: owner }))).rejects.toThrow(/account number/);
+    await expect(b.t((tx) => setSalesTaxSettings(tx, { ...b.base, startDate: "2026-02-30", actor: owner }))).rejects.toThrow(/takes effect/);
+    expect(await b.t((tx) => setSalesTaxSettings(tx, { ...b.base, sellerPermit: "208-440288", cdtfaAccount: " 138-237232 ", startDate: "2026-12-01", actor: owner })))
+      .toEqual({ sellerPermit: "208-440288", cdtfaAccount: "138-237232", filingFrequency: "monthly", startDate: "2026-12-01" });
     const audit = await b.t((tx) => tx.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'entity.sales_tax_settings_set' AND entity_id = $1", [b.entity.id]));
-    expect(audit.rows[0].n).toBe(3);
+    expect(audit.rows[0].n).toBe(4);
   });
 
   it("prepares the return: deductions, state and district tax, prepayments and what to check", async () => {
@@ -110,6 +123,17 @@ describe("the business's own sales tax", () => {
     const after = await b.t((tx) => prepareSalesTaxReturn(tx, b.entity.id, "2026-Q4P"));
     expect(after.seller).toMatchObject({ sellerPermit: "SR AB 100-200300", filingFrequency: "quarterly_prepay" });
     expect(after.warnings.filter((w) => /permit number|how often/.test(w))).toEqual([]);
+    expect(after.warnings.some((w) => /CDTFA account number/.test(w))).toBe(true);
+    expect(after.warnings.some((w) => /date your seller's permit takes effect/.test(w))).toBe(true);
+
+    // A permit that started mid-quarter: this is the first return. One that starts later: nothing is due.
+    await b.t((tx) => setSalesTaxSettings(tx, { ...b.base, cdtfaAccount: "138-237232", startDate: "2026-12-01", actor: owner }));
+    const first = await b.t((tx) => prepareSalesTaxReturn(tx, b.entity.id, "2026-Q4P"));
+    expect(first.seller).toMatchObject({ cdtfaAccount: "138-237232", startDate: "2026-12-01" });
+    expect(first.warnings.some((w) => /first return.*covers 2026-12-01 to 2026-12-31/.test(w))).toBe(true);
+    expect(first.warnings.some((w) => /CDTFA account number|takes effect/.test(w) && !/first return/.test(w))).toBe(false);
+    const before = await b.t((tx) => prepareSalesTaxReturn(tx, b.entity.id, "2026-Q3"));
+    expect(before.warnings.some((w) => /after this period ends, so no return is due/.test(w))).toBe(true);
   });
 
   it("flags tax charged beyond what the return computes, and rates set by hand", async () => {
@@ -214,5 +238,30 @@ describe("sales tax reminders", () => {
     await sendSalesTaxReminders(pool, mailer, "2026-11-20");
     expect(mine()).toHaveLength(2);
     expect(mine()[1]!.text).toMatch(/October prepayment for Q4 2026: due 2026-11-24/);
+    expect(mine()[1]!.text).toMatch(/A return is due even if you had no sales/);
+  });
+
+  it("start with the period the seller's permit takes effect in", async () => {
+    const { sendSalesTaxReminders } = await import("../src/core/sales-tax-reminders.js");
+    const { org, entity } = await setupCaliforniaBusiness("New Permit Studio");
+    await withSystem(pool, async (tx) => {
+      const u = (await tx.query("INSERT INTO users (email, name, password_hash) VALUES ($1, 'Owner', 'x') RETURNING id", [`np-owner-${Date.now()}@example.com`])).rows[0].id;
+      await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [u, org.id]);
+    });
+    await withTenant(pool, org.id, (tx) => setSalesTaxSettings(tx, {
+      orgId: org.id, entityId: entity.id, filingFrequency: "quarterly_prepay", startDate: "2026-12-01", actor: owner,
+    }));
+    const sent: { subject: string; text: string }[] = [];
+    const mailer = async (m: { to: string; subject: string; text: string }) => { sent.push(m); };
+    const mine = () => sent.filter((m) => m.subject.includes("New Permit Studio"));
+    // Q3's return and the October and November prepayments came before the permit, so nothing is sent for them.
+    await sendSalesTaxReminders(pool, mailer, "2026-10-28");
+    await sendSalesTaxReminders(pool, mailer, "2026-11-20");
+    await sendSalesTaxReminders(pool, mailer, "2026-12-20");
+    expect(mine()).toEqual([]);
+    // The first return, for Q4 2026, is due February 1, 2027.
+    await sendSalesTaxReminders(pool, mailer, "2027-01-28");
+    expect(mine()).toHaveLength(1);
+    expect(mine()[0]!.text).toMatch(/Return for Q4 2026: due 2027-02-01/);
   });
 });

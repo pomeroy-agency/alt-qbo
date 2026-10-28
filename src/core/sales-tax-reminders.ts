@@ -34,14 +34,16 @@ export async function sendSalesTaxReminders(pool: pg.Pool, mailer: Mailer | unde
   const year = Number(today.slice(0, 4));
   const horizon = addDays(today, REMIND_DAYS);
   const entities = await withSystem(pool, async (tx) => (await tx.query(
-    `SELECT e.id, e.org_id, e.legal_name, e.sales_tax_filing FROM entities e JOIN organizations o ON o.id = e.org_id
+    `SELECT e.id, e.org_id, e.legal_name, e.sales_tax_filing, e.sales_tax_start::text FROM entities e JOIN organizations o ON o.id = e.org_id
       WHERE e.sales_tax_filing IS NOT NULL AND o.name <> $1`,
     [EXAMPLE_ORG_NAME],
   )).rows);
 
   for (const ent of entities) {
     const due = await withTenant(pool, ent.org_id, async (tx) => {
-      const periods = [...returnPeriods(ent.sales_tax_filing as FilingFrequency, year - 1, today), ...returnPeriods(ent.sales_tax_filing as FilingFrequency, year, today)];
+      // Nothing is due for a period that ended before the seller's permit took effect.
+      const start: string | null = ent.sales_tax_start;
+      const periods = [year - 1, year].flatMap((y) => returnPeriods(ent.sales_tax_filing as FilingFrequency, y, today, start));
       const sent = new Set((await tx.query(
         "SELECT deposit_key FROM tax_deposit_reminders WHERE entity_id = $1 AND deposit_key LIKE 'sales-tax:%'", [ent.id],
       )).rows.map((r) => r.deposit_key as string));
@@ -49,7 +51,7 @@ export async function sendSalesTaxReminders(pool: pg.Pool, mailer: Mailer | unde
       for (const p of periods) {
         for (const [i, pre] of (p.prepayments ?? []).entries()) {
           const key = `sales-tax:${p.key}:prepayment-${i + 1}`;
-          if (pre.dueDate >= today && pre.dueDate <= horizon && today > pre.to && !sent.has(key)) {
+          if (pre.dueDate >= today && pre.dueDate <= horizon && today > pre.to && (!start || pre.to >= start) && !sent.has(key)) {
             out.push({ key, line: `- ${pre.month} prepayment for ${p.label}: due ${pre.dueDate}.` });
           }
         }
@@ -74,7 +76,7 @@ export async function sendSalesTaxReminders(pool: pg.Pool, mailer: Mailer | unde
       "",
       ...due.map((d) => d.line),
       "",
-      "Open the period on the Sales tax page for the worksheet, then file and pay in CDTFA online services. Payments made on the due date can miss the cutoff, so pay a day early.",
+      "Open the period on the Sales tax page for the worksheet, then file and pay in CDTFA online services. A return is due even if you had no sales. A payment made on the due date must be finished before midnight Pacific time (3 p.m. if your account pays by EFT), so pay a day early.",
       ...(appUrl ? ["", `${appUrl.replace(/\/$/, "")}/#/e/${ent.id}/sales-tax`] : []),
     ].join("\n");
     try {
