@@ -169,6 +169,23 @@ describe("one-person payroll", () => {
   });
 });
 
+describe("sick leave policy", () => {
+  it("front-loads 40 hours once a year, on the first approved run", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { sickLeavePolicy: "front_load" } })).status).toBe(200);
+    expect((await call(`${base}/employees`, { cookie: s.cookie })).data.sickLeavePolicy).toBe("front_load");
+    const emp = await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, payType: "hourly", payRate: "30", overtimeExempt: false } });
+    const line = { employeeId: emp.data.id, regularHours: "72", sickHoursUsed: "8" };
+    const prepared = await call(`${base}/pay-runs`, { cookie: s.cookie, body: { ...runFor([]), lines: [line] } });
+    expect(prepared.data.run.paychecks[0].sickLeave).toEqual({ accruedHours: "0", usedHours: "8", grantedHours: "40", balanceHours: "32" });
+    expect((await call(`${base}/pay-runs/${prepared.data.id}/approve`, { cookie: s.cookie, body: {} })).status).toBe(201);
+    const next = await call(`${base}/pay-runs/preview`, { cookie: s.cookie, body: { ...runFor([], "2026-07-03"), periodStart: "2026-06-15", periodEnd: "2026-06-28", lines: [line] } });
+    expect(next.data.paychecks[0].sickLeave).toEqual({ accruedHours: "0", usedHours: "8", balanceHours: "24" });
+  });
+});
+
 describe("invoices and bills API", () => {
   it("adds a customer, issues an invoice, takes a payment, and shows aging", async () => {
     const s = await signup();

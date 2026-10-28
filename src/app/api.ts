@@ -33,7 +33,7 @@ import { addConnection, createEntity, createOrganization, getEntity, type Connec
 import { JurisdictionError, allRulePacks, resolveRules } from "../rules/index.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
-import { createEmployee, listEmployees, setUiRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
+import { createEmployee, listEmployees, setSickLeavePolicy, setUiRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
 import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
 import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
@@ -1108,10 +1108,11 @@ const toJson = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "bigin
 route("GET", "/api/orgs/:org/entities/:entity/employees", async (_req, p, ctx) =>
   tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    const uiRate = (await tx.query("SELECT ca_ui_rate::text FROM entities WHERE id = $1", [p.entity])).rows[0]?.ca_ui_rate;
+    const ent = (await tx.query("SELECT ca_ui_rate::text, sick_leave_policy FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const uiRate = ent?.ca_ui_rate;
     const employees = await listEmployees(tx, p.entity!);
     return json({
-      employees: withLocalMinimums(employees, pacificToday()), caUiRate: uiRate ? String(Number(uiRate)) : null,
+      employees: withLocalMinimums(employees, pacificToday()), caUiRate: uiRate ? String(Number(uiRate)) : null, sickLeavePolicy: ent?.sick_leave_policy ?? "accrual",
       directDeposit: await getDirectDepositSettings(tx, p.entity!), workCities: LOCAL_MINIMUM_WAGE_PLACES,
     });
   }),
@@ -1214,6 +1215,10 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
         orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.updated", objectType: "entity", objectId: p.entity!,
         before: { caEmployerAccount: before }, after: { caEmployerAccount: account || null }, context: { role: ctx.role },
       });
+    }
+    if (b.sickLeavePolicy !== undefined) {
+      requireRole(ctx, ["owner", "admin", "accountant"]);
+      await setSickLeavePolicy(tx, { orgId: ctx.orgId, entityId: p.entity!, policy: String(b.sickLeavePolicy), actor: ctx.actor });
     }
     if (b.federalDepositSchedule !== undefined) {
       await setFederalDepositSchedule(tx, { orgId: ctx.orgId, entityId: p.entity!, schedule: String(b.federalDepositSchedule), actor: ctx.actor });
@@ -1375,6 +1380,8 @@ function payRunRequest(b: Record<string, any>): PayRunRequest {
         bonus: amount(l.bonus, `${n} bonus`),
         commission: amount(l.commission, `${n} commission`),
         reimbursement: amount(l.reimbursement, `${n} reimbursement`),
+        bonusDiscretionary: l.bonusDiscretionary === true,
+        sickHoursUsed: amount(l.sickHoursUsed, `${n} sick hours`),
       };
     }),
   };
@@ -1508,7 +1515,7 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
       preparedBy: { id: pr.prepared_by, role: "bookkeeper" }, approvedBy: ctx.actor, soleApprover: sole,
     });
     await tx.query("UPDATE pay_runs SET status = 'posted', approved_by = $2, entry_id = $3, result = $4 WHERE id = $1", [p.run, ctx.actor.id, posted.id, toJson(run)]);
-    await carrySickLeave(tx, p.entity!, run.paychecks);
+    await carrySickLeave(tx, p.entity!, run.paychecks, run.payDate);
     return posted;
   });
   return json(entry, 201);

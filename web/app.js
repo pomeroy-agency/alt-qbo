@@ -1530,7 +1530,7 @@ function employeeForm(e = null) {
       <label>401(k) ($)<input name="k401" value="${v(ded("traditional401k"))}" inputmode="decimal" placeholder="0"></label>
       <label>Health premium, pre-tax ($)<input name="section125" value="${v(ded("section125"))}" inputmode="decimal" placeholder="0"></label>
       <label>After-tax deduction ($)<input name="postTax" value="${v(ded("post_tax"))}" inputmode="decimal" placeholder="0"></label>
-      <label data-only="hourly" ${hourly ? "" : "hidden"}>Sick leave balance (hours)<input name="sickBalanceHours" value="${v(e?.sickBalanceHours ?? "0")}" inputmode="decimal"></label>
+      <label>Sick leave balance (hours)<input name="sickBalanceHours" value="${v(e?.sickBalanceHours ?? "0")}" inputmode="decimal"></label>
     </div>
     <details ${o.wages ? "open" : ""}><summary>Paid earlier this year, before TrailBook</summary>
       <p class="hash">If you switched from another payroll service mid-year, enter this year's totals so far. They keep Social Security and unemployment taxes from going over their yearly limits, and they go on the W-2.</p>
@@ -1561,7 +1561,7 @@ function employeeBody(f) {
     deductions: [{ kind: "traditional401k", amount: d.k401 }, { kind: "section125", amount: d.section125 }, { kind: "post_tax", amount: d.postTax }],
     openingYtd: d.ytdWages ? { year: d.ytdYear, wages: d.ytdWages, federalIncomeTax: d.ytdFit, socialSecurityTax: d.ytdSs, medicareTax: d.ytdMed, caIncomeTax: d.ytdPit, caSdi: d.ytdSdi } : null,
   };
-  if (d.payType === "hourly") body.sickBalanceHours = d.sickBalanceHours || "0";
+  body.sickBalanceHours = d.sickBalanceHours || "0";
   if (d.terminationDate !== undefined) body.terminationDate = d.terminationDate;
   if (d.ssn.trim()) body.ssn = d.ssn.trim();
   const routing = d.ddRouting.replace(/\s/g, "");
@@ -1585,9 +1585,11 @@ function runLine(e) {
     <td style="white-space:nowrap"><label class="check" style="flex-direction:row;align-items:center;justify-content:flex-start;gap:6px"><input type="checkbox" data-line="include" checked> ${esc(e.name)}</label><div class="hash">${payLabel(e)}</div></td>
     ${e.payType === "hourly" ? `<td>${hours("regularHours", e.usualHours ?? "")}</td><td>${hours("overtimeHours")}</td><td>${hours("doubleTimeHours")}</td>
       <td><button class="link" data-action="daily-toggle" data-id="${e.id}">Daily hours</button></td>` : `<td colspan="4" class="muted">Salary: ${usd(Math.round(Number(e.payRate) * 100 / { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 }[e.payFrequency]))} this period</td>`}
-    <td>${hours("bonus")}</td><td>${hours("reimbursement")}</td>
+    <td>${hours("sickHoursUsed")}</td>
+    <td>${hours("bonus")}<label class="check hash" title="Given at your sole discretion, not promised or tied to hours, sales or performance; it adds no overtime"><input type="checkbox" data-line="bonusDiscretionary"> discretionary</label></td>
+    <td>${hours("commission")}</td><td>${hours("reimbursement")}</td>
   </tr>
-  ${e.payType === "hourly" ? `<tr hidden data-daily="${e.id}"><td colspan="7">
+  ${e.payType === "hourly" ? `<tr hidden data-daily="${e.id}"><td colspan="9">
     <p class="hash">Hours each day, two workweeks. California overtime is worked out from these: over 8 in a day, over 40 in a week, and the seventh day in a row.</p>
     <div class="row">${Array.from({ length: 14 }, (_, d) => `<label>${d < 7 ? "Wk 1" : "Wk 2"} day ${(d % 7) + 1}<input data-day="${d}" style="width:56px" inputmode="decimal"></label>`).join("")}</div>
   </td></tr>` : ""}`;
@@ -1597,7 +1599,7 @@ function payRunBody() {
   const lines = [...document.querySelectorAll("[data-emp-line]")].flatMap((row) => {
     if (!row.querySelector("[data-line=include]").checked) return [];
     const val = (k) => row.querySelector(`[data-line=${k}]`)?.value.trim() ?? "";
-    const line = { employeeId: row.dataset.empLine, regularHours: val("regularHours"), overtimeHours: val("overtimeHours"), doubleTimeHours: val("doubleTimeHours"), bonus: val("bonus"), reimbursement: val("reimbursement") };
+    const line = { employeeId: row.dataset.empLine, regularHours: val("regularHours"), overtimeHours: val("overtimeHours"), doubleTimeHours: val("doubleTimeHours"), bonus: val("bonus"), bonusDiscretionary: Boolean(row.querySelector("[data-line=bonusDiscretionary]")?.checked), commission: val("commission"), reimbursement: val("reimbursement"), sickHoursUsed: val("sickHoursUsed") };
     const daily = document.querySelector(`tr[data-daily="${row.dataset.empLine}"]`);
     if (daily && !daily.hidden) line.dailyHours = [...daily.querySelectorAll("[data-day]")].map((i) => i.value.trim() || "0");
     return [line];
@@ -1620,7 +1622,7 @@ function runTable(run) {
     ${issues.map(([k, m]) => `<div class="alert ${k}">${k === "bad" ? "Must fix before approval: " : ""}${esc(m)}</div>`).join("")}
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th class="num">Gross</th>${ee.map((c) => `<th class="num">${TAX_LABEL[c]}</th>`).join("")}<th class="num">Deductions</th><th class="num">Net pay</th></tr></thead>
-      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${e.code.toLowerCase().replace("_", " ")}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.sickLeave ? `<div class="hash">sick leave +${hrs(p.sickLeave.accruedHours)}h, balance ${hrs(p.sickLeave.balanceHours)}h</div>` : ""}</td>
+      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${e.code.toLowerCase().replace("_", " ")}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.sickLeave ? `<div class="hash">sick leave ${p.sickLeave.grantedHours ? `${hrs(p.sickLeave.grantedHours)}h granted for the year, ` : ""}+${hrs(p.sickLeave.accruedHours)}h earned, ${hrs(p.sickLeave.usedHours ?? 0)}h taken, balance ${hrs(p.sickLeave.balanceHours)}h</div>` : ""}</td>
         <td class="num">${usd(p.grossMinor)}</td>${ee.map((c) => `<td class="num">${amt(p, c)}</td>`).join("")}
         <td class="num">${usd(p.deductions.reduce((s, d) => s + BigInt(d.amountMinor), 0n))}</td><td class="num"><strong>${usd(p.netPayMinor)}</strong></td></tr>`).join("")}</tbody>
     </table></div>
@@ -1640,7 +1642,7 @@ function runTable(run) {
 
 async function payrollView(id) {
   await loadEntity(id);
-  const [{ employees, caUiRate, directDeposit, workCities }, { payRuns, soleApprover }, deposits] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs")), api(entPath("/tax-deposits"))]);
+  const [{ employees, caUiRate, directDeposit, workCities, sickLeavePolicy }, { payRuns, soleApprover }, deposits] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs")), api(entPath("/tax-deposits"))]);
   pay.employees = employees;
   pay.caUiRate = caUiRate;
   pay.workCities = workCities ?? [];
@@ -1670,6 +1672,14 @@ async function payrollView(id) {
         ${canWrite ? `<button type="submit" class="secondary">Save rate</button>` : ""}
         <span class="hash">It's on the rate notice the EDD mails each December. New employers pay 3.4%.</span>
       </form>
+      <form data-form="sick-policy" class="row" style="margin-top:12px">
+        <label>Paid sick leave<select name="sickLeavePolicy" ${["owner", "admin", "accountant"].includes(state.org.role) ? "" : "disabled"}>
+          <option value="accrual" ${sickLeavePolicy !== "front_load" ? "selected" : ""}>Accrual: 1 hour per 30 worked, up to 80</option>
+          <option value="front_load" ${sickLeavePolicy === "front_load" ? "selected" : ""}>Front-load: 40 hours at the start of each year</option>
+        </select></label>
+        ${["owner", "admin", "accountant"].includes(state.org.role) ? `<button type="submit" class="secondary">Save</button>` : ""}
+        <span class="hash">California requires at least 40 hours (5 days) a year. Salaried exempt employees accrue as if they work 40 hours a week. Front-loaded hours don't carry over.</span>
+      </form>
     </div>
     ${taxDepositsPanel(deposits, canWrite, canSetUpBank)}
     ${directDepositPanel(directDeposit, canSetUpBank)}
@@ -1681,7 +1691,7 @@ async function payrollView(id) {
         <label>Pay date<input type="date" name="payDate" value="${next.payDate}"></label>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Employee</th><th>Hours</th><th>Overtime</th><th>Double time</th><th></th><th>Bonus ($)</th><th>Reimbursement ($)</th></tr></thead>
+        <thead><tr><th>Employee</th><th>Hours</th><th>Overtime</th><th>Double time</th><th></th><th>Sick hours taken</th><th>Bonus ($)</th><th>Commission ($)</th><th>Reimbursement ($)</th></tr></thead>
         <tbody id="run-lines">${active.map(runLine).join("")}</tbody>
       </table></div>
       <div class="row" style="margin-top:12px">
@@ -1796,7 +1806,8 @@ function payEmployeesPanel(r) {
 function stubCard(r, c, s) {
   const y = s?.ytd ?? { grossMinor: 0, netPayMinor: 0, byTax: {}, byDeduction: {} };
   const eeTaxes = c.taxes.filter((t) => t.paidBy === "employee");
-  const hours = c.earnings.reduce((n, e) => n + Number(e.hours ?? 0), 0);
+  // Hours worked (Labor Code 226(a)(2)): sick leave taken is paid but isn't time worked.
+  const hours = c.earnings.filter((e) => e.code !== "SICK").reduce((n, e) => n + Number(e.hours ?? 0), 0);
   const addr = (a) => (a ? `${esc(a.line1)}<br>${esc(a.city)}, ${esc(a.state)} ${esc(a.zip)}` : "");
   return `<div class="panel stub">
     <div class="row" style="justify-content:space-between;align-items:flex-start">
@@ -1814,7 +1825,7 @@ function stubCard(r, c, s) {
       <tbody>${BigInt(c.reimbursementMinor) ? `<tr><td colspan="3">Expense reimbursement (not taxed)</td><td class="num">${usd(c.reimbursementMinor)}</td><td></td></tr>` : ""}
         <tr><td colspan="3"><strong>Net pay</strong></td><td class="num"><strong>${usd(c.netPayMinor)}</strong></td><td class="num">${usd(y.netPayMinor)}</td></tr></tbody>
     </table>
-    ${c.sickLeave ? `<p class="hash">Paid sick leave: ${hrs(c.sickLeave.accruedHours)} hours earned this period, ${hrs(c.sickLeave.balanceHours)} hours available.</p>` : ""}
+    ${c.sickLeave ? `<p class="hash">Paid sick leave: ${c.sickLeave.grantedHours ? `${hrs(c.sickLeave.grantedHours)} hours granted for the year, ` : ""}${hrs(c.sickLeave.accruedHours)} hours earned and ${hrs(c.sickLeave.usedHours ?? 0)} taken this period, ${hrs(c.sickLeave.balanceHours)} hours available.</p>` : ""}
   </div>`;
 }
 
@@ -2815,6 +2826,10 @@ document.addEventListener("submit", async (ev) => {
         balanced: f.querySelector("[name=balanced]").checked, accountType: d.accountType, ...(d.account.trim() ? { account: d.account.trim() } : {}),
       } });
       toast("Bank details saved");
+      await payrollView(state.entity.entity.id);
+    } else if (kind === "sick-policy") {
+      await api(entPath("/payroll-settings"), { body: { sickLeavePolicy: d.sickLeavePolicy } });
+      toast("Sick leave policy saved");
       await payrollView(state.entity.entity.id);
     } else if (kind === "ui-rate") {
       await api(entPath("/payroll-settings"), { body: { caUiRatePercent: d.caUiRatePercent } });

@@ -4,7 +4,7 @@ import { D } from "../core/money.js";
 import { resolveRules } from "../rules/index.js";
 import { localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { listEmployees, openingFor, salaryPerPeriod, type Employee } from "./employees.js";
-import type { EmployeePayInput, Paycheck, TaxLine, YearToDate } from "./gross-to-net.js";
+import type { EmployeePayInput, Paycheck, SickLeaveInput, SickLeavePolicy, TaxLine, YearToDate } from "./gross-to-net.js";
 import { splitCaliforniaWeek } from "./hours.js";
 import { calculatePayRun, type PayRun, type PayRunInput } from "./pay-run.js";
 
@@ -21,8 +21,12 @@ export interface PayRunLine {
   /** Hours worked each day, one or two workweeks of seven days; overtime is worked out from them. */
   dailyHours?: (string | number)[];
   bonus?: string;
+  /** The bonus was at the employer's discretion, so it adds no overtime. */
+  bonusDiscretionary?: boolean;
   commission?: string;
   reimbursement?: string;
+  /** Hours of paid sick leave taken in the period. */
+  sickHoursUsed?: string;
 }
 
 export interface PayRunRequest {
@@ -49,7 +53,7 @@ export async function payRunInputFromEmployees(tx: Tx, entityId: string, req: Pa
     ids.add(l.employeeId);
   }
   const all = new Map((await listEmployees(tx, entityId)).map((e) => [e.id, e]));
-  const entity = (await tx.query("SELECT ca_ui_rate::text FROM entities WHERE id = $1", [entityId])).rows[0];
+  const entity = (await tx.query("SELECT ca_ui_rate::text, sick_leave_policy FROM entities WHERE id = $1", [entityId])).rows[0];
   const rules = resolveRules(CA, req.payDate);
   const headcount = employeeCount([...all.values()], req.periodEnd);
   const employees = req.lines.map((l): EmployeePayInput => {
@@ -57,7 +61,7 @@ export async function payRunInputFromEmployees(tx: Tx, entityId: string, req: Pa
     if (!e) invalid("employee not found");
     if (e.hireDate > req.periodEnd) invalid(`${e.name} starts on ${e.hireDate}, after this pay period`);
     if (e.terminationDate && e.terminationDate < req.periodStart) invalid(`${e.name}'s last day was ${e.terminationDate}, before this pay period`);
-    const input = payInput(e, l, rules.state.wageHour);
+    const input = payInput(e, l, rules.state.wageHour, { policy: entity?.sick_leave_policy ?? "accrual", year: Number(req.payDate.slice(0, 4)) });
     // The rate in force at the end of the period, for the business's size.
     const local = input.hourlyRate ? localMinimumAbove(rules.state.wageHour.minimumWage, e.workCity, req.periodEnd, headcount) : null;
     return local ? { ...input, localMinimumWage: local } : input;
@@ -74,14 +78,28 @@ export function employeeCount(employees: Employee[], date: string): number {
   return employees.filter((e) => e.hireDate <= date && (!e.terminationDate || e.terminationDate >= date)).length;
 }
 
-function payInput(e: Employee, l: PayRunLine, wageHour: Parameters<typeof splitCaliforniaWeek>[1]): EmployeePayInput {
+/** Weeks in one pay period, for the 40 hours a week salaried employees are deemed to work. */
+const WEEKS_PER_PERIOD: Record<Employee["payFrequency"], string> = { weekly: "1", biweekly: "2", semimonthly: "2.1667", monthly: "4.3333" };
+
+function payInput(
+  e: Employee, l: PayRunLine, wageHour: Parameters<typeof splitCaliforniaWeek>[1], sick: { policy: SickLeavePolicy; year: number },
+): EmployeePayInput {
+  const frontLoad = sick.policy === "front_load";
+  const sickLeave: SickLeaveInput = {
+    balanceHours: e.sickBalanceHours, policy: sick.policy, usedHours: l.sickHoursUsed,
+    // Front-loading grants the year's hours on the first run of the year; nothing carries over.
+    ...(frontLoad && e.sickGrantedYear !== sick.year ? { grantHours: wageHour.sickLeave.annualUseCapHours } : {}),
+  };
   const base: EmployeePayInput = {
     employeeId: e.id, name: e.name, payFrequency: e.payFrequency,
     w4: e.w4, de4: e.de4, deductions: e.deductions,
-    bonus: l.bonus, commission: l.commission, reimbursement: l.reimbursement,
+    bonus: l.bonus, bonusDiscretionary: l.bonusDiscretionary, commission: l.commission, reimbursement: l.reimbursement,
   };
   if (e.payType === "salary") {
-    return { ...base, salaryPerPeriod: salaryPerPeriod(e.payRate, e.payFrequency), overtimeExempt: e.overtimeExempt };
+    return {
+      ...base, salaryPerPeriod: salaryPerPeriod(e.payRate, e.payFrequency), overtimeExempt: e.overtimeExempt,
+      sickLeave: { ...sickLeave, deemedHoursWorked: new D(40).mul(WEEKS_PER_PERIOD[e.payFrequency]).toString() },
+    };
   }
   let hours = { regular: l.regularHours, overtime: l.overtimeHours, doubleTime: l.doubleTimeHours };
   if (l.dailyHours) {
@@ -104,7 +122,7 @@ function payInput(e: Employee, l: PayRunLine, wageHour: Parameters<typeof splitC
   return {
     ...base, hourlyRate: e.payRate,
     regularHours: hours.regular, overtimeHours: hours.overtime, doubleTimeHours: hours.doubleTime,
-    sickLeave: { balanceHours: e.sickBalanceHours },
+    sickLeave,
   };
 }
 
@@ -190,10 +208,14 @@ export async function calculateSavedRun(tx: Tx, entityId: string, input: PayRunI
   });
 }
 
-/** After posting: each hourly employee's sick leave balance moves to what the paycheck shows. */
-export async function carrySickLeave(tx: Tx, entityId: string, paychecks: Paycheck[]) {
+/** After posting: each employee's sick leave balance moves to what the paycheck shows. */
+export async function carrySickLeave(tx: Tx, entityId: string, paychecks: Paycheck[], payDate: string) {
   for (const p of paychecks) {
     if (!p.sickLeave) continue;
-    await tx.query("UPDATE employees SET sick_balance_hours = $3, updated_at = now() WHERE id = $1 AND entity_id = $2", [p.employeeId, entityId, p.sickLeave.balanceHours]);
+    await tx.query(
+      `UPDATE employees SET sick_balance_hours = $3, sick_granted_year = CASE WHEN $4 THEN $5::int ELSE sick_granted_year END, updated_at = now()
+        WHERE id = $1 AND entity_id = $2`,
+      [p.employeeId, entityId, p.sickLeave.balanceHours, p.sickLeave.grantedHours !== undefined, Number(payDate.slice(0, 4))],
+    );
   }
 }
