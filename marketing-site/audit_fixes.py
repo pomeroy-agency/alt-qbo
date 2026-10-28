@@ -41,6 +41,15 @@ FIXES = [
     ("/pricing",
      '<a class="go solid" href="https://buy.stripe.com/7sY6oH4O22ef5IZauQe7m06" target="_top" rel="noopener">Book the Install &middot; $15,000</a>',
      '<a class="go solid" href="mailto:gregory@pomeroyagency.com?subject=The%20Install" target="_top">Start the Install &middot; $6,000 to begin</a>', 1),
+    # No location on the site (Greg, 2026-10-28: the company works in BC and California, and nothing requires one).
+    ("*", ", built on Vancouver Island.", ".", 1),
+    ("/", "Where are you based and do you work remotely?", "Do you work remotely?", 1),
+    ("/", "We're based on Vancouver Island in British Columbia and work entirely remotely", "We work entirely remotely", 1),
+    ("/", "We've also built our entire operation to be location-independent, which means we sometimes deliver work from places that aren't Vancouver Island. The work doesn't suffer for it.",
+     "The whole operation is built to be location-independent, so where we happen to be never slows the work down.", 1),
+    ("/pricing", "<b>Local, and actually reachable</b>", "<b>Actually reachable</b>", 1),
+    ("/pricing", "Vancouver Island based. If you want to talk", "If you want to talk", 1),
+    ("/two-week-fix", '\n      <span class="dot"></span> Vancouver Island based\n', "\n", 1),
     # The privacy policy, linked next to both Blueprint forms.
     ("/lead-machine-blueprint", "will never sell your information. CASL", "will never sell your information. " + PP + ". CASL", 1),
     ("/lead-machine-blueprint", "Unsubscribe anytime. CASL &amp; CAN-SPAM", "Unsubscribe anytime. " + PP + ". CASL &amp; CAN-SPAM", 1),
