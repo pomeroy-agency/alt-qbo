@@ -17,7 +17,7 @@ Brevo is the recommended route: mail comes from your own domain, and its SMTP ke
    | `SMTP_USER` | the login shown on Brevo's SMTP tab (it looks like `…@smtp-brevo.com`) |
    | `SMTP_PASSWORD` | the SMTP key (mark it secret) |
    | `MAIL_FROM` | `TrailBook <books@pomeroyagency.com>`, using the sender you verified |
-   | `APP_URL` | optional: the address links should point at, such as `https://alt-qbo.netlify.app`. It defaults to Netlify's URL for the deploy |
+   | `APP_URL` | optional: the address links should point at, such as `https://app.pomeroyagency.com`. It defaults to Netlify's URL for the deploy |
 
 4. **Redeploy.**
 

@@ -1,0 +1,134 @@
+<!-- PA Analytics - Part 2 of 3 - embed bridge
+Goes inside each Wix HTML embed, immediately before </body>.
+There is NO GA4 and NO Meta Pixel in here on purpose. Both live at page
+level (Part 1). This file only watches and reports upward.
+
+CHANGE ONE LINE PER PAGE - the PA_PAGE value below.
+2026-10-28: ON_LOAD gains the three TrailBook pages. Their event names must
+also be in Part 1's EVENTS allowlist, or Part 1 drops them. -->
+<script>
+(function () {
+"use strict";
+
+var PA_PAGE = "%%PA_PAGE%%"; /* <<< the only line that differs per page >>> */
+
+/* Values, in the order the pages sit in the nav:
+hub · pricing · fix · scan · blueprint · blueprint-thanks ·
+online-strategy · brand-positioning · website-seo · social-strategy ·
+paid-advertising · systems-automation · trailbook · trailbook-pricing ·
+trailbook-accountants */
+
+var TARGET = "*";
+try {
+if (document.referrer) TARGET = new URL(document.referrer).origin;
+} catch (e) {}
+
+function send(event, params) {
+try {
+window.parent.postMessage({
+source: "pa-analytics",
+event: event,
+params: params || {}
+}, TARGET);
+} catch (e) {}
+}
+window.paSend = send;
+
+function tag(extra) {
+var p = { pa_page: PA_PAGE, pa_source: "embed" };
+if (extra) for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) p[k] = extra[k];
+return p;
+}
+
+/* ----------------------------------------------------- THE PAGE ITSELF */
+var ON_LOAD = {
+pricing: "pricing_view",
+fix: "fix_page_view",
+scan: "scan_view",
+"trailbook": "trailbook_view",
+"trailbook-pricing": "trailbook_pricing_view",
+"trailbook-accountants": "trailbook_firm_view"
+};
+if (ON_LOAD[PA_PAGE]) send(ON_LOAD[PA_PAGE], tag());
+
+/* -------------------------------------------------------- STRIPE LINKS */
+var STRIPE_FIX = ["e7m05", "7IY1k"]; /* $3,500 Two-Week Fix */
+var STRIPE_INSTALL = ["e7m06", "7IY1m"]; /* $15,000 The Install */
+var STRIPE_SUPPORT = ["e7m07"]; /* $1,500/mo Keep It Running */
+
+function has(href, list) {
+for (var i = 0; i < list.length; i++) if (href.indexOf(list[i]) > -1) return true;
+return false;
+}
+
+function stripeEvent(href) {
+if (has(href, STRIPE_FIX)) return ["stripe_click_fix", "two_week_fix_3500"];
+if (has(href, STRIPE_INSTALL)) return ["stripe_click_install", "install_15000"];
+if (has(href, STRIPE_SUPPORT)) return ["stripe_click_support", "keep_it_running_1500_mo"];
+return ["stripe_click_unknown", "unknown"];
+}
+
+/* --------------------------------------------------------- ALL CLICKS */
+document.addEventListener("click", function (ev) {
+var t = ev.target;
+if (!t || !t.closest) return;
+
+/* 1. anything explicitly marked up. The TrailBook trial and sign-in
+buttons carry data-pa-event, so they are counted here; the outbound
+check below then skips them so one click is one event. */
+var marked = t.closest("[data-pa-event]");
+if (marked) {
+var name = marked.getAttribute("data-pa-event") || "";
+var label = marked.getAttribute("data-pa-label") || "";
+if (name) send(name, tag(label ? { label: label.slice(0, 100) } : null));
+}
+
+var a = t.closest("a[href]");
+if (!a) return;
+var href = a.getAttribute("href") || "";
+
+/* 2. payment links */
+if (href.indexOf("buy.stripe.com") > -1) {
+var s = stripeEvent(href);
+send(s[0], tag({ offer_id: s[1] }));
+return;
+}
+
+/* 3. mail links */
+if (href.slice(0, 7) === "mailto:") {
+send("email_cta_click", tag());
+return;
+}
+
+/* 4. anything leaving the site */
+if (marked) return;
+if (href.slice(0, 4) !== "http") return;
+var host;
+try { host = new URL(href, location.href).hostname; } catch (e) { return; }
+if (/(^|\.)pomeroyagency\.com$/.test(host)) return;
+if (/(^|\.)filesusr\.com$/.test(host)) return;
+send("outbound_click", tag({ destination_host: host }));
+}, true);
+
+/* ------------------------------------------------ SCROLL INSIDE THE FRAME */
+var marks = [25, 50, 75, 100], fired = {}, timer = 0;
+function check() {
+var de = document.documentElement;
+var h = Math.max(de.scrollHeight, document.body ? document.body.scrollHeight : 0) - window.innerHeight;
+if (h <= 0) return;
+var pct = ((window.pageYOffset || de.scrollTop) / h) * 100;
+for (var i = 0; i < marks.length; i++) {
+if (pct >= marks[i] && !fired[marks[i]]) {
+fired[marks[i]] = 1;
+send("scroll_depth", tag({ percent: marks[i], scope: "embed" }));
+}
+}
+}
+window.addEventListener("scroll", function () {
+if (timer) return;
+timer = setTimeout(function () { timer = 0; check(); }, 250);
+}, { passive: true });
+
+})();
+</script>
+<!-- end PA Analytics Part 2 -->

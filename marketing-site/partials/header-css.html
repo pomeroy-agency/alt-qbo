@@ -1,0 +1,185 @@
+<style>
+/* PA-HEADER-V2 START - shared Pomeroy Agency header. Edit once, paste on every PA page. */
+/* ============ HEADER ============ */
+.site-header{
+background:var(--ink-deep); border-bottom:1px solid rgba(255,255,255,0.07);
+position:sticky; top:0; z-index:9000;
+}
+
+.nav-row{display:flex;align-items:center;gap:20px;height:62px}
+
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;flex-shrink:0}
+
+.brand-mark{
+font-family:var(--serif); font-size:19px; font-weight:600; color:#fff;
+letter-spacing:0.01em; white-space:nowrap;
+}
+
+.brand-divider{width:1px;height:20px;background:rgba(255,255,255,0.18)}
+
+.brand-tag{
+font-size:10px; font-weight:500; letter-spacing:0.16em; text-transform:uppercase;
+color:rgba(255,255,255,0.42); white-space:nowrap;
+}
+
+.nav-primary{display:flex;align-items:center;gap:4px;margin-left:auto}
+
+.nav-link{
+display:flex;align-items:center;gap:6px;padding:8px 12px;
+font-size:13.5px;font-weight:500;color:rgba(255,255,255,0.62);
+text-decoration:none;border-radius:3px;transition:color .15s,background .15s;
+white-space:nowrap;
+}
+
+.nav-link:hover{color:#fff;background:rgba(255,255,255,0.06)}
+
+/* the two offer pills */
+.nav-scan-pill{
+display:flex;align-items:center;gap:8px;padding:7px 13px;margin-left:6px;
+font-size:12.5px;font-weight:600;letter-spacing:0.01em;
+color:#e9dfc6;text-decoration:none;
+border:1px solid var(--gold-edge);border-radius:999px;
+background:rgba(176,124,16,0.14);
+transition:background .15s,color .15s;white-space:nowrap;
+}
+
+.nav-scan-pill:hover{background:rgba(176,124,16,0.26);color:#fff}
+
+.nav-scan-pill .free{
+font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:0.1em;
+text-transform:uppercase;color:var(--gold-bright);
+}
+
+.nav-audit-pill{
+display:flex;align-items:center;gap:8px;padding:7px 13px;
+font-size:12.5px;font-weight:500;color:rgba(255,255,255,0.72);
+text-decoration:none;border:1px solid rgba(255,255,255,0.16);border-radius:999px;
+transition:border-color .15s,color .15s;white-space:nowrap;
+}
+
+.nav-audit-pill:hover{border-color:var(--gold-edge);color:#fff}
+
+.nav-audit-pill .price{font-family:var(--mono);font-size:11px;color:var(--gold-bright)}
+
+.menu-toggle{
+display:none;margin-left:auto;background:none;border:0;cursor:pointer;
+padding:8px;color:#fff;
+}
+
+.menu-toggle span{display:block;width:22px;height:1.5px;background:#fff;margin:4px 0}
+
+@media(max-width:1000px){
+.nav-primary{display:none}
+.menu-toggle{display:block}
+}
+
+/* ---- Services dropdown (additive; no existing rule is modified) ---- */
+.nav-svc{position:relative}
+.nav-svc-caret{font-size:9px;opacity:.55;transform:translateY(1px)}
+.nav-svc:hover .nav-svc-trigger,.nav-svc:focus-within .nav-svc-trigger{color:#fff;background:rgba(255,255,255,0.06)}
+.nav-svc:hover .nav-svc-caret,.nav-svc:focus-within .nav-svc-caret{opacity:1;color:var(--gold-bright)}
+
+.nav-svc-panel{
+position:absolute;top:calc(100% + 11px);left:50%;transform:translateX(-50%) translateY(-6px);
+width:min(940px,calc(100vw - 44px));
+background:var(--ink-deep);
+border:1px solid rgba(255,255,255,0.10);
+border-top:2px solid var(--gold);
+border-radius:4px;
+box-shadow:0 24px 60px rgba(0,0,0,0.46);
+padding:24px 26px 0;
+opacity:0;visibility:hidden;pointer-events:none;
+transition:opacity .16s ease,transform .16s ease,visibility .16s;
+z-index:9500;
+}
+.nav-svc:hover .nav-svc-panel,.nav-svc:focus-within .nav-svc-panel{
+opacity:1;visibility:visible;pointer-events:auto;transform:translateX(-50%) translateY(0);
+}
+/* hover bridge so the gap between trigger and panel does not close it */
+.nav-svc-panel::before{content:"";position:absolute;top:-13px;left:0;right:0;height:13px}
+
+.nav-svc-grid{display:grid;grid-template-columns:0.92fr 1fr 1.9fr;gap:0 28px}
+.nav-svc-col{padding-bottom:22px}
+.nav-svc-col+.nav-svc-col{border-left:1px solid rgba(255,255,255,0.07);padding-left:30px}
+.nav-svc-split{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
+.nav-svc-num .nav-svc-name{white-space:nowrap}
+
+.nav-svc-head{
+font-family:var(--mono);font-size:9.5px;font-weight:500;letter-spacing:0.18em;
+text-transform:uppercase;color:var(--gold-bright);margin-bottom:12px;
+}
+
+.nav-svc-item{
+display:block;padding:8px 10px;margin:0 -10px;border-radius:3px;
+text-decoration:none;transition:background .13s;
+}
+.nav-svc-item:hover{background:rgba(255,255,255,0.055)}
+.nav-svc-name{
+display:flex;align-items:center;gap:8px;
+font-size:13.5px;font-weight:500;color:rgba(255,255,255,0.90);line-height:1.35;
+}
+.nav-svc-item:hover .nav-svc-name{color:#fff}
+.nav-svc-sub{
+display:block;margin-top:2px;
+font-size:11.5px;font-weight:400;color:rgba(255,255,255,0.40);line-height:1.4;
+}
+.nav-svc-tag{
+font-family:var(--mono);font-style:normal;font-size:10px;font-weight:500;
+letter-spacing:0.06em;color:var(--gold-bright);white-space:nowrap;
+}
+.nav-svc-tag-free{
+text-transform:uppercase;letter-spacing:0.11em;
+padding:2px 6px;border:1px solid var(--gold-edge);border-radius:999px;
+background:rgba(176,124,16,0.14);
+}
+.nav-svc-num i{
+font-family:var(--mono);font-style:normal;font-size:10px;font-weight:500;
+color:rgba(255,255,255,0.30);letter-spacing:0.04em;
+}
+
+.nav-svc-foot{
+display:flex;align-items:center;justify-content:space-between;gap:20px;
+margin:0 -26px;padding:13px 26px;
+border-top:1px solid rgba(255,255,255,0.07);
+background:rgba(255,255,255,0.022);
+border-radius:0 0 3px 3px;
+font-size:11.5px;color:rgba(255,255,255,0.38);
+}
+.nav-svc-foot a{
+font-size:12px;font-weight:500;color:var(--gold-bright);
+text-decoration:none;white-space:nowrap;
+}
+.nav-svc-foot a:hover{color:#fff}
+
+@media(max-width:1000px){
+/* drawer: nav-primary becomes a full-width panel under the bar */
+.nav-primary{
+position:absolute;top:62px;left:0;right:0;
+flex-direction:column;align-items:stretch;gap:0;margin:0;
+background:var(--ink-deep);border-bottom:1px solid rgba(255,255,255,0.10);
+box-shadow:0 20px 40px rgba(0,0,0,0.4);
+padding:8px 26px 22px;max-height:calc(100vh - 62px);overflow-y:auto;
+}
+.nav-primary>.nav-link{padding:11px 0;font-size:15px;border-radius:0}
+.nav-primary>.nav-link:hover{background:transparent;color:#fff}
+.nav-scan-pill,.nav-audit-pill{margin:10px 0 0;justify-content:center;padding:11px 16px}
+
+.nav-svc{width:100%}
+.nav-svc-trigger{padding:11px 0;font-size:15px;border-radius:0}
+.nav-svc:hover .nav-svc-trigger,.nav-svc:focus-within .nav-svc-trigger{background:transparent}
+.nav-svc-panel{
+position:static;transform:none;width:auto;opacity:1;visibility:visible;
+pointer-events:auto;box-shadow:none;border:0;
+border-top:1px solid rgba(255,255,255,0.07);
+border-radius:0;padding:14px 0 0;background:transparent;
+}
+.nav-svc-panel::before{display:none}
+.nav-svc-grid{grid-template-columns:1fr;gap:0}
+.nav-svc-col{padding-bottom:14px}
+.nav-svc-col+.nav-svc-col{border-left:0;padding-left:0;border-top:1px solid rgba(255,255,255,0.07);padding-top:14px}
+.nav-svc-split{grid-template-columns:1fr}
+.nav-svc-num .nav-svc-name{white-space:normal}
+.nav-svc-foot{margin:0;padding:14px 0 0;background:transparent;flex-direction:column;align-items:flex-start;gap:8px}
+}
+/* PA-HEADER-V2 END */
+</style>
