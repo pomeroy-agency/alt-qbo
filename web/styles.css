@@ -138,7 +138,7 @@ td input, td select { width: 100%; }
 .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--brand-soft); color: var(--brand); }
 .pill.warn { background: var(--warn-bg); color: var(--warn-ink); }
 .pill.bad { background: var(--bad-bg); color: var(--bad-ink); }
-.pill.grey { background: var(--line); color: var(--muted); }
+.pill.grey { background: var(--line); color: var(--ink); }
 .alert { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
 .alert.bad { background: var(--bad-bg); color: var(--bad-ink); }
 .alert.warn { background: var(--warn-bg); color: var(--warn-ink); }

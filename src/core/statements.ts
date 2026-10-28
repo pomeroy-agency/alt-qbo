@@ -1,4 +1,5 @@
 import type { Tx } from "../db/pool.js";
+import { csvCell } from "./csv.js";
 import { LedgerError } from "./errors.js";
 import { toMajor } from "./money.js";
 
@@ -210,7 +211,7 @@ export async function generalLedgerAll(tx: Tx, entityId: string, from: string, t
 // --------------------------------------------------------------------- CSV
 
 const money = (m: bigint) => toMajor(m).toFixed(2);
-const cell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+const cell = csvCell;
 
 export function profitAndLossCsv(pl: ProfitAndLoss): string {
   const out = [`Profit and loss,${pl.from} to ${pl.to}`, "Section,Account,Name,Amount"];

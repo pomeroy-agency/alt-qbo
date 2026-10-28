@@ -51,8 +51,9 @@ function formData(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+/** Today's date where the user is (not UTC, which is already tomorrow on a California evening). */
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("en-CA");
 }
 
 const STATUS_PILL = { open: "pill", soft_closed: "pill warn", locked: "pill grey", prepared: "pill warn", posted: "pill", voided: "pill grey", partial: "pill warn", overdue: "pill bad", paid: "pill grey", void: "pill grey" };
@@ -290,8 +291,8 @@ async function homeView() {
       <form data-form="entity" class="grid">
         <label>Legal name<input name="legalName" required placeholder="Sunset Design Studio LLC"></label>
         <label>Entity type<select name="entityType">${Object.entries(ENTITY_TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
-        <label>Principal place of business<select name="region"><option value="CA">California, United States</option><option value="TX">Texas (not launched yet)</option></select></label>
-        <label>First fiscal year<select name="firstFiscalYear"><option>2026</option></select></label>
+        <label>Principal place of business<select name="region"><option value="CA">California, United States</option><option value="TX" disabled>Texas (not launched yet)</option></select></label>
+        <label>First fiscal year<select name="firstFiscalYear">${Array.from({ length: Number(today().slice(0, 4)) - 2025 }, (_, i) => 2026 + i).reverse().map((y) => `<option>${y}</option>`).join("")}</select></label>
         <label>EIN (optional)<input name="ein" placeholder="12-3456789"></label>
         <label>&nbsp;<button type="submit">Create business</button></label>
       </form>
@@ -354,7 +355,7 @@ async function journalView(id) {
       <h2>New entry</h2>
       <form data-form="journal">
         <div class="row" style="margin-bottom:12px">
-          <label>Date<input type="date" name="date" value="${today() < "2026-01-01" ? "2026-01-01" : today() > "2026-12-31" ? "2026-12-31" : today()}" min="2026-01-01" max="2026-12-31" required></label>
+          <label>Date<input type="date" name="date" value="${bookDate()}" min="${booksStart()}" required></label>
           <label>Type<select name="sourceType">
             <option value="journal_voucher">Journal entry</option><option value="invoice">Invoice</option>
             <option value="bill">Bill</option><option value="payment">Payment</option><option value="opening_balance">Opening balance</option>
@@ -429,7 +430,7 @@ function updateTotals() {
   document.getElementById("post-btn").disabled = !ok;
 }
 
-async function trialBalanceView(id, asOf = "2026-12-31") {
+async function trialBalanceView(id, asOf = today()) {
   await loadEntity(id);
   const tb = await api(entPath(`/trial-balance?asOf=${asOf}`));
   const e = state.entity.entity;
@@ -575,10 +576,15 @@ async function connectionsView(id) {
 
 // ------------------------------------------------ invoices, bills, contacts
 
-/** Today, kept inside the open 2026 fiscal year. */
+/** The first day the books cover; nothing can be dated before it. */
+function booksStart() {
+  return state.entity?.periods?.[0]?.start_date ?? "2026-01-01";
+}
+
+/** Today, or the first day of the books when they start later. A new fiscal year opens by itself when something is dated in it. */
 function bookDate() {
   const t = today();
-  return t < "2026-01-01" ? "2026-01-01" : t > "2026-12-31" ? "2026-12-31" : t;
+  return t < booksStart() ? booksStart() : t;
 }
 
 function plusDays(d, n) {
@@ -838,7 +844,7 @@ async function docsView(id, kind) {
             ${kind === "invoice" ? `<label>Street<input name="newLine1" placeholder="123 Main St"></label><label>City<input name="newCity" style="width:140px"></label>
               <label>State<input name="newState" value="CA" maxlength="2" style="width:56px"></label><label>ZIP<input name="newZip" inputmode="numeric" style="width:90px"></label>` : ""}
           </div>
-          <label>Date<input type="date" name="issueDate" value="${issue}" min="2026-01-01" max="2026-12-31" required></label>
+          <label>Date<input type="date" name="issueDate" value="${issue}" min="${booksStart()}" required></label>
           <label>Due<input type="date" name="dueDate" value="${plusDays(issue, 30)}" required></label>
           ${kind === "invoice" ? "" : `<label>Vendor's invoice no.<input name="reference" style="width:150px"></label>`}
           <label style="flex:1;min-width:200px">Memo<input name="memo"></label>
@@ -1634,7 +1640,7 @@ function runTable(run) {
 
 async function payrollView(id) {
   await loadEntity(id);
-  const [{ employees, caUiRate, directDeposit, workCities }, { payRuns }, deposits] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs")), api(entPath("/tax-deposits"))]);
+  const [{ employees, caUiRate, directDeposit, workCities }, { payRuns, soleApprover }, deposits] = await Promise.all([api(entPath("/employees")), api(entPath("/pay-runs")), api(entPath("/tax-deposits"))]);
   pay.employees = employees;
   pay.caUiRate = caUiRate;
   pay.workCities = workCities ?? [];
@@ -1686,7 +1692,7 @@ async function payrollView(id) {
     </div>` : ""}
     <div class="panel">
       <h2>Pay runs</h2>
-      <p class="muted">A pay run posts to the books only after someone other than its preparer approves it.</p>
+      <p class="muted">A pay run posts to the books only after it's approved: by someone other than its preparer, unless you're the only person here who can approve.</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Pay date</th><th>Period</th><th>Employees</th><th class="num">Gross</th><th class="num">Net</th><th>Prepared by</th><th>Status</th><th></th></tr></thead>
         <tbody>${payRuns.map((r) => `<tr>
@@ -1695,7 +1701,7 @@ async function payrollView(id) {
           <td>${esc(r.prepared_by.replace("user:", ""))}</td>
           <td><span class="${STATUS_PILL[r.status]}">${STATUS_LABEL[r.status]}</span>${r.approved_by ? `<div class="hash">by ${esc(r.approved_by.replace("user:", ""))}</div>` : ""}</td>
           <td><a href="#/e/${id}/payroll/run/${r.id}">Pay stubs</a>
-            ${r.status === "prepared" && canApprove ? (r.prepared_by === me ? `<div class="muted">Needs another approver</div>` : `<div><button data-action="approve-run" data-id="${r.id}">Approve and post</button></div>`) : ""}</td>
+            ${r.status === "prepared" && canApprove ? (r.prepared_by === me && !soleApprover ? `<div class="muted">Needs another approver</div>` : `<div><button data-action="approve-run" data-id="${r.id}">Approve and post</button></div>`) : ""}</td>
         </tr>`).join("") || `<tr><td colspan="8" class="muted">No pay runs yet.</td></tr>`}</tbody>
       </table></div>
     </div>`);
@@ -1938,7 +1944,7 @@ async function payRunView(id, runId) {
   const r = await api(entPath(`/pay-runs/${runId}`));
   const stubs = new Map(r.stubs.map((s) => [s.employeeId, s]));
   const me = `user:${state.me.user.email}`;
-  const canApprove = ["owner", "admin", "approver"].includes(state.org.role) && r.status === "prepared" && r.prepared_by !== me;
+  const canApprove = ["owner", "admin", "approver"].includes(state.org.role) && r.status === "prepared" && (r.prepared_by !== me || r.soleApprover);
   app.innerHTML = shell("payroll", `
     <div class="head no-print"><div><p><a href="#/e/${id}/payroll">&larr; Payroll</a></p><h1>Pay run for ${r.result.payDate}</h1>
       <p class="muted"><span class="${STATUS_PILL[r.status]}">${STATUS_LABEL[r.status]}</span> ${r.result.paychecks.length} employee${r.result.paychecks.length === 1 ? "" : "s"}, net pay ${usd(r.result.totals.netPayMinor)}.
@@ -1971,7 +1977,7 @@ async function teamView() {
   const link = team.link;
   team.link = null;
   app.innerHTML = shell("team", `
-    <div class="head"><div><h1>Team</h1><p class="muted">Roles control who can post, close periods and approve payroll. Payroll needs at least two people: one prepares, another approves.</p></div></div>
+    <div class="head"><div><h1>Team</h1><p class="muted">Roles control who can post, close periods and approve payroll. For payroll, one person prepares a run and another approves it; if you're the only person who can approve, you approve your own runs.</p></div></div>
     ${link ? `<div class="alert good">${link.emailed ? `We emailed the invitation to ${esc(link.email)}. You can also copy the link below; it` : `Invitation ready. Send this link to ${esc(link.email)}; it`} works once, for that email, for 14 days.
       <div class="row" style="margin-top:8px"><input id="invite-link" class="mono" readonly value="${esc(link.link)}" style="flex:1;min-width:260px"><button class="secondary" data-action="copy-invite">Copy link</button></div></div>` : ""}
     <div class="panel table-wrap"><table>

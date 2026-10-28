@@ -3,6 +3,7 @@ import type { Tx } from "../db/pool.js";
 import { appendAudit, canonicalJson } from "./audit.js";
 import { LedgerError, translateDbError } from "./errors.js";
 import { parseMoney } from "./money.js";
+import { openFiscalYear } from "./tenancy.js";
 
 export type Role = "owner" | "admin" | "bookkeeper" | "approver" | "accountant" | "read_only" | "system";
 
@@ -170,12 +171,7 @@ export async function postJournal(tx: Tx, input: PostInput): Promise<PostedEntry
     return { ...(await getEntry(tx, existing.rows[0].id)), replayed: true };
   }
 
-  const period = await tx.query(
-    "SELECT id, status FROM periods WHERE entity_id = $1 AND $2::date BETWEEN start_date AND end_date",
-    [input.entityId, input.date],
-  );
-  const p = period.rows[0];
-  if (!p) throw new LedgerError("NO_PERIOD", `no accounting period covers ${input.date}`);
+  const p = await periodForPosting(tx, input.orgId, input.entityId, input.date, input.actor);
   if (p.status === "locked") throw new LedgerError("PERIOD_LOCKED", `the period covering ${input.date} is locked`);
   if (p.status === "soft_closed") requireRole(input.actor, CAN_CLOSE, "post into a soft-closed period");
 
@@ -338,6 +334,45 @@ export async function setPeriodStatus(
       ...(reopening ? { flagIssuedReports: true } : {}),
     },
   });
+}
+
+/**
+ * The period a posting dated `date` falls in. A date after the last open
+ * fiscal year opens the following year (or two), so the books roll into a
+ * new year without anyone having to set it up, but only for dates within a
+ * year from today, so a mistyped year can't open decades of periods.
+ * Dates before the first fiscal year are still refused.
+ */
+async function periodForPosting(tx: Tx, orgId: string, entityId: string, date: string, actor: Actor): Promise<{ id: string; status: PeriodStatus }> {
+  const find = async () => (await tx.query(
+    "SELECT id, status FROM periods WHERE entity_id = $1 AND $2::date BETWEEN start_date AND end_date",
+    [entityId, date],
+  )).rows[0];
+  const found = await find();
+  if (found) return found;
+  const { rows } = await tx.query(
+    `SELECT e.fiscal_year_start_month AS m, max(p.end_date)::text AS last_end, $2::date <= current_date + 366 AS near
+       FROM entities e JOIN periods p ON p.entity_id = e.id WHERE e.id = $1 GROUP BY e.id`,
+    [entityId, date],
+  );
+  const r = rows[0];
+  if (r && r.near && date > r.last_end) {
+    // Each pass opens the fiscal year starting the day after the last period ends.
+    for (let i = 0; i < 2 && date > r.last_end; i++) {
+      const next = new Date(`${r.last_end}T00:00:00Z`);
+      next.setUTCDate(next.getUTCDate() + 1);
+      const fiscalYear = next.getUTCFullYear();
+      await openFiscalYear(tx, { orgId, entityId, fiscalYear, startMonth: r.m });
+      r.last_end = (await tx.query("SELECT max(end_date)::text AS d FROM periods WHERE entity_id = $1", [entityId])).rows[0].d;
+      await appendAudit(tx, {
+        orgId, entityId, actor: actor.id, action: "entity.fiscal_year_opened", objectType: "entity", objectId: entityId,
+        after: { fiscalYear, through: r.last_end }, context: { role: actor.role, trigger: `posting dated ${date}` },
+      });
+    }
+    const opened = await find();
+    if (opened) return opened;
+  }
+  throw new LedgerError("NO_PERIOD", `no accounting period covers ${date}`);
 }
 
 export async function findPeriod(tx: Tx, entityId: string, date: string): Promise<{ id: string; status: PeriodStatus }> {
