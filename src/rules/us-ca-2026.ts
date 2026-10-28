@@ -7,7 +7,7 @@ export const usCalifornia2026: CaliforniaRulePack = {
   place: { country: "US", region: "CA" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   sources: [
     { ref: "EDD, 2026 California Withholding Schedules, Method B (26methb.pdf), as reproduced in the USDA National Finance Center's 2026 California withholding bulletin", covers: "PIT Tables 1-7, annual: single and head-of-household thresholds and rates matched; married thresholds are exactly twice single below $1 million, and every base amount is consistent with its rows", basis: "published" },
     { ref: "EDD, Contribution Rates, Withholding Schedules, and Meals and Lodging Values (2026); State Controller payroll letter 25-019", covers: "SDI 1.3% with no wage limit; UI $7,000 base, schedule F+, 3.4% new-employer rate; ETT 0.1% on $7,000", basis: "published" },

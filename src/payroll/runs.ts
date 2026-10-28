@@ -2,6 +2,7 @@ import type { Tx } from "../db/pool.js";
 import { LedgerError } from "../core/errors.js";
 import { D } from "../core/money.js";
 import { resolveRules } from "../rules/index.js";
+import { localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { listEmployees, openingFor, salaryPerPeriod, type Employee } from "./employees.js";
 import type { EmployeePayInput, Paycheck, TaxLine, YearToDate } from "./gross-to-net.js";
 import { splitCaliforniaWeek } from "./hours.js";
@@ -50,18 +51,27 @@ export async function payRunInputFromEmployees(tx: Tx, entityId: string, req: Pa
   const all = new Map((await listEmployees(tx, entityId)).map((e) => [e.id, e]));
   const entity = (await tx.query("SELECT ca_ui_rate::text FROM entities WHERE id = $1", [entityId])).rows[0];
   const rules = resolveRules(CA, req.payDate);
+  const headcount = employeeCount([...all.values()], req.periodEnd);
   const employees = req.lines.map((l): EmployeePayInput => {
     const e = all.get(l.employeeId);
     if (!e) invalid("employee not found");
     if (e.hireDate > req.periodEnd) invalid(`${e.name} starts on ${e.hireDate}, after this pay period`);
     if (e.terminationDate && e.terminationDate < req.periodStart) invalid(`${e.name}'s last day was ${e.terminationDate}, before this pay period`);
-    return payInput(e, l, rules.state.wageHour);
+    const input = payInput(e, l, rules.state.wageHour);
+    // The rate in force at the end of the period, for the business's size.
+    const local = input.hourlyRate ? localMinimumAbove(rules.state.wageHour.minimumWage, e.workCity, req.periodEnd, headcount) : null;
+    return local ? { ...input, localMinimumWage: local } : input;
   });
   return {
     payRunId, kind: "regular", periodStart: req.periodStart, periodEnd: req.periodEnd, payDate: req.payDate, place: CA,
     employer: entity?.ca_ui_rate ? { caUiRate: new D(entity.ca_ui_rate).toString() } : {},
-    employees, live: false,
+    employees, live: true,
   };
+}
+
+/** Employees on the payroll on `date`, for minimum wages that depend on the employer's size. */
+export function employeeCount(employees: Employee[], date: string): number {
+  return employees.filter((e) => e.hireDate <= date && (!e.terminationDate || e.terminationDate >= date)).length;
 }
 
 function payInput(e: Employee, l: PayRunLine, wageHour: Parameters<typeof splitCaliforniaWeek>[1]): EmployeePayInput {
@@ -170,8 +180,9 @@ export async function yearToDate(
 /** Calculates a saved run with year-to-date wages as of now. */
 export async function calculateSavedRun(tx: Tx, entityId: string, input: PayRunInput): Promise<PayRun> {
   const ytd = await yearToDate(tx, entityId, input.payDate, { excludeRunId: input.payRunId });
+  // Saved runs are real payroll: only released rule packs may calculate them.
   return calculatePayRun({
-    ...input,
+    ...input, live: true,
     employees: input.employees.map((e) => {
       const y = ytd.get(e.employeeId);
       return y ? { ...e, ytd: { socialSecurityWages: y.socialSecurityWages, medicareWages: y.medicareWages, futaWages: y.futaWages, caUiWages: y.caUiWages } } : e;

@@ -35,7 +35,7 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
   place: { country: "US", region: "CA" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   statewideRate: "0.07250",
   maxCombinedRate: "0.12000",
   categories: {
@@ -69,6 +69,11 @@ export const usCaliforniaSalesTax2026: SalesTaxRulePack = {
       label: "Shipping by carrier",
       help: "Separately stated delivery charge, shipped by common carrier or mail straight to the customer. Not taxable.",
       taxable: false, cite: "Regulation 1628(b)",
+    },
+    own_delivery: {
+      label: "Delivery in your own vehicle",
+      help: "Delivery charge when you or your staff deliver taxable goods yourselves, not by carrier or mail. Taxable like the goods. If what you delivered isn't taxable, the charge isn't either: choose the same kind of sale as the item.",
+      taxable: true, cite: "Regulation 1628(b)(3)",
     },
     goods: {
       label: "Physical goods",

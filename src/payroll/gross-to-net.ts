@@ -54,6 +54,8 @@ export interface EmployeePayInput {
   deductions?: Deduction[];
   ytd?: Partial<YearToDate>;
   sickLeave?: { balanceHours: string };
+  /** A city or county minimum wage above the state's where they work, if any. */
+  localMinimumWage?: { place: string; rate: string; sizeNote?: string };
 }
 
 export interface EmployerSettings {
@@ -118,6 +120,10 @@ export function calculatePaycheck(
   if (input.hourlyRate) {
     if (rate.lt(wh.minimumWage)) {
       blockers.push(`hourly rate ${rate.toFixed(2)} is below the California minimum wage of ${wh.minimumWage}`);
+    } else if (input.localMinimumWage && rate.lt(input.localMinimumWage.rate)) {
+      const local = input.localMinimumWage;
+      warnings.push(`hourly rate ${rate.toFixed(2)} is below the ${local.place} minimum wage of ${local.rate}` +
+        (local.sizeNote ? ` (${local.sizeNote})` : ""));
     }
     addHours("REGULAR", input.regularHours, 1);
     addHours("OVERTIME", input.overtimeHours, 1.5);

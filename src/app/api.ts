@@ -29,15 +29,16 @@ import { beginMfaSetup, checkSecondFactor, disableMfa, enableMfa, issueMfaTicket
 import type { Mailer } from "./mail.js";
 import { TERMS_VERSION, acceptTerms, orgsAccepted } from "./terms.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
-import { JurisdictionError, allRulePacks } from "../rules/index.js";
+import { JurisdictionError, allRulePacks, resolveRules } from "../rules/index.js";
+import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
-import { createEmployee, listEmployees, setUiRate, updateEmployee, type EmployeeFields } from "../payroll/employees.js";
+import { createEmployee, listEmployees, setUiRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
 import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
 import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
 import { form940, form941, formDe9, formsFor, formW2, type PreparedForm } from "../payroll/forms.js";
 import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
-import { calculateSavedRun, carrySickLeave, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
+import { calculateSavedRun, carrySickLeave, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import {
   AuthError, SESSION_COOKIE, createSession, endSession, hashPassword, membershipRole, normaliseEmail,
   sessionUser, verifyPassword, type SessionUser,
@@ -1105,9 +1106,10 @@ route("GET", "/api/orgs/:org/entities/:entity/employees", async (_req, p, ctx) =
   tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
     const uiRate = (await tx.query("SELECT ca_ui_rate::text FROM entities WHERE id = $1", [p.entity])).rows[0]?.ca_ui_rate;
+    const employees = await listEmployees(tx, p.entity!);
     return json({
-      employees: await listEmployees(tx, p.entity!), caUiRate: uiRate ? String(Number(uiRate)) : null,
-      directDeposit: await getDirectDepositSettings(tx, p.entity!),
+      employees: withLocalMinimums(employees, pacificToday()), caUiRate: uiRate ? String(Number(uiRate)) : null,
+      directDeposit: await getDirectDepositSettings(tx, p.entity!), workCities: LOCAL_MINIMUM_WAGE_PLACES,
     });
   }),
 );
@@ -1130,13 +1132,28 @@ route("POST", "/api/orgs/:org/entities/:entity/employees/:employee", async (req,
   return json(employee);
 });
 
+/** Each hourly employee paid below a higher city or county minimum wage today gets `belowLocalMinimum`. */
+function withLocalMinimums(employees: Employee[], today: string) {
+  let stateMinimum: string;
+  try {
+    stateMinimum = resolveRules({ country: "US", region: "CA" }, today).state.wageHour.minimumWage;
+  } catch {
+    return employees;
+  }
+  const headcount = employeeCount(employees, today);
+  return employees.map((e) => {
+    const local = e.payType === "hourly" && e.status === "active" ? localMinimumAbove(stateMinimum, e.workCity, today, headcount) : null;
+    return local && new D(e.payRate).lt(local.rate) ? { ...e, belowLocalMinimum: local } : e;
+  });
+}
+
 /** The parts of an employee in a request; a field left out is left alone. Checked in payroll/employees.ts. */
 function employeeFields(b: Record<string, any>): EmployeeFields {
-  const keys = ["name", "email", "address", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours",
+  const keys = ["name", "email", "address", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours",
     "overtimeExempt", "w4", "de4", "deductions", "sickBalanceHours", "ssn", "openingYtd", "directDeposit"] as const;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
-  for (const k of ["name", "email", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn"]) {
+  for (const k of ["name", "email", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "string") throw new HttpError(400, `${k} should be text`);
   }
   for (const k of ["w4", "de4", "openingYtd", "address", "directDeposit"]) {

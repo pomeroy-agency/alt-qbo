@@ -7,7 +7,7 @@ export const usFederal2026: FederalRulePack = {
   place: { country: "US" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   sources: [
     { ref: "IRS Publication 15-T (2026), page 11, Annual Percentage Method tables", covers: "Worksheet 1A line 1g ($12,900 MFJ, $8,600 other); all six STANDARD and Step 2 schedules, reproduced exactly in tests", basis: "published" },
     { ref: "Rev. Proc. 2025-32, section 3.01 Tables 1-4 and 3.14", covers: "2026 brackets for every filing status; standard deductions $32,200 / $24,150 / $16,100", basis: "published" },

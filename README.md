@@ -45,9 +45,9 @@ DATABASE_URL=postgres://... npm run demo
 
 Set `TEST_DATABASE_ADMIN_URL` if your test server is elsewhere. `DEV_MAIL=log npm run dev` prints emails to the console instead of sending them, and `DEV_TAX_RATES=sample` uses stand-in sales tax rates instead of asking the CDTFA.
 
-## Rule packs are drafts
+## Rule packs
 
-Both 2026 packs have `status: "draft"`. Previews work; a live pay run (`live: true`) refuses to run until a pack is reviewed and marked `released`. Each pack lists its sources and the items that need review in `reviewNotes`. See [docs/rule-pack-review.md](docs/rule-pack-review.md).
+The 2026 federal, California payroll and California sales tax packs are `released` (Greg's sign-off, 2026-10-27). Saved pay runs calculate with `live: true`, so they refuse any pack that is still `draft`; a new year's pack has to be reviewed and released before its first pay date. The 2027 sales tax pack is a draft until CDTFA's SB 122 regulations are approved. Each pack lists its sources and review items in `reviewNotes`. See [docs/rule-pack-review.md](docs/rule-pack-review.md).
 
 ## Design notes
 

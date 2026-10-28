@@ -461,6 +461,21 @@ describe("saved employees and pay runs", () => {
     expect(twice.status).toBe(422);
   });
 
+  it("checks hourly pay against the minimum wage of the city where they work", async () => {
+    const { base, s, add } = await setup();
+    const e = await add({ ...maya, overtimeExempt: false, payType: "hourly", payRate: "18", usualHours: "80", workCity: " mountain  view " });
+    expect(e.workCity).toBe("Mountain View");
+    const list = await call(`${base}/employees`, { cookie: s.cookie });
+    expect(list.data.workCities).toContain("Sunnyvale");
+    const preview = await call(`${base}/pay-runs/preview`, { cookie: s.cookie, body: runFor([e.id]) });
+    expect(preview.status).toBe(200);
+    expect(preview.data.paychecks[0].warnings).toContain("hourly rate 18.00 is below the Mountain View minimum wage of 19.70");
+    const moved = await call(`${base}/employees/${e.id}`, { cookie: s.cookie, body: { workCity: "Fresno" } });
+    expect(moved.data.workCity).toBe("Fresno");
+    const again = await call(`${base}/pay-runs/preview`, { cookie: s.cookie, body: runFor([e.id]) });
+    expect(again.data.paychecks[0].warnings.some((w: string) => w.includes("minimum wage"))).toBe(false);
+  });
+
   it("stops Social Security, FUTA and UI at their wage bases using earlier pay this year", async () => {
     const { add, prepare } = await setup();
     const e = await add({ ...maya, payRate: "260000", openingYtd: { year: 2026, wages: "183500", federalIncomeTax: "40000", socialSecurityTax: "11377", medicareTax: "2660.75" } });
