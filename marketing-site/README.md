@@ -9,7 +9,7 @@ embed. This folder holds the TrailBook additions to it.
 - `build.py` – assembles `dist/<page>.html`, one file per Wix embed. `APP` is the app's address.
 - `patch_existing.py` – builds `dist/patch.js`, which updates the live pages' embeds in the browser:
   new header, a footer link, and a TrailBook band on the home, pricing and Systems & Automation pages.
-- `audit_fixes.py` – builds `dist/fixes.js` with the copy fixes from the 28 Oct 2026 site audit, including the broken TrailBook nav label.
+- `audit_fixes.py` – builds `dist/fixes.js` with the copy fixes from the 28 Oct 2026 site audit: the broken TrailBook nav label, privacy-policy links in every footer and next to the Blueprint forms, and the Install button (email to start, instead of a Stripe link that charged the full $15,000). All applied and published 2026-10-28.
 - `pages/privacy-policy.html` – a new Pomeroy Agency privacy policy to replace the old Wix template page (draft for Greg's review).
 - `analytics-part1-v5.html` – v4 plus Global Privacy Control support, which the new privacy policy promises (not applied yet).
 - `analytics-part1-v4.html` – the site-wide "PA Analytics" Custom Code with the seven TrailBook events added to its allowlist.
