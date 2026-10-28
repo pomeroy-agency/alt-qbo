@@ -5,6 +5,13 @@
 [functions]
   node_bundler = "esbuild"
 
+# The old netlify.app address forwards to the real domain (deploy previews use other hosts, so they're unaffected).
+[[redirects]]
+  from = "https://alt-qbo.netlify.app/*"
+  to = "https://app.pomeroyagency.com/:splat"
+  status = 301
+  force = true
+
 # Single-page app: unknown paths fall back to the shell (API routes are served by the function first).
 [[redirects]]
   from = "/*"
