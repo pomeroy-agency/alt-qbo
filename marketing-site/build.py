@@ -9,7 +9,7 @@ pomeroyagency.com subdomain, rebuild, and paste the pages again.
 """
 import pathlib, re
 
-APP = "https://alt-qbo.netlify.app"
+APP = "https://app.pomeroyagency.com"
 ROOT = pathlib.Path(__file__).parent
 part = lambda n: (ROOT / "partials" / n).read_text()
 
