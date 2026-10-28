@@ -8,6 +8,7 @@ import { getStore } from "@netlify/blobs";
 import { netlifyBackupStore } from "../../src/app/backup-store.js";
 import { backupKeyFromEnv } from "../../src/core/nightly-backups.js";
 import { billingFromEnv } from "../../src/app/billing-config.js";
+import { oauthClientsFromEnv } from "../../src/app/oauth.js";
 import "../../src/db/pool.js";
 
 // One pool per function instance, reused across invocations.
@@ -24,9 +25,13 @@ const taxRates = cdtfaRateLookup();
 const backupKey = backupKeyFromEnv();
 const billing = billingFromEnv();
 
+// MilePost connects with the OAuth client ID and secret set here (and in MilePost's own settings).
+const oauthClients = oauthClientsFromEnv();
+const milepost = { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" };
+
 export default async (req: Request) => handleApi(req, pool, {
-  signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing,
+  signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing, oauthClients, milepost,
   backups: backupKey ? { store: netlifyBackupStore(getStore({ name: "backups", consistency: "strong" })), key: backupKey } : undefined,
 });
 
-export const config: Config = { path: "/api/*" };
+export const config: Config = { path: ["/api/*", "/oauth/*"] };

@@ -108,8 +108,13 @@ const ENTITY_TABS = [
   ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["items", "Products and services"], ["reports", "Reports"], ["payroll", "Payroll", "payrollToDo", "to approve or pay"],
 ];
 const ACCOUNTANT_TABS = [
-  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"],
+  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"], ["integrations", "Integrations"],
 ];
+
+/** The everyday menu, plus a tab for each linked app (MilePost) while the link is live. */
+function entityTabs() {
+  return state.entity?.apps?.milepost ? [...ENTITY_TABS, ["milepost", "MilePost"]] : ENTITY_TABS;
+}
 
 // Shorter names for the phone menu, where buttons sit three to a row.
 const SHORT = { contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
@@ -133,7 +138,7 @@ function shell(active, content) {
   };
   const nav = e ? `
     <div class="label">${esc(e.legalName)}</div>
-    ${ENTITY_TABS.map(link).join("")}
+    ${entityTabs().map(link).join("")}
     <div class="label">Accountant tools</div>
     ${ACCOUNTANT_TABS.map(link).join("")}` : "";
   // On a phone the everyday pages are a grid of buttons; everything else sits under More.
@@ -142,7 +147,7 @@ function shell(active, content) {
   const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
   const billing = ["owner", "admin"].includes(state.org?.role) ? [["billing", "#/billing", "Billing"]] : [];
   const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ["account", "#/account", "Your account"]];
-  const main = e ? ENTITY_TABS.map(tab) : org.map(([k, h, l]) => btn(h, k, l));
+  const main = e ? entityTabs().map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
     ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
     ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
@@ -572,6 +577,143 @@ async function connectionsView(id) {
         <label>Type<select name="kind"><option value="bank">Bank</option><option value="card_issuer">Card issuer</option><option value="processor">Payment processor</option><option value="agency">Government agency</option><option value="business">Another business</option></select></label>
         <button type="submit">Add</button>
       </form></div>` : ""}`);
+}
+
+// ------------------------------------------------------------ integrations
+
+const MP = { search: "" };
+
+function when(ts) {
+  return ts ? new Date(ts).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }) : "never";
+}
+
+async function integrationsView(id) {
+  await loadEntity(id);
+  const r = await api(entPath("/integrations"));
+  const mp = r.milepost;
+  const admin = ["owner", "admin"].includes(state.org.role);
+  const canSetTax = ["owner", "admin", "accountant"].includes(state.org.role);
+  const g = mp.grant;
+  const linked = Boolean(g || mp.key);
+  app.innerHTML = shell("integrations", `
+    <div class="head"><div><h1>Integrations</h1><p class="muted">Apps connected to ${esc(state.entity.entity.legalName)}. Each connection covers this business only.</p></div></div>
+    <div class="cards" style="margin-bottom:16px">
+      <div class="card">
+        <h2 style="margin-top:0">MilePost CRM</h2>
+        <p class="muted">Your CRM. Once linked, a MilePost tab appears here, and a TrailBook tab appears in MilePost for as long as this business's TrailBook subscription is active.</p>
+        <p><span class="pill ${linked ? "" : "grey"}">${linked ? "Connected" : "Not connected"}</span></p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>1. Let MilePost send customers and invoices</h2>
+      <p class="muted">MilePost adds its customers here and, when a deal is won, issues the invoice in these books, then shows when it's paid. Only MilePost creates those invoices, so nothing is invoiced twice.</p>
+      ${g ? `
+        <p>Connected by ${esc(g.approvedBy)} on ${esc(when(g.createdAt))} · last used ${esc(when(g.lastUsedAt))}.</p>
+        <p class="muted">MilePost may: ${g.scopes.map((x) => `<span class="pill grey">${esc(x)}</span>`).join(" ")}</p>
+        <form data-form="app-settings" data-grant="${g.id}" class="row">
+          <label style="flex:1">Kind of sale on MilePost's invoices <span class="muted">(decides sales tax when MilePost doesn't say)</span>
+            <select name="taxCategory" ${canSetTax ? "" : "disabled"}>${r.taxCategories.map((c) => `<option value="${esc(c.id)}" ${c.id === (g.settings.taxCategory ?? "professional_service") ? "selected" : ""}>${esc(c.label)}${c.taxable ? " (taxable)" : ""}</option>`).join("")}</select>
+          </label>
+          ${canSetTax ? `<button type="submit" class="secondary">Save</button>` : ""}
+        </form>
+        ${admin ? `<p><button class="secondary" data-action="revoke-app" data-grant="${g.id}">Disconnect MilePost</button></p>` : ""}`
+      : mp.oauthReady ? `
+        <p>Start in MilePost: open <b>Integrations</b>, find <b>TrailBook</b> under Accounting &amp; payroll and choose <b>Connect</b>. You'll come back here to choose this business and allow it.</p>
+        <p><a class="btn" href="${esc(mp.url)}/app/integrations" target="_blank" rel="noopener">Open MilePost Integrations</a></p>`
+      : `<p class="muted">Not available yet: the server needs MilePost's client ID and secret (MILEPOST_OAUTH_CLIENT_ID and MILEPOST_OAUTH_CLIENT_SECRET).</p>`}
+    </div>
+
+    <div class="panel">
+      <h2>2. Show MilePost inside TrailBook</h2>
+      <p class="muted">With a MilePost API key, the MilePost tab lists your CRM contacts and lets you add them as customers. The key is encrypted before it's stored and never reaches your browser.</p>
+      ${mp.key ? `
+        <p>Linked to ${esc(mp.key.account_name ?? "MilePost")} with the key ending ${esc(mp.key.key_hint)} · checked ${esc(when(mp.key.checked_at))}${mp.key.active ? "" : ` · <span class="pill bad">MilePost subscription inactive</span>`}.</p>
+        ${admin ? `<p><button class="secondary" data-action="remove-milepost-key">Remove the key</button></p>` : ""}`
+      : admin ? `
+        <p>In MilePost, open <b>Integrations</b>, <b>API keys</b>, and create a key named TrailBook. Paste it here; it's shown only once.</p>
+        <form data-form="milepost-key" class="row">
+          <label style="flex:1">MilePost API key<input name="apiKey" required autocomplete="off" placeholder="pacrm_…"></label>
+          <button type="submit">Link MilePost</button>
+        </form>`
+      : `<p class="muted">An owner or admin can link MilePost.</p>`}
+    </div>`);
+}
+
+async function milepostView(id) {
+  await loadEntity(id);
+  const q = MP.search ? `?email=${encodeURIComponent(MP.search)}` : "";
+  const r = await api(entPath(`/milepost${q}`));
+  const canAdd = ["owner", "admin", "bookkeeper", "accountant"].includes(state.org.role);
+  const name = (c) => [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email || "(no name)";
+  app.innerHTML = shell("milepost", `
+    <div class="head"><div><h1>MilePost</h1><p class="muted">Your CRM, linked to ${esc(state.entity.entity.legalName)}.</p></div>
+      <a class="btn secondary" href="${esc(r.url)}/app" target="_blank" rel="noopener">Open MilePost</a></div>
+    ${r.error ? `<div class="alert bad">${esc(r.error)}</div>` : ""}
+    <div class="panel table-wrap">
+      <h2>Invoices from MilePost</h2>
+      <p class="muted">Issued by MilePost when a deal was won. They're ordinary invoices in these books.</p>
+      <table>
+        <thead><tr><th>Number</th><th>Customer</th><th>Date</th><th class="num">Total</th><th class="num">Due</th><th>Status</th></tr></thead>
+        <tbody>${r.invoices.map((d) => `<tr>
+          <td><a href="#/e/${id}/invoices/${d.id}">${esc(d.number)}</a></td><td>${esc(d.contactName)}</td><td>${esc(d.issueDate)}</td>
+          <td class="num">${usd(d.totalMinor)}</td><td class="num">${usd(d.dueMinor)}</td><td><span class="${STATUS_PILL[d.status] ?? "pill"}">${STATUS_LABEL[d.status] ?? esc(d.status)}</span></td></tr>`).join("")
+          || `<tr><td colspan="6" class="muted">None yet. When MilePost is connected (Integrations, step 1), won deals are invoiced here.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="panel table-wrap">
+      <h2>MilePost contacts</h2>
+      ${r.key ? `
+        <form data-form="mp-search" class="row">
+          <label style="flex:1">Find by email<input name="email" type="email" value="${esc(MP.search)}" placeholder="Leave blank for the 25 newest"></label>
+          <button type="submit" class="secondary">Search</button>
+        </form>
+        <table>
+          <thead><tr><th>Name</th><th>Email</th><th>Stage</th><th></th></tr></thead>
+          <tbody>${(r.contacts ?? []).map((c) => `<tr>
+            <td>${esc(name(c))}</td><td>${esc(c.email ?? "")}</td><td>${esc(c.lifecycle_stage ?? "")}</td>
+            <td>${c.customerId ? `<span class="pill grey">Customer here</span>` : canAdd && c.email ? `<button class="link" data-action="mp-add-customer" data-id="${esc(c.id)}" data-email="${esc(c.email)}">Add as customer</button>` : ""}</td></tr>`).join("")
+            || `<tr><td colspan="4" class="muted">${r.contacts ? "No contacts found." : ""}</td></tr>`}</tbody>
+        </table>`
+      : `<p class="muted">Link MilePost with an API key under <a href="#/e/${id}/integrations">Integrations</a> (step 2) to see your CRM contacts here.</p>`}
+    </div>`);
+}
+
+/** The consent page an app sends someone to: choose the business, see what the app asks for, allow or cancel. */
+async function oauthAuthorizeView(query) {
+  const q = new URLSearchParams(query);
+  let info;
+  try {
+    info = await api(`/api/oauth/client?${q.toString()}`);
+  } catch (err) {
+    app.innerHTML = authPage(`<div class="alert bad">${esc(err.message)}</div><p><a href="#/">Go to your books</a></p>`);
+    return;
+  }
+  // Only businesses where this person is an owner or admin can be connected.
+  const orgs = state.me.orgs.filter((o) => ["owner", "admin"].includes(o.role) && !o.name.startsWith("Example:"));
+  const choices = [];
+  for (const o of orgs) {
+    try {
+      const d = await api(`/api/orgs/${o.id}`);
+      for (const e of d.entities) choices.push({ org: o, entity: e });
+    } catch (err) {
+      choices.push({ org: o, error: err.message });
+    }
+  }
+  const usable = choices.filter((c) => c.entity);
+  app.innerHTML = authPage(`
+    <h2>Connect ${esc(info.client.name)} to TrailBook</h2>
+    <p class="muted">Signed in as ${esc(state.me.user.email)}. ${esc(info.client.name)} will be able to:</p>
+    <ul>${info.scopes.map((s) => `<li>${esc(s.description)}</li>`).join("")}</ul>
+    <p class="muted">It never sees Social Security numbers, bank account numbers, payroll or your other businesses. You can disconnect it any time under Integrations.</p>
+    ${choices.filter((c) => c.error).map((c) => `<div class="alert warn">${esc(c.org.name)}: ${esc(c.error)}</div>`).join("")}
+    ${usable.length ? `
+      <form data-form="oauth-allow">
+        <label>Business<select name="target">${usable.map((c) => `<option value="${c.org.id}/${c.entity.id}">${esc(c.entity.legal_name)}${orgs.length > 1 ? ` (${esc(c.org.name)})` : ""}</option>`).join("")}</select></label>
+        <input type="hidden" name="query" value="${esc(q.toString())}">
+        <button type="submit">Allow</button> <a class="btn secondary" href="${esc(info.denyUrl)}">Cancel</a>
+      </form>`
+    : `<div class="alert warn">You need to be an owner or admin of a business in TrailBook to connect an app to it.</div><p><a class="btn secondary" href="${esc(info.denyUrl)}">Back to ${esc(info.client.name)}</a></p>`}`);
 }
 
 // ------------------------------------------------ invoices, bills, contacts
@@ -2251,6 +2393,13 @@ async function auditView() {
 
 // ------------------------------------------------------------------ router
 
+/** Where to go after signing in: back to an app's consent page if that's what sent the person here. */
+function afterLogin() {
+  let next = null;
+  try { next = sessionStorage.getItem("tb_after_login"); sessionStorage.removeItem("tb_after_login"); } catch {}
+  return next && next.startsWith("#/oauth/") ? next : "#/";
+}
+
 async function route() {
   const hash = location.hash || "#/";
   const parts = hash.slice(2).split("/");
@@ -2259,8 +2408,13 @@ async function route() {
     if (["email-link", "reset", "verify"].includes(parts[0]) && parts[1]) return await emailLinkView(parts[0], parts[1]);
     if (parts[0] === "join" && parts[1]) return await joinView(parts[1]);
     if (!state.me) {
-      try { state.me = await api("/api/me"); } catch { return await authView("login"); }
+      try { state.me = await api("/api/me"); } catch {
+        // An app sent someone here to connect: come back to the consent page after signing in.
+        if (hash.startsWith("#/oauth/")) try { sessionStorage.setItem("tb_after_login", hash); } catch {}
+        return await authView("login");
+      }
     }
+    if (hash.startsWith("#/oauth/authorize")) return await oauthAuthorizeView(hash.split("?")[1] ?? "");
     if (!state.me.orgs.length) return authView("login", "Your account isn't part of any organisation yet.");
     if (!state.orgId || !state.me.orgs.some((o) => o.id === state.orgId)) {
       let saved = null;
@@ -2278,7 +2432,7 @@ async function route() {
       if (parts[2] === "sales-tax") return await salesTaxView(parts[1], parts[3]);
       if (parts[2] === "payroll" && parts[3] === "form" && parts[4]) return await formView(parts[1], parts[4], parts[5], parts[6]);
       if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
-      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView }[parts[2] ?? "overview"] ?? overviewView;
+      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView, integrations: integrationsView, milepost: milepostView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
@@ -2387,6 +2541,18 @@ document.addEventListener("click", async (ev) => {
       const tiles = b.closest("nav").querySelector(".more-tiles");
       tiles.hidden = !tiles.hidden;
       b.setAttribute("aria-expanded", String(!tiles.hidden));
+    } else if (a === "revoke-app" || a === "remove-milepost-key") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = a === "revoke-app" ? "Disconnect MilePost? Click again" : "Remove the key? Click again"; return; }
+      b.disabled = true;
+      await api(entPath(a === "revoke-app" ? `/integrations/apps/${b.dataset.grant}/revoke` : "/integrations/milepost/key/remove"), { body: {} });
+      state.entity.fresh = false;
+      toast(a === "revoke-app" ? "MilePost is disconnected" : "The key is removed");
+      await integrationsView(state.entity.entity.id);
+    } else if (a === "mp-add-customer") {
+      b.disabled = true;
+      await api(entPath("/milepost/customers"), { body: { contactId: b.dataset.id, email: b.dataset.email } });
+      toast("Added as a customer");
+      await milepostView(state.entity.entity.id);
     } else if (a === "open-example") {
       b.disabled = true;
       const label = b.textContent;
@@ -2649,7 +2815,7 @@ document.addEventListener("submit", async (ev) => {
       }
       if (r.mfaRequired) return mfaView(r.ticket);
       state.me = null; state.org = null; state.orgId = null;
-      location.hash = "#/";
+      location.hash = afterLogin();
       await route();
     } else if (kind === "mfa") {
       const { ticket, then, invite } = f.dataset;
@@ -2663,7 +2829,7 @@ document.addEventListener("submit", async (ev) => {
       }
       if (then === "join") return joined(r.joined);
       state.me = null; state.org = null; state.orgId = null;
-      location.hash = "#/";
+      location.hash = afterLogin();
       await route();
     } else if (kind === "bill-plan") {
       await api(orgPath("/billing/plan"), { body: { plan: d.plan, interval: f.dataset.interval } });
@@ -2751,6 +2917,25 @@ document.addEventListener("submit", async (ev) => {
       state.entity.fresh = false;
       toast("Period reopened; the reason is in the audit log");
       await periodsView(state.entity.entity.id);
+    } else if (kind === "oauth-allow") {
+      const [orgId, entityId] = d.target.split("/");
+      const q = new URLSearchParams(d.query);
+      const r = await api(`/api/orgs/${orgId}/entities/${entityId}/oauth/approve`, {
+        body: { clientId: q.get("client_id"), redirectUri: q.get("redirect_uri"), scope: q.get("scope"), state: q.get("state") ?? undefined },
+      });
+      location.href = r.redirect;
+      return;
+    } else if (kind === "milepost-key") {
+      await api(entPath("/integrations/milepost/key"), { body: { apiKey: d.apiKey } });
+      state.entity.fresh = false;
+      toast("MilePost is linked");
+      await integrationsView(state.entity.entity.id);
+    } else if (kind === "app-settings") {
+      await api(entPath(`/integrations/apps/${f.dataset.grant}/settings`), { body: { taxCategory: d.taxCategory } });
+      toast("Saved");
+    } else if (kind === "mp-search") {
+      MP.search = (d.email ?? "").trim();
+      await milepostView(state.entity.entity.id);
     } else if (kind === "connection") {
       await api(entPath("/connections"), { body: d });
       state.entity.fresh = false;

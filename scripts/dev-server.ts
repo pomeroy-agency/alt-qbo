@@ -6,6 +6,7 @@ import path from "node:path";
 import { createPool } from "../src/db/pool.js";
 import { migrate } from "../src/db/migrate.js";
 import { handleApi } from "../src/app/api.js";
+import { oauthClientsFromEnv } from "../src/app/oauth.js";
 import { mailerFromEnv, type Mailer } from "../src/app/mail.js";
 import { cdtfaRateLookup, sampleRateLookup } from "../src/app/cdtfa.js";
 import { billingFromEnv } from "../src/app/billing-config.js";
@@ -30,7 +31,7 @@ const backups = { store: memoryStore(), key: randomBytes(32) };
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-  if (url.pathname.startsWith("/api/")) {
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/oauth/")) {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     const request = new Request(url, {
@@ -38,7 +39,7 @@ createServer(async (req, res) => {
       headers: req.headers as Record<string, string>,
       body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
     });
-    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups });
+    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups, oauthClients: oauthClientsFromEnv(), milepost: { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" } });
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
     return;
