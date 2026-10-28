@@ -51,7 +51,7 @@ export interface ResolvedRules {
 export function resolveRules(place: Place, onDate: string, opts: ResolveOptions = {}): ResolvedRules {
   if (!isSupportedPlace(place)) {
     throw new JurisdictionError(
-      `Alt-QBO is not launched in ${[place.country, place.region].filter(Boolean).join("-")} yet`,
+      `TrailBook is not launched in ${[place.country, place.region].filter(Boolean).join("-")} yet`,
     );
   }
   const inForce = (p: RulePack) => p.effectiveFrom <= onDate && onDate <= p.effectiveTo;

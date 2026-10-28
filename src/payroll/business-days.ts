@@ -124,7 +124,7 @@ export function quarterEnd(year: number, q: number): string {
   return iso(new Date(Date.UTC(year, q * 3, 0, 12)));
 }
 
-/** Today's date in California, where Alt-QBO's businesses are. */
+/** Today's date in California, where TrailBook's businesses are. */
 export function pacificToday(now = new Date()): string {
   return now.toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
 }

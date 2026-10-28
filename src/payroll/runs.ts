@@ -123,7 +123,7 @@ function emptyYtd(): EmployeeYtd {
 /**
  * Each employee's totals for the calendar year of `payDate`: posted runs paid
  * on or before it (except `excludeRunId`), plus anything paid before the
- * business started with Alt-QBO.
+ * business started with TrailBook.
  */
 export async function yearToDate(
   tx: Tx,

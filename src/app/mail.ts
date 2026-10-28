@@ -1,6 +1,6 @@
 import nodemailer, { type Transporter } from "nodemailer";
 
-// Outgoing email. Alt-QBO sends a handful of plain-text messages (sign-in
+// Outgoing email. TrailBook sends a handful of plain-text messages (sign-in
 // links, password resets, email confirmation, team invitations) over SMTP:
 // Brevo's relay, or a Gmail mailbox with an app password.
 
@@ -36,7 +36,7 @@ export function mailerFromEnv(env: Record<string, string | undefined> = process.
     }
   } else if (gmailUser && env.GMAIL_APP_PASSWORD) {
     transport = nodemailer.createTransport({ host: "smtp.gmail.com", port: 465, secure: true, auth: { user: gmailUser, pass: env.GMAIL_APP_PASSWORD.replace(/\s+/g, "") } });
-    from ||= `Alt-QBO <${gmailUser}>`;
+    from ||= `TrailBook <${gmailUser}>`;
   } else {
     return undefined;
   }

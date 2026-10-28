@@ -19,7 +19,7 @@ const CAN_WRITE: Role[] = ["owner", "admin", "bookkeeper", "accountant", "system
 export interface OpeningYtd {
   /** The calendar year these figures are for. */
   year: number;
-  /** Wages paid this year before Alt-QBO, as decimal strings. */
+  /** Wages paid this year before TrailBook, as decimal strings. */
   wages: string;
   federalIncomeTax: string;
   socialSecurityTax: string;

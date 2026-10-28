@@ -1,4 +1,4 @@
-// Alt-QBO's own prices, as approved on 2026-10-25 (see docs/pricing.md).
+// TrailBook's own prices, as approved on 2026-10-25 (see docs/pricing.md).
 // Prices are per business, before sales tax. Every subscription keeps a
 // copy of the price list it signed up under, so a later change to this file
 // never changes what an existing customer pays; moving customers to new

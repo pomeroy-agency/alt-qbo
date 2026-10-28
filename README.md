@@ -1,4 +1,4 @@
-# Alt-QBO
+# TrailBook
 
 Accounting platform for small businesses, built as an alternative to QuickBooks Online.
 This repository holds **Phase 0**: the core every module builds on.
@@ -26,7 +26,7 @@ This repository holds **Phase 0**: the core every module builds on.
 | Backup | `src/core/backup.ts` | "Download a backup" on the Overview (owners, admins, accountants): one JSON file with every row behind the books and the organisation's audit chain, a checksum that catches edits, and no passwords, session or email-link tokens, or connection credentials. Each download is in the audit log |
 | Two-factor sign-in | `src/app/mfa.ts`, `netlify/database/migrations/20261029000001_two_factor.sql` | Authenticator-app codes (TOTP) after the password or an emailed link, each code used once, five tries per sign-in, ten one-time recovery codes; the secret is sealed with PII_KEY. Owners can require it for everyone |
 | Nightly backups | `src/core/nightly-backups.ts`, `netlify/functions/nightly-backups.mts` | Each night, every business's backup is encrypted (BACKUP_KEY), stored in Netlify Blobs apart from the database, read back and checked (checksum, audit chain, every entry balanced, every account matching the live books) and kept 30 days. Restore points on the Overview; failures email OPS_EMAIL |
-| Billing | `src/billing/`, `netlify/functions/billing-run.mts`, `netlify/database/migrations/20261029000003_billing.sql` | Alt-QBO's own subscriptions: 30-day trial, Books and Books + Payroll monthly or yearly, extra businesses, people paid, founding price lock, partner discount. Each charge is an invoice in the seller's own books, then the card saved on Stripe's page is charged. Unpaid organisations become read-only, never deleted. Setup: [docs/launch-setup.md](docs/launch-setup.md) |
+| Billing | `src/billing/`, `netlify/functions/billing-run.mts`, `netlify/database/migrations/20261029000003_billing.sql` | TrailBook's own subscriptions: 30-day trial, Books and Books + Payroll monthly or yearly, extra businesses, people paid, founding price lock, partner discount. Each charge is an invoice in the seller's own books, then the card saved on Stripe's page is charged. Unpaid organisations become read-only, never deleted. Setup: [docs/launch-setup.md](docs/launch-setup.md) |
 | Public pages | `web/pricing.html`, `web/promises.html`, `web/security.html`, `web/status.html` | Prices, promises, how the books are protected, and live service status |
 | Tax export | `src/core/reports.ts` | Trial balance by tax line as CSV for Intuit tax software; an unmapped account blocks the export, not the books |
 

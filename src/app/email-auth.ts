@@ -50,27 +50,27 @@ export async function useEmailToken(tx: Tx, token: string, purpose: EmailPurpose
 
 export const emailText = {
   sign_in: (name: string, link: string) => ({
-    subject: "Your Alt-QBO sign-in link",
-    text: `Hi ${name},\n\nUse this link to sign in to Alt-QBO. It works once, for the next 15 minutes:\n\n${link}\n\nIf you didn't ask for it, ignore this email; nobody can sign in without it.\n`,
+    subject: "Your TrailBook sign-in link",
+    text: `Hi ${name},\n\nUse this link to sign in to TrailBook. It works once, for the next 15 minutes:\n\n${link}\n\nIf you didn't ask for it, ignore this email; nobody can sign in without it.\n`,
   }),
   reset: (name: string, link: string) => ({
-    subject: "Reset your Alt-QBO password",
-    text: `Hi ${name},\n\nUse this link to choose a new Alt-QBO password. It works once, for the next hour:\n\n${link}\n\nIf you didn't ask for it, ignore this email; your password stays as it is.\n`,
+    subject: "Reset your TrailBook password",
+    text: `Hi ${name},\n\nUse this link to choose a new TrailBook password. It works once, for the next hour:\n\n${link}\n\nIf you didn't ask for it, ignore this email; your password stays as it is.\n`,
   }),
   verify: (name: string, link: string) => ({
-    subject: "Confirm your email for Alt-QBO",
-    text: `Hi ${name},\n\nConfirm this is your email address for Alt-QBO:\n\n${link}\n\nThe link works for three days.\n`,
+    subject: "Confirm your email for TrailBook",
+    text: `Hi ${name},\n\nConfirm this is your email address for TrailBook:\n\n${link}\n\nThe link works for three days.\n`,
   }),
   mfa_on: (name: string) => ({
-    subject: "Two-factor sign-in is on for your Alt-QBO account",
-    text: `Hi ${name},\n\nTwo-factor sign-in was just turned on for your Alt-QBO account. From now on, signing in also needs a code from your authenticator app.\n\nKeep your recovery codes somewhere safe. If you didn't do this, reset your password right away.\n`,
+    subject: "Two-factor sign-in is on for your TrailBook account",
+    text: `Hi ${name},\n\nTwo-factor sign-in was just turned on for your TrailBook account. From now on, signing in also needs a code from your authenticator app.\n\nKeep your recovery codes somewhere safe. If you didn't do this, reset your password right away.\n`,
   }),
   mfa_off: (name: string) => ({
-    subject: "Two-factor sign-in is off for your Alt-QBO account",
-    text: `Hi ${name},\n\nTwo-factor sign-in was just turned off for your Alt-QBO account. Signing in now needs only your password.\n\nIf you didn't do this, reset your password and turn two-factor back on right away.\n`,
+    subject: "Two-factor sign-in is off for your TrailBook account",
+    text: `Hi ${name},\n\nTwo-factor sign-in was just turned off for your TrailBook account. Signing in now needs only your password.\n\nIf you didn't do this, reset your password and turn two-factor back on right away.\n`,
   }),
   invite: (orgName: string, role: string, inviter: string, link: string) => ({
-    subject: `${inviter} invited you to ${orgName} on Alt-QBO`,
-    text: `${inviter} invited you to join ${orgName} on Alt-QBO as ${role}.\n\nAccept with this link. It works once, for this email address, for 14 days:\n\n${link}\n`,
+    subject: `${inviter} invited you to ${orgName} on TrailBook`,
+    text: `${inviter} invited you to join ${orgName} on TrailBook as ${role}.\n\nAccept with this link. It works once, for this email address, for 14 days:\n\n${link}\n`,
   }),
 };

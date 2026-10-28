@@ -55,7 +55,7 @@ export interface ApiOptions {
   taxRates?: RateLookup;
   /** Where the nightly encrypted backups are kept, and their key. Without it, restore points can't be downloaded. */
   backups?: { store: BackupStore; key: Buffer };
-  /** Alt-QBO's own subscriptions: card processor, seller's books, and whether unpaid organisations become read-only. */
+  /** TrailBook's own subscriptions: card processor, seller's books, and whether unpaid organisations become read-only. */
   billing?: BillingConfig;
 }
 
@@ -1019,7 +1019,7 @@ route("POST", "/api/orgs/:org/entities/:entity/backups/:run/download", async (_r
     });
     return b;
   });
-  const name = `alt-qbo-backup-${String(backup.entity.legal_name).toLowerCase()}-${backup.createdAt.slice(0, 10)}.json`.replace(/[^\w.-]+/g, "-");
+  const name = `trailbook-backup-${String(backup.entity.legal_name).toLowerCase()}-${backup.createdAt.slice(0, 10)}.json`.replace(/[^\w.-]+/g, "-");
   return json(backup, 200, { "content-disposition": `attachment; filename="${name}"` });
 });
 
@@ -1030,7 +1030,7 @@ route("POST", "/api/orgs/:org/entities/:entity/backup", async (_req, p, ctx) => 
     await ensureEntity(tx, p.entity!);
     return backupEntity(tx, { orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor });
   });
-  const name = `alt-qbo-backup-${String(backup.entity.legal_name).toLowerCase()}-${backup.createdAt.slice(0, 10)}.json`.replace(/[^\w.-]+/g, "-");
+  const name = `trailbook-backup-${String(backup.entity.legal_name).toLowerCase()}-${backup.createdAt.slice(0, 10)}.json`.replace(/[^\w.-]+/g, "-");
   return json(backup, 200, { "content-disposition": `attachment; filename="${name}"` });
 });
 

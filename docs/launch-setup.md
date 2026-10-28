@@ -1,6 +1,6 @@
 # Switching on paid accounts
 
-What has to be set up before Alt-QBO charges anyone, and what each piece does. Prices and promises were approved on 2026-10-25 ([pricing doc](https://claude.ai/artifact/H5LJ9pvNnn8aQabuA8Un94)); the matching terms of service changes (sections 4.2, 4.3, 5.2 and 10) are in the [terms of service doc](https://claude.ai/artifact/DrN5xh3U7RnPHrF2HKwxHa).
+What has to be set up before TrailBook charges anyone, and what each piece does. Prices and promises were approved on 2026-10-25 ([pricing doc](https://claude.ai/artifact/H5LJ9pvNnn8aQabuA8Un94)); the matching terms of service changes (sections 4.2, 4.3, 5.2 and 10) are in the [terms of service doc](https://claude.ai/artifact/DrN5xh3U7RnPHrF2HKwxHa).
 
 Until these are set, nothing changes for anyone: every organisation keeps full use, and nobody is charged.
 
@@ -11,7 +11,7 @@ Until these are set, nothing changes for anyone: every organisation keeps full u
 | `BACKUP_KEY` | Encrypts the nightly backups. Without it the nightly backup function skips and logs why. Keep a copy somewhere safe outside Netlify: without the key the copies can't be opened. | `openssl rand -base64 32` |
 | `OPS_EMAIL` | Gets an email when a nightly backup fails its check, or a charge needs a person. | Your address |
 | `STRIPE_SECRET_KEY` | Card payments. Use the test key (`sk_test_…`) first, then the live key. | Stripe dashboard, Developers, API keys |
-| `BILLING_SELLER_ORG_ID`, `BILLING_SELLER_ENTITY_ID` | The Alt-QBO organisation and business whose books get each subscription invoice and payment: your California LLC. That organisation is never charged. | Open the business in Alt-QBO; the address bar shows `#/e/<entity id>/…`. The organisation id is in `GET /api/me`. |
+| `BILLING_SELLER_ORG_ID`, `BILLING_SELLER_ENTITY_ID` | The TrailBook organisation and business whose books get each subscription invoice and payment: your California LLC. That organisation is never charged. | Open the business in TrailBook; the address bar shows `#/e/<entity id>/…`. The organisation id is in `GET /api/me`. |
 | `BILLING_BANK_ACCOUNT` | Optional. The bank account code card payments are recorded to, such as a "Stripe" clearing account you add under Chart of accounts. Default: the operating account. | Chart of accounts |
 | `BILLING_ENFORCE` | `true` pauses changes (never reading or downloading) for an organisation whose trial ended unpaid, whose payment is 14 days overdue, or whose subscription ended. It also keeps payroll changes to Books + Payroll. Leave it off until card payments work end to end. | `true` |
 

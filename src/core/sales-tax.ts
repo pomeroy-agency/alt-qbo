@@ -53,7 +53,7 @@ const CAN_SET_RATE: Role[] = ["owner", "accountant", "system"];
 
 /**
  * SB 122: past $5,000,000 of software a year from one seller, the buyer
- * reports the tax (with a use tax direct payment permit). Alt-QBO warns from
+ * reports the tax (with a use tax direct payment permit). TrailBook warns from
  * $4,000,000 so an accountant can check before the line is crossed.
  */
 const DIRECT_PAY_THRESHOLD_MINOR = 500_000_000n;
@@ -87,7 +87,7 @@ export function cleanAddress(a: Partial<Record<keyof Address, unknown>> | null |
 
 export function rulesFor(region: string | null, date: string): SalesTaxRulePack {
   const pack = salesTaxRules(region, date);
-  if (!pack) throw new LedgerError("INVALID", `Alt-QBO has no sales tax rules for ${region ?? "this place"} on ${date} yet`);
+  if (!pack) throw new LedgerError("INVALID", `TrailBook has no sales tax rules for ${region ?? "this place"} on ${date} yet`);
   return pack;
 }
 
@@ -222,7 +222,7 @@ export async function decideSalesTax(
     throw new LedgerError("INVALID", `add ${contact.name}'s billing address: software is taxed where the customer is, not where your business is`);
   }
   if (!delivery) {
-    throw new LedgerError("INVALID", `add ${contact.name}'s address, or your business address, so Alt-QBO can work out the sales tax rate`);
+    throw new LedgerError("INVALID", `add ${contact.name}'s address, or your business address, so TrailBook can work out the sales tax rate`);
   }
   if (delivery.state !== ent.region) return decision("out_of_state", "0.00000", { jurisdiction: `Delivered to ${delivery.state}` });
   const found = await lookupRate(pack, delivery, input.lookup);
@@ -401,7 +401,7 @@ export async function decideUseTax(
   }
   if (!where) throw new LedgerError("INVALID", "add your business address first: use tax is worked out where your business uses what it bought");
   if (where.state !== ent.region) {
-    throw new LedgerError("INVALID", `your business address is in ${where.state}; Alt-QBO works out California use tax for things used at a California address. An owner or accountant can set the rate by hand`);
+    throw new LedgerError("INVALID", `your business address is in ${where.state}; TrailBook works out California use tax for things used at a California address. An owner or accountant can set the rate by hand`);
   }
   const found = await lookupRate(pack, where, input.lookup);
   return decision("lookup", found.rate, { jurisdiction: found.jurisdiction });

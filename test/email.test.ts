@@ -37,7 +37,7 @@ describe("email sign-in, reset and confirmation", () => {
   it("confirms the email from the link sent at sign-up, using the configured site address", async () => {
     const s = await signup();
     const mail = lastLink(s.email);
-    expect(mail.subject).toBe("Confirm your email for Alt-QBO");
+    expect(mail.subject).toBe("Confirm your email for TrailBook");
     expect(mail.link.startsWith("https://books.example/#/verify/")).toBe(true);
     expect((await call("/api/me", { cookie: s.cookie })).data.user.emailVerified).toBe(false);
     expect((await call(`/api/auth/verify/${mail.token}`, { body: {} })).data).toEqual({ ok: true, email: s.email });
@@ -52,7 +52,7 @@ describe("email sign-in, reset and confirmation", () => {
     expect(sent.length).toBe(before);
     expect((await call("/api/auth/email-link", { body: { email: s.email.toUpperCase() } })).status).toBe(200);
     const { token, subject } = lastLink(s.email);
-    expect(subject).toBe("Your Alt-QBO sign-in link");
+    expect(subject).toBe("Your TrailBook sign-in link");
     const r = await call(`/api/auth/email-link/${token}`, { body: {} });
     expect(r.status).toBe(200);
     expect((await call("/api/me", { cookie: r.cookie })).data.user.email).toBe(s.email);
@@ -91,7 +91,7 @@ describe("email sign-in, reset and confirmation", () => {
     const inv = await call(`/api/orgs/${orgId}/invitations`, { cookie: s.cookie, body: { email, role: "bookkeeper" } });
     expect(inv.data.emailed).toBe(true);
     const mail = lastLink(email);
-    expect(mail.subject).toBe("Ann invited you to Ann Co on Alt-QBO");
+    expect(mail.subject).toBe("Ann invited you to Ann Co on TrailBook");
     expect(mail.link).toBe(`https://books.example/#/join/${inv.data.token}`);
   });
 });
@@ -101,7 +101,7 @@ describe("mail configuration", () => {
     const { mailerFromEnv } = await import("../src/app/mail.js");
     expect(mailerFromEnv({})).toBeUndefined();
     expect(mailerFromEnv({ GMAIL_USER: "a@gmail.com", GMAIL_APP_PASSWORD: "abcd efgh ijkl mnop" })).toBeTypeOf("function");
-    expect(mailerFromEnv({ SMTP_HOST: "smtp-relay.brevo.com", SMTP_USER: "x@smtp-brevo.com", SMTP_PASSWORD: "key", MAIL_FROM: "Alt-QBO <books@example.com>" })).toBeTypeOf("function");
+    expect(mailerFromEnv({ SMTP_HOST: "smtp-relay.brevo.com", SMTP_USER: "x@smtp-brevo.com", SMTP_PASSWORD: "key", MAIL_FROM: "TrailBook <books@example.com>" })).toBeTypeOf("function");
     expect(mailerFromEnv({ SMTP_HOST: "smtp-relay.brevo.com", SMTP_USER: "x@smtp-brevo.com", SMTP_PASSWORD: "key" })).toBeUndefined();
   });
 });

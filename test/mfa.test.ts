@@ -34,7 +34,7 @@ async function turnOn(s: { cookie: string }) {
   const setup = await call("/api/me/mfa/setup", { cookie: s.cookie, body: {} });
   expect(setup.status).toBe(200);
   expect(setup.data.qrSvg).toContain("<svg");
-  expect(setup.data.uri).toMatch(/^otpauth:\/\/totp\/Alt-QBO/);
+  expect(setup.data.uri).toMatch(/^otpauth:\/\/totp\/TrailBook/);
   const on = await call("/api/me/mfa/enable", { cookie: s.cookie, body: { code: codeNow(setup.data.secret) } });
   expect(on.status).toBe(200);
   return { secret: setup.data.secret as string, recoveryCodes: on.data.recoveryCodes as string[] };

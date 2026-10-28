@@ -1,9 +1,9 @@
-// Card payments for Alt-QBO's own subscriptions. Cards are entered on the
+// Card payments for TrailBook's own subscriptions. Cards are entered on the
 // payment processor's own page (Stripe Checkout), so card numbers never touch
-// Alt-QBO; we keep only the processor's references and the brand, last four
-// digits and expiry to show the customer. Charges are made by Alt-QBO's
+// TrailBook; we keep only the processor's references and the brand, last four
+// digits and expiry to show the customer. Charges are made by TrailBook's
 // renewal job against the saved card, for the total of an invoice issued in
-// the seller's own Alt-QBO books (with sales tax worked out there).
+// the seller's own TrailBook books (with sales tax worked out there).
 
 export interface SavedCard {
   orgId: string;

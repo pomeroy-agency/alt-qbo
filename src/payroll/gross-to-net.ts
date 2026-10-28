@@ -95,7 +95,7 @@ function money(v: string | undefined): Dec {
 
 /**
  * Calculates one employee's paycheck. This computes and prepares only:
- * Alt-QBO never moves the money or files the taxes.
+ * TrailBook never moves the money or files the taxes.
  */
 export function calculatePaycheck(
   input: EmployeePayInput,

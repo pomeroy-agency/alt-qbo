@@ -45,7 +45,7 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | Rates from Jan 1, 2026 | 28 cities and San Mateo County unincorporated, incl. San Jose $18.45, San Diego $17.75, Oakland $17.34, Mountain View $19.70, Sunnyvale $19.50, West Hollywood $20.25 | ⚠️ from CalChamber, Davis Wright Tremaine and CDF summaries; city sites and the Berkeley Labor Center list are blocked here |
 | Rates from Jul 1, 2026 | Alameda, Berkeley, Emeryville, Fremont, Los Angeles, LA County unincorporated, Malibu, Milpitas, Pasadena, San Francisco, Santa Monica | ⚠️ same sources. Pay periods ending before Jul 1, 2026 aren't checked for these 11 |
 | Announced for Jan 1, 2027 | Burlingame, Half Moon Bay, Hayward, Novato, Palo Alto, Petaluma, San Diego, San Mateo, San Mateo County, Santa Clara, West Hollywood | ⚠️ the other cities announce in Nov and Dec; the daily rule watch adds them. Local rates below the 2027 state $17.40 (e.g. Oakland's 2026 rate) are ignored |
-| Size tiers | Hayward (26+ employees), Novato (26 to 99, 100+) | ⚠️ counts employees on file in Alt-QBO, which may miss staff paid elsewhere |
+| Size tiers | Hayward (26+ employees), Novato (26 to 99, 100+) | ⚠️ counts employees on file in TrailBook, which may miss staff paid elsewhere |
 | Not covered | hotel and health-care worker rates, salaried non-exempt staff, local sick-leave rules | known gap |
 
 ### Already announced for 2027 (a 2027 pack is needed before the first 2027 pay date)
@@ -106,7 +106,7 @@ How the app applies it (`src/core/sales-tax.ts`):
 When a vendor doesn't charge California tax on something taxable, the business owes use tax on it. The case SB 122 makes common: software and SaaS bought from vendors that don't collect California tax, from January 1, 2027.
 
 How the app applies it (`decideUseTax` and `recordBill` in `src/core/sales-tax.ts`):
-- **When.** A bill accrues use tax when the person ticks "The vendor didn't charge California sales tax", which defaults to on for vendors marked that way. Alt-QBO doesn't decide whether the vendor should have charged tax.
+- **When.** A bill accrues use tax when the person ticks "The vendor didn't charge California sales tax", which defaults to on for vendors marked that way. TrailBook doesn't decide whether the vendor should have charged tax.
 - **What.** Each line's kind decides taxability under the same pack as invoices, and software follows the start of the access period with the same split rule. So software bought for 2027 access accrues use tax and software for 2026 access doesn't.
 - **Rate.** The CDTFA rate for the business's own address, where it uses what it bought. That includes district use tax, on the reading that the business uses the purchase in the district where it is located. An owner or accountant can set the rate by hand.
 - **Books.** The use tax is added to the cost of the line (its expense or asset account) and credited to sales tax payable. It is never owed to the vendor, so payables and the bill total don't include it.
@@ -122,11 +122,11 @@ How the app applies it (`decideUseTax` and `recordBill` in `src/core/sales-tax.t
 
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
-The forms are worksheets with each line's figure, for copying into the filing site. Alt-QBO doesn't file them.
+The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
 
 | Form | What to check | Source | Check |
 |---|---|---|---|
-| 941 | Line numbers and labels 1-16; line 7 fractions of cents; Schedule B over $50,000 or semiweekly | 2026 Form 941 and instructions (Rev. Mar 2026) | ✅ line numbers match the IRS PDF. Lines 5b, 5f, 8, 9 and 11 (tips, sick-pay and credit adjustments) aren't used by Alt-QBO and are left out |
+| 941 | Line numbers and labels 1-16; line 7 fractions of cents; Schedule B over $50,000 or semiweekly | 2026 Form 941 and instructions (Rev. Mar 2026) | ✅ line numbers match the IRS PDF. Lines 5b, 5f, 8, 9 and 11 (tips, sick-pay and credit adjustments) aren't used by TrailBook and are left out |
 | 940 | Lines 1a-15a; line 4 exempt payments (section 125); line 9/10 not used; quarterly liability when over $500 | 2025 Form 940 and Schedule A (the 2026 form comes out in December) | ✅ accepted 2026-10-27 ⚠️ recheck: checked against the 2025 form; recheck against the 2026 form when published. Line 11 waits for California's 2026 credit reduction |
 | DE 9 | Item letters C (total subject wages), D (UI, ETT, SDI wages, rates and contributions), E (UI and ETT), F (SDI), G, H (PIT withheld), I (deposits), J (balance due) | DE 9 form and instructions | ✅ accepted 2026-10-27 ⚠️ recheck: from memory of the form; the EDD and DIR sites are blocked here. Confirm each item letter against the current DE 9 |
 | DE 9C | A1-A3 employee counts for the pay period including the 12th of each month; per employee SSN, name, total subject wages, PIT wages, PIT withheld | DE 9C form and instructions | ✅ accepted 2026-10-27 ⚠️ recheck: same as DE 9 |
@@ -135,15 +135,15 @@ The forms are worksheets with each line's figure, for copying into the filing si
 
 ## Sales and use tax return worksheet (`src/core/sales-tax-return.ts`)
 
-A worksheet for the business's own CDTFA-401, built on the sales tax report. Alt-QBO doesn't file or pay it.
+A worksheet for the business's own CDTFA-401, built on the sales tax report. TrailBook doesn't file or pay it.
 
-| Item | What Alt-QBO does | Source | Check |
+| Item | What TrailBook does | Source | Check |
 |---|---|---|---|
 | Due dates | Last day of the month after the period (monthly, quarterly, yearly; fiscal year July to June), moved past weekends and California holidays | CDTFA filing due dates | ✅ accepted 2026-10-27 ⚠️ recheck: from working knowledge; ca.gov is blocked here. Confirm the weekend and holiday rule |
 | Prepayments | Quarterly prepay accounts: due the 24th of the month after each of the first two months of the quarter; in Q2 the second covers May 1 to June 15 (due June 24). Each line shows the tax charged and the accepted shares: 90% of the month, or a third of the same quarter last year; Q2's second: 90% of May plus 90% of June 1-15, 135% of May, or half of last year's Q2 | CDTFA-367-SUT and 367-EFT (via search extracts) | ✅ accepted 2026-10-27 ⚠️ recheck: confirm against the current CDTFA forms; the sources disagree on the order of the Q2 options |
 | Accrual basis | Sales count in the period of the invoice date. An invoice voided after its period ends stays in that period, with a warning to amend | Accrual is the CDTFA default; cash basis needs the CDTFA's approval | ✅ Greg chose accrual (2026-10-25) and approved 2026-10-27 |
 | Line labels | Labeled by what the line is, not by line number, because the online return numbers its lines differently from the paper CDTFA-401 | CDTFA-401 | ✅ accepted 2026-10-27 ⚠️ recheck: match each to the 2027 online return. SB 122 direct-pay and multiple-points-of-use software go under "other deductions" with a description; confirm CDTFA doesn't add its own lines |
-| State and district tax | State and local at 7.25% of taxable sales; district tax per place on Schedule A at the looked-up rate less 7.25% | CDTFA-401 Schedule A | ✅ accepted 2026-10-27 ⚠️ recheck: Schedule A asks for district codes; Alt-QBO shows the place name from the rate lookup |
+| State and district tax | State and local at 7.25% of taxable sales; district tax per place on Schedule A at the looked-up rate less 7.25% | CDTFA-401 Schedule A | ✅ accepted 2026-10-27 ⚠️ recheck: Schedule A asks for district codes; TrailBook shows the place name from the rate lookup |
 | Excess tax collected | When invoices charged more than the return computes, a warning says to pay the extra | Rev. & Tax. Code §6901.5 | ✅ |
 | No permit | An invoice charging tax with no seller's permit recorded shows a warning (it isn't stopped) | Rev. & Tax. Code §§6066, 6071 | ✅ |
 | Reminders | An email to owners, admins and accountants up to 5 days before each return and prepayment due date, once per date, after the period ends | Follows the due dates above | ✅ added after Greg's approval 2026-10-27 |

@@ -8,8 +8,8 @@ import { rulesFor, salesTaxReport } from "./sales-tax.js";
 
 // The business's own California sales and use tax return (CDTFA-401), as a
 // worksheet. Every figure comes from issued invoices and the tax frozen on
-// each. Alt-QBO prepares the figures; the business (or its accountant) files
-// the return and pays in CDTFA online services. Alt-QBO doesn't file anything.
+// each. TrailBook prepares the figures; the business (or its accountant) files
+// the return and pays in CDTFA online services. TrailBook doesn't file anything.
 
 export const FILING_FREQUENCIES = {
   monthly: "Monthly",
@@ -197,7 +197,7 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
 
   const warnings: string[] = [];
   if (!ent.seller_permit) warnings.push("Record your seller's permit number on this page's settings. It goes at the top of every return");
-  if (!ent.sales_tax_filing) warnings.push("Record how often the CDTFA has you file (it's on your permit), so Alt-QBO shows the right periods and due dates");
+  if (!ent.sales_tax_filing) warnings.push("Record how often the CDTFA has you file (it's on your permit), so TrailBook shows the right periods and due dates");
   if (charged > computed) {
     warnings.push(`Your invoices charged ${usdText(charged - computed)} more tax than the return computes, from per-invoice rounding or a rate set by hand. Tax collected from customers is owed to the state even when it is more than the tax due, so pay the extra with this return (Rev. & Tax. Code §6901.5)`);
   }
@@ -222,8 +222,8 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
     money("Deduction", "Nontaxable sales (services and other)", nontaxable, r.nontaxable.map((n) => `${n.label} ${usdText(n.amountMinor)}`).join("; ") || undefined),
     money("Deduction", "Software sold to buyers with a use tax direct payment permit", r.directPayMinor, "The buyer reports the tax (SB 122). Claim it under other deductions and describe it"),
     money("Deduction", "Software used outside California (multiple points of use)", r.outsideCaUseMinor, "The out-of-state share from customers' certificates. Claim it under other deductions and describe it"),
-    money("Deduction", "Sales tax included in total sales", 0n, "Alt-QBO keeps the tax apart from the sale, so there is none to deduct"),
-    money("Deduction", "Bad debt losses on taxable sales", null, "Alt-QBO doesn't track written-off invoices yet. Enter any you wrote off this period"),
+    money("Deduction", "Sales tax included in total sales", 0n, "TrailBook keeps the tax apart from the sale, so there is none to deduct"),
+    money("Deduction", "Bad debt losses on taxable sales", null, "TrailBook doesn't track written-off invoices yet. Enter any you wrote off this period"),
     money("Total deductions", "Total deductions", deductions),
     money("Taxable", "Total taxable sales and purchases", taxable),
     { line: "Rate", label: "State and local rate", value: `${new D(pack.statewideRate).mul(100).toString()}%`, kind: "text" },

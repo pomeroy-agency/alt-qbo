@@ -27,7 +27,7 @@ describe("backup", () => {
 
     const r = await call(`/api/orgs/${orgId}/entities/${entityId}/backup`, { cookie, body: {} });
     expect(r.status).toBe(200);
-    expect(r.headers.get("content-disposition")).toMatch(/attachment; filename="alt-qbo-backup-sunset-design-studio-llc-\d{4}-\d{2}-\d{2}\.json"/);
+    expect(r.headers.get("content-disposition")).toMatch(/attachment; filename="trailbook-backup-sunset-design-studio-llc-\d{4}-\d{2}-\d{2}\.json"/);
     const b = r.data;
     expect(b).toMatchObject({ format: "alt-qbo-backup", version: 1, organization: { id: orgId } });
     expect(b.counts).toMatchObject({ contacts: 6, items: 2, bank_lines: 5, employees: 2 });
