@@ -211,7 +211,7 @@ async function authView(mode, error = "", notice = "") {
           <label>Password<input name="password" type="password" required minlength="${signup ? 10 : 1}" autocomplete="${signup ? "new-password" : "current-password"}"></label>
           ${signup ? `
             <label>Business or firm name<input name="orgName" required></label>
-            <label>Invite code<input name="inviteCode" autocomplete="off"></label>
+            <label>Invite code <span class="muted">(optional, only if someone gave you one)</span><input name="inviteCode" autocomplete="off"></label>
             <label class="check"><input type="checkbox" name="acceptTerms" required> I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</label>` : ""}
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>

@@ -1,0 +1,286 @@
+<!-- PA Analytics — Part 1 of 3 — site-level head code
+     Wix Dashboard > Settings > Custom Code > + Add Custom Code
+       Name .............. PA Analytics (GA4 + Pixel + embed bridge)
+       Code placement .... Head
+       Add code to pages . All pages
+       Load code once .... No
+     This is the ONLY place GA4 and the Meta Pixel may exist. If a copy is also
+     inside an embed, every pageview counts twice.
+
+     v5 — 28 October 2026 (site audit). Honors Global Privacy Control, as the
+     new privacy policy says it does. With GPC on, the Meta Pixel is never
+     loaded, nothing goes to the Conversions API relay, and GA4 runs with Google
+     signals and ad personalization off. Nothing else changed. Not applied yet:
+     waiting on Greg's review.
+
+     v4 — 28 October 2026. Seven TrailBook events added to EVENTS. Nothing
+     else changed. Applied to the live site 28 Oct 2026 (revision 4).
+
+     v3 — 31 July 2026. Adds the Conversions API leg. Every Meta-mapped event
+     now goes out twice: from the browser Pixel and from the server function at
+     /api/capi. Both carry the SAME event_id, which is the only reason Meta
+     throws the duplicate away instead of counting it. The pairing is the whole
+     mechanism — if you edit eventId() here, edit capi.mjs in the same sitting.
+
+     v3 also carries a SHA-256 digest of the lead's email on scan_email_submit,
+     for Meta's advanced matching. It arrives as a top-level field on the
+     postMessage, never inside params, and it goes into the relay body only —
+     never to gtag, never to fbq. Only 64 hex characters are ever accepted; a
+     raw address in that slot is dropped, not hashed. -->
+
+<meta name="google-site-verification" content="VMwI_4ACaeWm5LWUWVO4cNa2QdcmC5__zl6Kz9GaXHE" />
+
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CEMK8J8PTZ"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* ------------------------------------------------------------------ GA4 */
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  window.gtag = window.gtag || gtag;
+  /* Global Privacy Control: an opt-out of sharing for advertising. */
+  var GPC = navigator.globalPrivacyControl === true;
+  gtag("js", new Date());
+  if (GPC) gtag("set", { allow_google_signals: false, allow_ad_personalization_signals: false });
+  gtag("config", "G-CEMK8J8PTZ");
+  /* No page_location override. This code runs in the top window, so GA4 reads
+     the real pomeroyagency.com URL by itself. That is the whole point. */
+
+  /* ------------------------------------------------------------ META PIXEL */
+  if (!GPC) {
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+  n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+  n.push=n;n.loaded=!0;n.version="2.0";n.queue=[];t=b.createElement(e);t.async=!0;
+  t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+  (window,document,"script","https://connect.facebook.net/en_US/fbevents.js");
+  fbq("init","909707683290018");
+  fbq("track","PageView");
+  }
+
+  /* ------------------------------------------------------- WHO MAY SPEAK */
+  /* Only the Wix embed CDN and the Netlify diagnostic. The CDN hostname has
+     changed once already (it followed the domain cutover), so this matches the
+     suffix rather than one fixed host. */
+  function trusted(origin) {
+    if (typeof origin !== "string") return false;
+    var h;
+    try { h = new URL(origin).hostname; } catch (e) { return false; }
+    if (h === "pomeroy-profit-diagnostic.netlify.app") return true;
+    if (h === "t.pomeroyagency.com") return true;
+    if (h === "www.pomeroyagency.com" || h === "pomeroyagency.com") return true;
+    return /(^|\.)filesusr\.com$/.test(h);
+  }
+
+  /* ------------------------------------------------ WHAT MAY BE REPORTED */
+  /* An allowlist, not a blocklist. Anything not named here never reaches
+     Google or Meta. */
+  var EVENTS = {
+    scan_view:            null,
+    scan_start:           "InitiateCheckout",
+    scan_step:            null,
+    scan_complete:        null,
+    scan_email_submit:    "Lead",
+    scan_abandon:         null,
+    blueprint_download:   "Lead",
+    pricing_view:         "ViewContent",
+    fix_page_view:        "ViewContent",
+    stripe_click_fix:     "AddToCart",
+    stripe_click_install: "AddToCart",
+    stripe_click_support: "AddToCart",
+    stripe_click_unknown: "AddToCart",
+    email_cta_click:      "Contact",
+    callback_cta_click:   "Contact",
+    scroll_depth:         null,
+    outbound_click:       null,
+    /* TrailBook, added 28 Oct 2026. The trial button only opens the sign-up
+       form, so it maps to InitiateCheckout (begun, not done), the same way
+       scan_start does. Page views are ViewContent like pricing_view. */
+    trailbook_view:         "ViewContent",
+    trailbook_pricing_view: "ViewContent",
+    trailbook_firm_view:    "ViewContent",
+    trailbook_trial_click:  "InitiateCheckout",
+    trailbook_firm_click:   null,
+    trailbook_promo_click:  null,
+    trailbook_signin_click: null
+  };
+  /* stripe_click_support maps to AddToCart, deliberately NOT Subscribe.
+     Reporting a click as a completed subscription would teach Meta's optimiser
+     that everyone who looked at the plan bought it. */
+
+  var PARAMS = {
+    pa_page: 1, pa_source: 1, offer_id: 1, step: 1, total_steps: 1,
+    elapsed_seconds: 1, last_step: 1, percent: 1, scope: 1,
+    destination_host: 1, cta: 1, label: 1
+  };
+
+  /* ------------------------------------------------------- THE SCRUBBER */
+  /* Structural, not advisory. Nothing that looks like a person gets through:
+     no address containing "@", nothing over 100 characters, no key we did not
+     ask for. Part 3 never reads an input value in the first place; this is the
+     second lock on the same door. */
+  function clean(raw) {
+    var out = {}, k, v;
+    if (!raw || typeof raw !== "object") return out;
+    for (k in raw) {
+      if (!Object.prototype.hasOwnProperty.call(raw, k)) continue;
+      if (PARAMS[k] !== 1) continue;
+      v = raw[k];
+      if (typeof v === "number" && isFinite(v)) { out[k] = v; continue; }
+      if (typeof v === "boolean") { out[k] = v; continue; }
+      if (typeof v !== "string") continue;
+      if (v.length > 100) continue;
+      if (v.indexOf("@") > -1) continue;
+      out[k] = v;
+    }
+    return out;
+  }
+
+  /* ------------------------------------------------------ THE SERVER LEG */
+  /* The browser Pixel loses somewhere between a fifth and two fifths of its
+     conversions — ad blockers, iOS tracking prevention, tabs closed before the
+     request flushes. So every Meta-mapped event is sent twice: once from the
+     Pixel here, once from the Netlify function below. Meta keeps whichever
+     arrives first and discards the other, but ONLY when both carry the same
+     event_name AND the same event_id. One id is minted per event and handed to
+     both legs in the same breath. If the two ever drift apart, every
+     conversion double-counts and the numbers are worse than no CAPI at all. */
+  var CAPI = "https://t.pomeroyagency.com/api/capi";
+
+  function eventId() {
+    try {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    } catch (e) {}
+    return "pa-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  }
+
+  /* _fbp and _fbc are the Pixel's own cookies, which the Pixel already sends
+     to Meta on every hit. Handing them to the server leg is what lets Meta
+     recognise the two halves as one person. Nothing else is read from
+     document.cookie, and no other cookie may be added here. */
+  function cookie(n) {
+    try {
+      var m = document.cookie.match(new RegExp("(^|;\\s*)" + n + "=([^;]*)"));
+      return m ? decodeURIComponent(m[2]) : "";
+    } catch (e) { return ""; }
+  }
+
+  /* A SHA-256 digest of a lowercased email, and nothing else. It arrives from
+     the questionnaire as a separate top-level field, never inside params, so it
+     cannot be swept into GA4 by accident. The guard accepts a 64-character hex
+     string only — a raw address fails this test and is dropped rather than
+     hashed here, deliberately: a function that will hash an email for you is a
+     function that invites emails to be sent to it. */
+  function digest(v) {
+    return (typeof v === "string" && /^[a-f0-9]{64}$/.test(v)) ? v : "";
+  }
+
+  /* -------------------------------------------------------- THE REPORTER */
+  function report(name, raw, em) {
+    if (!Object.prototype.hasOwnProperty.call(EVENTS, name)) return;
+    var p = clean(raw);
+    p.page_location = location.href;
+    p.page_path     = location.pathname;
+    if (window.gtag) gtag("event", name, p);
+
+    var meta = EVENTS[name];
+    if (!meta) return;   /* GA4-only event. Nothing about it goes to Meta. */
+    if (GPC) return;     /* GPC on: nothing goes to Meta by either leg. */
+
+    var eid = eventId();
+    var contentName = p.offer_id || p.pa_page || name;
+
+    if (window.fbq) {
+      fbq("track", meta, {
+        content_name: contentName,
+        content_category: name
+      }, { eventID: eid });
+    }
+
+    /* Sent as text/plain so the browser makes a CORS-simple request with no
+       preflight — one fewer round trip to lose when the page is unloading.
+       keepalive lets it survive the navigation. It carries the event name, the
+       id, the page, and the two Pixel cookies: no email, no name, no figure
+       from the questionnaire. Failure is silent on purpose. This leg is a
+       duplicate of one the visitor has already sent; they must never feel it. */
+    try {
+      var body = {
+        event: name,
+        event_id: eid,
+        url: location.href,
+        content_name: contentName,
+        fbp: cookie("_fbp"),
+        fbc: cookie("_fbc")
+      };
+      /* The digest rides on the relay body only. It is never given to gtag and
+         never given to fbq — the browser leg matches on cookies alone. */
+      var h = digest(em);
+      if (h) body.em = h;
+      fetch(CAPI, {
+        method: "POST",
+        keepalive: true,
+        mode: "cors",
+        credentials: "omit",
+        headers: { "content-type": "text/plain;charset=UTF-8" },
+        body: JSON.stringify(body)
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  window.paReport = report;
+
+  window.addEventListener("message", function (ev) {
+    if (!trusted(ev.origin)) return;
+    var d = ev.data;
+    if (!d || typeof d !== "object") return;
+
+    /* Legacy Brevo lead ping. The Lead Machine Blueprint embed has fired a Meta
+       Lead directly since long before this file existed, with a postMessage as
+       its fallback. Once the pixel leaves the embed only the message survives,
+       so accept it here or the Blueprint conversion dies silently. The embed's
+       own legacy block is deliberately left untouched. */
+    if (d.source === "pomeroy-lmb" && d.type === "lmb_lead_submitted") {
+      report("blueprint_download", { pa_page: "blueprint", pa_source: "embed", label: "lmb" });
+      return;
+    }
+
+    if (d.source !== "pa-analytics") return;
+    if (typeof d.event !== "string") return;
+    /* d.em is read from the raw message, NOT from d.params. It never passes
+       through clean() and never reaches GA4. */
+    report(d.event, d.params, d.em);
+  }, false);
+
+  /* ------------------------------------------ PAGE-LEVEL SCROLL AND LINKS */
+  var marks = [25, 50, 75, 100], fired = {};
+  function scrolled() {
+    var de = document.documentElement, b = document.body;
+    var h = Math.max(de.scrollHeight, b ? b.scrollHeight : 0) - window.innerHeight;
+    if (h <= 0) return;
+    var pct = ((window.pageYOffset || de.scrollTop) / h) * 100;
+    for (var i = 0; i < marks.length; i++) {
+      if (pct >= marks[i] && !fired[marks[i]]) {
+        fired[marks[i]] = 1;
+        report("scroll_depth", { percent: marks[i], scope: "page" });
+      }
+    }
+  }
+  window.addEventListener("scroll", function () {
+    if (scrolled.t) return;
+    scrolled.t = setTimeout(function () { scrolled.t = 0; scrolled(); }, 250);
+  }, { passive: true });
+
+  document.addEventListener("click", function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
+    if (!a) return;
+    var href = a.getAttribute("href") || "";
+    if (href.slice(0, 7) === "mailto:") { report("email_cta_click", { pa_source: "page" }); return; }
+    if (href.slice(0, 4) !== "http") return;
+    var host;
+    try { host = new URL(href, location.href).hostname; } catch (e) { return; }
+    if (host === location.hostname) return;
+    report("outbound_click", { destination_host: host, pa_source: "page" });
+  }, true);
+
+})();
+</script>
+<!-- end PA Analytics Part 1 -->

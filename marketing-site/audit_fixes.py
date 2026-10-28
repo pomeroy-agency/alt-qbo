@@ -1,0 +1,91 @@
+"""Build fixes.js: copy fixes for the existing Pomeroy Agency embeds, from the 28 Oct 2026 site audit.
+
+paFix(html, slug) returns the page with every fix for that slug applied. Each
+fix must match exactly once (or the stated count), so a page that has changed
+is reported instead of half-fixed. Replacements use split/join, never
+String.replace with a string, because "$1" in "$15/mo" is a replacement
+pattern there. That is how the TrailBook nav label broke on the live pages.
+"""
+import json
+from build import ROOT
+
+PP = '<a href="https://www.pomeroyagency.com/privacy-policy" target="_top">Privacy Policy</a>'
+
+# slug ("*" = every patched page), text to find, replacement, expected count
+FIXES = [
+    # The TrailBook nav label: "from $15/mo" was pasted as "from <the Blueprint subtitle></span></a>5/mo".
+    ("*", "re:nav-svc-tag\">from [^<]*</span>\\s*</a>5/mo", 'nav-svc-tag">from $15/mo', 1),
+    # The scan takes about three minutes everywhere else on the site.
+    ("/", "Scan</strong> takes about a minute", "Scan</strong> takes about three minutes", 1),
+    ("/", "the free scan, which takes about a minute", "the free scan, which takes about three minutes", 1),
+    ("/two-week-fix", "because it takes a minute and", "because it takes about three minutes and", 1),
+    # Grammar in the home FAQ.
+    ("/", "sometimes lead to a referral", "sometimes leads to a referral", 1),
+    ("/", "and sometimes end with", "and sometimes ends with", 1),
+    # There are more than three prices now.
+    ("/two-week-fix", "All three prices are on the pricing page.", "Every price is on the pricing page.", 1),
+    ("/two-week-fix", "See all three prices", "See all prices", 2),
+    # The pricing FAQ pointed at "section 04", which is the FAQ itself.
+    ("/pricing", "priced in section 04 above", "priced under Monthly plans above", 1),
+    # The brand project lists four phases, and 90 to 35 minutes is 55 saved.
+    ("/brand-positioning", "<h2>Three phases.", "<h2>Four phases.", 1),
+    ("/brand-positioning", "<strong>60min</strong>", "<strong>55 min</strong>", 1),
+    # Four tools were listed, not five.
+    ("/systems-automation", "are five separate islands", "are separate islands", 1),
+    ("/paid-advertising", "Your creative isn't the targeting", "Your creative is the targeting", 1),
+    # Post-handoff support is thirty days on every other page and in the home FAQ.
+    ("/online-strategy", "two months of follow-up support after handoff", "thirty days of follow-up support after handoff", 1),
+    # The Install is "$6,000 to start, $4,500 at week three, $4,500 at handoff", less any Fix credit, but the
+    # button charged the full $15,000 through Stripe. Until a deposit payment link exists, the button starts the
+    # conversation by email instead.
+    ("/pricing",
+     '<a class="go solid" href="https://buy.stripe.com/7sY6oH4O22ef5IZauQe7m06" target="_top" rel="noopener">Book the Install &middot; $15,000</a>',
+     '<a class="go solid" href="mailto:gregory@pomeroyagency.com?subject=The%20Install" target="_top">Start the Install &middot; $6,000 to begin</a>', 1),
+    # No location on the site (Greg, 2026-10-28: the company works in BC and California, and nothing requires one).
+    ("*", ", built on Vancouver Island.", ".", 1),
+    ("/", "Where are you based and do you work remotely?", "Do you work remotely?", 1),
+    ("/", "We're based on Vancouver Island in British Columbia and work entirely remotely", "We work entirely remotely", 1),
+    ("/", "We've also built our entire operation to be location-independent, which means we sometimes deliver work from places that aren't Vancouver Island. The work doesn't suffer for it.",
+     "The whole operation is built to be location-independent, so where we happen to be never slows the work down.", 1),
+    ("/pricing", "<b>Local, and actually reachable</b>", "<b>Actually reachable</b>", 1),
+    ("/pricing", "Vancouver Island based. If you want to talk", "If you want to talk", 1),
+    ("/two-week-fix", '\n      <span class="dot"></span> Vancouver Island based\n', "\n", 1),
+    # The privacy policy, linked next to both Blueprint forms.
+    ("/lead-machine-blueprint", "will never sell your information. CASL", "will never sell your information. " + PP + ". CASL", 1),
+    ("/lead-machine-blueprint", "Unsubscribe anytime. CASL &amp; CAN-SPAM", "Unsubscribe anytime. " + PP + ". CASL &amp; CAN-SPAM", 1),
+]
+# ...and in every footer. Two footer variants.
+for slug in ["/", "/brand-positioning", "/social-strategy", "/systems-automation", "/online-strategy", "/creative-content",
+             "/paid-advertising", "/lead-machine-blueprint", "/profit-leak-scan", "/website-seo"]:
+    FIXES.append((slug, "Pomeroy Agency. All Rights Reserved.</p>", "Pomeroy Agency. All Rights Reserved. " + PP + "</p>", 1))
+for slug in ["/pricing", "/two-week-fix"]:
+    FIXES.append((slug, "Prices in US dollars.</p>", "Prices in US dollars. " + PP + "</p>", 1))
+
+js = f"""/* Audit copy fixes for the existing Pomeroy Agency embeds. Generated by audit_fixes.py. */
+(function () {{
+var FIXES = {json.dumps(FIXES)};
+window.paFix = function (html, slug) {{
+  var out = html, done = [];
+  FIXES.forEach(function (f) {{
+    if (f[0] !== "*" && f[0] !== slug) return;
+    var n, re = f[1].indexOf("re:") === 0 ? new RegExp(f[1].slice(3), "g") : null;
+    if (re) {{
+      n = (out.match(re) || []).length;
+      if (n === 0 && out.indexOf(f[2]) > -1) return; /* already fixed */
+      if (n !== f[3]) throw new Error(slug + ": expected " + f[3] + " of " + f[1] + ", found " + n);
+      out = out.replace(re, function () {{ return f[2]; }});
+    }} else {{
+      n = out.split(f[1]).length - 1;
+      if (n === 0 && out.indexOf(f[2]) > -1) return; /* already fixed */
+      if (n !== f[3]) throw new Error(slug + ": expected " + f[3] + " of " + f[1] + ", found " + n);
+      out = out.split(f[1]).join(f[2]);
+    }}
+    done.push(f[1]);
+  }});
+  return {{ html: out, done: done }};
+}};
+}})();
+"""
+(ROOT / "dist").mkdir(exist_ok=True)
+(ROOT / "dist" / "fixes.js").write_text(js)
+print(len(js))
