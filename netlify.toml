@@ -5,8 +5,7 @@
 [functions]
   node_bundler = "esbuild"
 
-# The app lives at app.pomeroyagency.com; the old Netlify address sends people (and links in old emails) there.
-# Deploy previews have their own addresses and aren't affected.
+# The old netlify.app address forwards to the real domain (deploy previews use other hosts, so they're unaffected).
 [[redirects]]
   from = "https://alt-qbo.netlify.app/*"
   to = "https://app.pomeroyagency.com/:splat"
