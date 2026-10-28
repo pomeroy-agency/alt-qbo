@@ -19,7 +19,7 @@ async function call(path: string, init: { body?: unknown; cookie?: string } = {}
 
 describe("backup", () => {
   it("downloads the whole example business as one checked file, without secrets", async () => {
-    const su = await call("/api/auth/signup", { body: { name: "B", email: `backup${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Backup Co", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "B", email: `backup${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Backup Co", inviteCode: "c" } });
     const cookie = su.cookie!;
     const ex = await call("/api/example", { cookie, body: {} });
     expect(ex.status).toBe(201);
@@ -48,7 +48,7 @@ describe("backup", () => {
   });
 
   it("is for owners, admins and accountants", async () => {
-    const su = await call("/api/auth/signup", { body: { name: "B", email: `backup2${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Backup Co 2", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "B", email: `backup2${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Backup Co 2", inviteCode: "c" } });
     const ex = await call("/api/example", { cookie: su.cookie!, body: {} });
     await expect(withTenant(pool, ex.data.orgId, (tx) => backupEntity(tx, { orgId: ex.data.orgId, entityId: ex.data.entityId, actor: bookkeeper })))
       .rejects.toSatisfy((e: unknown) => e instanceof LedgerError && e.code === "FORBIDDEN");

@@ -97,6 +97,7 @@ function topbar() {
     </header>
     ${state.org?.access?.level === "read_only" ? `<div class="banner bad">Changes are paused: ${esc(state.org.access.reason)}. ${["owner", "admin"].includes(state.org.role) ? `<a href="#/billing">Go to Billing</a>` : "Ask an owner to check Billing."}</div>`
       : state.org?.access?.warning ? `<div class="banner info">${esc(state.org.access.warning)} ${["owner", "admin"].includes(state.org.role) ? `<a href="#/billing">Go to Billing</a>` : ""}</div>` : ""}
+    ${termsBanner()}
     ${state.me?.emailEnabled && state.me.user && !state.me.user.emailVerified ? `<div class="banner info">Please confirm your email: we sent a link to ${esc(state.me.user.email)}. <button class="link" data-action="resend-verify">Send it again</button></div>` : ""}`;
 }
 
@@ -111,6 +112,15 @@ const ACCOUNTANT_TABS = [
 
 // Shorter names for the phone menu, where buttons sit three to a row.
 const SHORT = { contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
+
+// When the terms of service change, an owner or admin accepts the new version for the business.
+function termsBanner() {
+  const o = state.me?.orgs?.find((x) => x.id === state.orgId);
+  if (!o || o.termsAccepted) return "";
+  return ["owner", "admin"].includes(o.role)
+    ? `<div class="banner info">Our <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> have been updated (version ${esc(state.me.termsVersion)}). Please read them and accept them for ${esc(o.name)}. <button class="link" data-action="accept-terms" data-org="${o.id}" data-version="${esc(state.me.termsVersion)}">I accept for ${esc(o.name)}</button></div>`
+    : "";
+}
 
 function shell(active, content) {
   const e = state.entity?.entity;
@@ -200,7 +210,8 @@ async function authView(mode, error = "", notice = "") {
           <label>Password<input name="password" type="password" required minlength="${signup ? 10 : 1}" autocomplete="${signup ? "new-password" : "current-password"}"></label>
           ${signup ? `
             <label>Business or firm name<input name="orgName" required></label>
-            <label>Invite code<input name="inviteCode" autocomplete="off"></label>` : ""}
+            <label>Invite code<input name="inviteCode" autocomplete="off"></label>
+            <label class="check"><input type="checkbox" name="acceptTerms" required> I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</label>` : ""}
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>
         ${!signup && email ? `<p style="margin-top:12px"><a href="#/magic">Email me a sign-in link instead</a> · <a href="#/forgot">Forgot your password?</a></p>` : ""}
@@ -2338,7 +2349,13 @@ document.addEventListener("click", async (ev) => {
   if (!b || b.tagName === "SELECT") return;
   const a = b.dataset.action;
   try {
-    if (a === "resend-verify") {
+    if (a === "accept-terms") {
+      b.disabled = true;
+      await api(`/api/orgs/${b.dataset.org}/terms/accept`, { body: { version: b.dataset.version } });
+      state.me = null;
+      toast("Thank you. The terms are accepted for your business");
+      await route();
+    } else if (a === "resend-verify") {
       b.disabled = true;
       await api("/api/auth/verify-resend", { body: {} });
       b.textContent = "Sent. Check your inbox.";
@@ -2607,7 +2624,7 @@ document.addEventListener("submit", async (ev) => {
     if (kind === "login" || kind === "signup") {
       let r;
       try {
-        r = await api(`/api/auth/${kind}`, { body: d });
+        r = await api(`/api/auth/${kind}`, { body: kind === "signup" ? { ...d, acceptTerms: d.acceptTerms === "on" } : d });
       } catch (err) {
         return authView(kind, err.message);
       }

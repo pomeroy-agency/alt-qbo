@@ -25,7 +25,7 @@ async function call(path: string, init: { method?: string; body?: unknown; cooki
 let n = 0;
 async function signup(orgName = "Test Co") {
   const email = `user${Date.now()}${n++}@example.com`;
-  const r = await call("/api/auth/signup", { body: { name: "Test User", email, password: "long-enough-pw", orgName, inviteCode: "invite-123" } });
+  const r = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Test User", email, password: "long-enough-pw", orgName, inviteCode: "invite-123" } });
   expect(r.status).toBe(201);
   const me = await call("/api/me", { cookie: r.cookie });
   return { cookie: r.cookie!, email, orgId: me.data.orgs[0].id as string };
@@ -35,7 +35,7 @@ async function signup(orgName = "Test Co") {
 async function join(s: { cookie: string; orgId: string }, email: string, role: string, password = "member-pass-12") {
   const inv = await call(`/api/orgs/${s.orgId}/invitations`, { cookie: s.cookie, body: { email, role } });
   expect(inv.status).toBe(201);
-  const r = await call("/api/auth/signup", { body: { name: email.split("@")[0], email, password, inviteToken: inv.data.token } });
+  const r = await call("/api/auth/signup", { body: { acceptTerms: true, name: email.split("@")[0], email, password, inviteToken: inv.data.token } });
   expect(r.status).toBe(201);
   return { cookie: r.cookie!, email, token: inv.data.token as string };
 }
@@ -57,8 +57,8 @@ const runFor = (employeeIds: string[], payDate = "2026-06-19") =>
 
 describe("API", () => {
   it("requires the invite code, a real password, and a session", async () => {
-    expect((await call("/api/auth/signup", { body: { name: "X", email: "x@example.com", password: "long-enough-pw", orgName: "X", inviteCode: "nope" } })).status).toBe(403);
-    expect((await call("/api/auth/signup", { body: { name: "X", email: "x@example.com", password: "short", orgName: "X", inviteCode: "invite-123" } })).status).toBe(400);
+    expect((await call("/api/auth/signup", { body: { acceptTerms: true, name: "X", email: "x@example.com", password: "long-enough-pw", orgName: "X", inviteCode: "nope" } })).status).toBe(403);
+    expect((await call("/api/auth/signup", { body: { acceptTerms: true, name: "X", email: "x@example.com", password: "short", orgName: "X", inviteCode: "invite-123" } })).status).toBe(400);
     expect((await call("/api/me")).status).toBe(401);
     const s = await signup();
     expect((await call("/api/auth/login", { body: { email: s.email, password: "wrong-password" } })).status).toBe(401);
@@ -248,15 +248,15 @@ describe("team API", () => {
     expect((await call(`/api/invitations/${"x".repeat(32)}`)).status).toBe(404);
 
     // Someone else can't use the link, by signing up or by accepting while signed in.
-    const wrong = await call("/api/auth/signup", { body: { name: "Mallory", email: uniq("mallory"), password: "long-enough-pw", inviteToken: inv.data.token } });
+    const wrong = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Mallory", email: uniq("mallory"), password: "long-enough-pw", inviteToken: inv.data.token } });
     expect(wrong.status).toBe(403);
     const other = await signup("Other Co");
     expect((await call(`/api/invitations/${inv.data.token}/accept`, { cookie: other.cookie, body: {} })).status).toBe(403);
 
-    const bea = await call("/api/auth/signup", { body: { name: "Bea", email, password: "long-enough-pw", inviteToken: inv.data.token } });
+    const bea = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Bea", email, password: "long-enough-pw", inviteToken: inv.data.token } });
     expect(bea.status).toBe(201);
     const me = await call("/api/me", { cookie: bea.cookie });
-    expect(me.data.orgs).toEqual([{ id: owner.orgId, name: "Test Co", role: "bookkeeper" }]);
+    expect(me.data.orgs).toEqual([{ id: owner.orgId, name: "Test Co", role: "bookkeeper", termsAccepted: true }]);
     expect((await call(`/api/invitations/${inv.data.token}`)).data.status).toBe("accepted");
     expect((await call(`/api/invitations/${inv.data.token}/accept`, { cookie: bea.cookie, body: {} })).status).toBe(422);
     const team = await call(`/api/orgs/${owner.orgId}/members`, { cookie: owner.cookie });
@@ -277,7 +277,7 @@ describe("team API", () => {
     const revoked = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email, role: "read_only" } });
     expect((await call(`/api/orgs/${owner.orgId}/members`, { cookie: owner.cookie })).data.invitations).toHaveLength(1);
     expect((await call(`/api/orgs/${owner.orgId}/invitations/${revoked.data.id}/revoke`, { cookie: owner.cookie, body: {} })).status).toBe(200);
-    expect((await call("/api/auth/signup", { body: { name: "Gone", email, password: "long-enough-pw", inviteToken: revoked.data.token } })).status).toBe(422);
+    expect((await call("/api/auth/signup", { body: { acceptTerms: true, name: "Gone", email, password: "long-enough-pw", inviteToken: revoked.data.token } })).status).toBe(422);
     // Re-inviting replaces the old link.
     const first = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email, role: "read_only" } });
     const second = await call(`/api/orgs/${owner.orgId}/invitations`, { cookie: owner.cookie, body: { email, role: "approver" } });
@@ -703,5 +703,36 @@ describe("prepared payroll forms", () => {
     expect(csv.data).toContain("ssn,name,subjectWagesMinor");
     expect(csv.data).toContain("5800.00");
     expect((await call(`${base}/payroll-forms/prepared?form=nope&year=2026`, { cookie: s.cookie })).status).toBe(404);
+  });
+});
+
+describe("terms of service", () => {
+  it("are accepted at sign-up for the new business, and again by an owner when they change", async () => {
+    const { TERMS_VERSION } = await import("../src/app/terms.js");
+    const email = `terms${Date.now()}@example.com`;
+    const refused = await call("/api/auth/signup", { body: { name: "T", email, password: "long-enough-pw", orgName: "Terms Co", inviteCode: "invite-123" } });
+    expect(refused.status).toBe(400);
+    expect(refused.data.error).toMatch(/Terms of Service/);
+
+    const s = await signup("Terms Co");
+    const me = await call("/api/me", { cookie: s.cookie });
+    expect(me.data.termsVersion).toBe(TERMS_VERSION);
+    expect(me.data.orgs[0]).toMatchObject({ id: s.orgId, termsAccepted: true });
+
+    // Someone joining through an invitation doesn't accept for the business, and can't.
+    const bkEmail = `bk${Date.now()}@example.com`;
+    const inv = await call(`/api/orgs/${s.orgId}/invitations`, { cookie: s.cookie, body: { email: bkEmail, role: "bookkeeper" } });
+    const bk = await call("/api/auth/signup", { body: { name: "BK", email: bkEmail, password: "member-pass-12", inviteToken: inv.data.token } });
+    expect(bk.status).toBe(201);
+    expect((await call(`/api/orgs/${s.orgId}/terms/accept`, { cookie: bk.cookie, body: { version: TERMS_VERSION } })).status).toBe(403);
+
+    // The record can't be rewritten; accepting is for the current version only, and safe to repeat.
+    const { withSystem } = await import("../src/db/pool.js");
+    await expect(withSystem(pool, (tx) => tx.query("UPDATE terms_acceptances SET version = '2020-01-01' WHERE org_id = $1", [s.orgId]))).rejects.toThrow(/IMMUTABLE/);
+    expect((await call(`/api/orgs/${s.orgId}/terms/accept`, { cookie: s.cookie, body: { version: "2020-01-01" } })).status).toBe(409);
+    expect((await call(`/api/orgs/${s.orgId}/terms/accept`, { cookie: s.cookie, body: { version: TERMS_VERSION } })).data).toEqual({ ok: true, version: TERMS_VERSION });
+
+    const pub = await call("/api/terms");
+    expect(pub.data).toEqual({ version: TERMS_VERSION, company: null });
   });
 });

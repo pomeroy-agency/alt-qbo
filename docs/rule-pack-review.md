@@ -146,6 +146,7 @@ A worksheet for the business's own CDTFA-401, built on the sales tax report. Alt
 | State and district tax | State and local at 7.25% of taxable sales; district tax per place on Schedule A at the looked-up rate less 7.25% | CDTFA-401 Schedule A | ✅ accepted 2026-10-27 ⚠️ recheck: Schedule A asks for district codes; Alt-QBO shows the place name from the rate lookup |
 | Excess tax collected | When invoices charged more than the return computes, a warning says to pay the extra | Rev. & Tax. Code §6901.5 | ✅ |
 | No permit | An invoice charging tax with no seller's permit recorded shows a warning (it isn't stopped) | Rev. & Tax. Code §§6066, 6071 | ✅ |
+| Reminders | An email to owners, admins and accountants up to 5 days before each return and prepayment due date, once per date, after the period ends | Follows the due dates above | ✅ added after Greg's approval 2026-10-27 |
 
 ## Chart of accounts tax lines (`src/rules/coa/us-service.ts`)
 

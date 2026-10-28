@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { withTenant, type Tx } from "../src/db/pool.js";
+import { withSystem, withTenant, type Tx } from "../src/db/pool.js";
 import { handleApi } from "../src/app/api.js";
 import { LedgerError } from "../src/core/errors.js";
 import { createContact, voidDocument } from "../src/core/documents.js";
@@ -165,7 +165,7 @@ describe("the business's own sales tax", () => {
       );
       return { status: res.status, data: await res.json(), cookie: res.headers.get("set-cookie")?.split(";")[0] };
     };
-    const su = await call("/api/auth/signup", { body: { name: "T", email: `str${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Return Co", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `str${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Return Co", inviteCode: "c" } });
     const cookie = su.cookie!;
     const orgId = (await call("/api/me", { cookie })).data.orgs[0].id;
     const ent = await call(`/api/orgs/${orgId}/entities`, { cookie, body: { legalName: "Return Studio LLC", entityType: "llc_single", region: "CA", firstFiscalYear: 2026 } });
@@ -182,5 +182,37 @@ describe("the business's own sales tax", () => {
     expect(ret.status).toBe(200);
     expect(ret.data).toMatchObject({ form: "CDTFA-401", seller: { sellerPermit: "SR AB 100-200300" }, period: { dueDate: "2026-07-31" } });
     expect((await call(`${base}/sales-tax/return?period=nope`, { cookie })).status).toBe(422);
+  });
+});
+
+describe("sales tax reminders", () => {
+  it("emails once, a few days before a return or prepayment is due, once the period has ended", async () => {
+    const { sendSalesTaxReminders } = await import("../src/core/sales-tax-reminders.js");
+    const { org, entity } = await setupCaliforniaBusiness("Reminder Studio");
+    const t = <T>(fn: (tx: Tx) => Promise<T>) => withTenant(pool, org.id, fn);
+    await withSystem(pool, async (tx) => {
+      const u = (await tx.query("INSERT INTO users (email, name, password_hash) VALUES ($1, 'Owner', 'x') RETURNING id", [`st-owner-${Date.now()}@example.com`])).rows[0].id;
+      await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [u, org.id]);
+    });
+    await t((tx) => setSalesTaxSettings(tx, { orgId: org.id, entityId: entity.id, filingFrequency: "quarterly_prepay", actor: owner }));
+    const sent: { to: string; subject: string; text: string }[] = [];
+    const mailer = async (m: { to: string; subject: string; text: string }) => { sent.push(m); };
+    const mine = () => sent.filter((m) => m.subject.includes("Reminder Studio"));
+
+    // Nothing within five days on October 1.
+    await sendSalesTaxReminders(pool, mailer, "2026-10-01");
+    expect(mine()).toEqual([]);
+    // Q3's return is due November 2 (October 31 is a Saturday); the October prepayment is due November 24.
+    await sendSalesTaxReminders(pool, mailer, "2026-10-28", "https://alt-qbo.test");
+    expect(mine()).toHaveLength(1);
+    expect(mine()[0]!.text).toMatch(/Return for Q3 2026: due 2026-11-02, about \$0\.00 of tax/);
+    expect(mine()[0]!.text).not.toMatch(/October prepayment/);
+    expect(mine()[0]!.text).toContain(`https://alt-qbo.test/#/e/${entity.id}/sales-tax`);
+    // Sent once.
+    await sendSalesTaxReminders(pool, mailer, "2026-10-29");
+    expect(mine()).toHaveLength(1);
+    await sendSalesTaxReminders(pool, mailer, "2026-11-20");
+    expect(mine()).toHaveLength(2);
+    expect(mine()[1]!.text).toMatch(/October prepayment for Q4 2026: due 2026-11-24/);
   });
 });

@@ -283,7 +283,7 @@ describe("sales tax API", () => {
   };
 
   it("keeps products, customer addresses, previews the tax, and issues the invoice", async () => {
-    const su = await call("/api/auth/signup", { body: { name: "T", email: `tax${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Tax Co", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `tax${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Tax Co", inviteCode: "c" } });
     const cookie = su.cookie!;
     const orgId = (await call("/api/me", { cookie })).data.orgs[0].id;
     const ent = await call(`/api/orgs/${orgId}/entities`, { cookie, body: { legalName: "Tax Studio LLC", entityType: "llc_single", region: "CA", firstFiscalYear: 2026 } });

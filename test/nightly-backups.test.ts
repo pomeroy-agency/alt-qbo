@@ -22,7 +22,7 @@ async function call(path: string, init: { body?: unknown; cookie?: string } = {}
 
 describe("nightly backups", () => {
   it("stores an encrypted copy of each business, checks it, and offers it as a restore point", async () => {
-    const su = await call("/api/auth/signup", { body: { name: "N", email: `nightly${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Nightly Co", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "N", email: `nightly${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Nightly Co", inviteCode: "c" } });
     const cookie = su.cookie!;
     const ex = await call("/api/example", { cookie, body: {} });
     const { orgId, entityId } = ex.data;
@@ -49,7 +49,7 @@ describe("nightly backups", () => {
   });
 
   it("refuses a copy whose balances don't match the books", async () => {
-    const su = await call("/api/auth/signup", { body: { name: "M", email: `mismatch${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Mismatch Co", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "M", email: `mismatch${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Mismatch Co", inviteCode: "c" } });
     const ex = await call("/api/example", { cookie: su.cookie, body: {} });
     await runNightlyBackups(pool, store, key, "2026-11-03");
     const copy = openBackup(store.data.get(`${ex.data.orgId}/${ex.data.entityId}/2026-11-03.bin`)!, key);
@@ -61,7 +61,7 @@ describe("nightly backups", () => {
   });
 
   it("keeps 30 days of copies", async () => {
-    const su = await call("/api/auth/signup", { body: { name: "K", email: `keep${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Keep Co", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "K", email: `keep${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Keep Co", inviteCode: "c" } });
     const ex = await call("/api/example", { cookie: su.cookie, body: {} });
     const prefix = `${ex.data.orgId}/${ex.data.entityId}/`;
     await runNightlyBackups(pool, store, key, "2026-10-01");

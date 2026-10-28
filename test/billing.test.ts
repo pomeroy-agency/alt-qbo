@@ -52,7 +52,7 @@ async function call(path: string, init: { body?: unknown; cookie?: string } = {}
 let n = 0;
 async function customer(plan: "books" | "books_payroll" = "books", interval: "month" | "year" = "month") {
   const email = `bill${Date.now()}${n++}@example.com`;
-  const su = await call("/api/auth/signup", { body: { name: "Owner", email, password: "long-enough-pw", orgName: `Billed ${n}`, inviteCode: "c" } });
+  const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Owner", email, password: "long-enough-pw", orgName: `Billed ${n}`, inviteCode: "c" } });
   const cookie = su.cookie!;
   const orgId = (await call("/api/me", { cookie })).data.orgs[0].id as string;
   const o = (p: string) => `/api/orgs/${orgId}${p}`;
@@ -71,7 +71,7 @@ const endTrial = (orgId: string, daysAgo: number) =>
 
 describe("billing", () => {
   it("starts with a 30-day trial of everything and the approved prices", async () => {
-    const su = await call("/api/auth/signup", { body: { name: "T", email: `trial${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Trial Co", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `trial${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Trial Co", inviteCode: "c" } });
     const orgId = (await call("/api/me", { cookie: su.cookie })).data.orgs[0].id;
     const b = await call(`/api/orgs/${orgId}/billing`, { cookie: su.cookie });
     expect(b.data).toMatchObject({ status: "trialing", plan: "books", trialEndsOn: addDays(pacificToday(), 30), access: { level: "full" } });

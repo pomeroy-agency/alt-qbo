@@ -170,7 +170,7 @@ describe("use tax API", () => {
   };
 
   it("marks a vendor, previews and records a bill with use tax, and reports it", async () => {
-    const su = await call("/api/auth/signup", { body: { name: "T", email: `use${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Use Co", inviteCode: "c" } });
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `use${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Use Co", inviteCode: "c" } });
     const cookie = su.cookie!;
     const orgId = (await call("/api/me", { cookie })).data.orgs[0].id;
     const ent = await call(`/api/orgs/${orgId}/entities`, { cookie, body: { legalName: "Use Studio LLC", entityType: "llc_single", region: "CA", firstFiscalYear: 2026 } });

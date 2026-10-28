@@ -21,7 +21,7 @@ async function call(path: string, init: { body?: unknown; cookie?: string } = {}
 let n = 0;
 async function signup() {
   const email = `mfa${Date.now()}${n++}@example.com`;
-  const r = await call("/api/auth/signup", { body: { name: "Pat", email, password: "long-enough-pw", orgName: "MFA Co", inviteCode: "invite-123" } });
+  const r = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Pat", email, password: "long-enough-pw", orgName: "MFA Co", inviteCode: "invite-123" } });
   expect(r.status).toBe(201);
   const me = await call("/api/me", { cookie: r.cookie });
   return { cookie: r.cookie!, email, orgId: me.data.orgs[0].id as string };
@@ -132,7 +132,7 @@ describe("two-factor sign-in", () => {
     expect((await call(`/api/orgs/${s.orgId}/security`, { cookie: s.cookie, body: { requireMfa: true } })).status).toBe(200);
 
     const inv = await call(`/api/orgs/${s.orgId}/invitations`, { cookie: s.cookie, body: { email: `member${Date.now()}@example.com`, role: "bookkeeper" } });
-    const member = await call("/api/auth/signup", { body: { name: "Sam", email: inv.data.email, password: "member-pass-12", inviteToken: inv.data.token } });
+    const member = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Sam", email: inv.data.email, password: "member-pass-12", inviteToken: inv.data.token } });
     const blocked = await call(`/api/orgs/${s.orgId}`, { cookie: member.cookie });
     expect(blocked.status).toBe(403);
     expect(blocked.data.error).toMatch(/requires two-factor/);
