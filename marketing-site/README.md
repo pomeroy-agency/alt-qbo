@@ -9,6 +9,6 @@ embed. This folder holds the TrailBook additions to it.
 - `build.py` – assembles `dist/<page>.html`, one file per Wix embed. `APP` is the app's address.
 - `patch_existing.py` – builds `dist/patch.js`, which updates the live pages' embeds in the browser:
   new header, a footer link, and a TrailBook band on the home, pricing and Systems & Automation pages.
-- `analytics-part1.md` – the change to the site-wide "PA Analytics" Custom Code.
+- `analytics-part1-v4.html` – the site-wide "PA Analytics" Custom Code with the seven TrailBook events added to its allowlist.
 
 Run `python3 marketing-site/build.py && python3 marketing-site/patch_existing.py`.
