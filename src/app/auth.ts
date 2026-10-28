@@ -76,3 +76,28 @@ export function normaliseEmail(email: unknown): string {
   }
   return email.trim().toLowerCase();
 }
+
+/** Wrong passwords allowed per email in the window before password sign-in pauses for that email. */
+export const SIGN_IN_MAX_FAILURES = 10;
+export const SIGN_IN_WINDOW_MINUTES = 15;
+
+/** Refuses a password sign-in while an email has had too many wrong passwords recently. */
+export async function checkSignInAllowed(pool: pg.Pool, email: string): Promise<void> {
+  const { rows } = await pool.query(
+    "SELECT count(*)::int AS n FROM sign_in_failures WHERE email = $1 AND failed_at > now() - make_interval(mins => $2)",
+    [email, SIGN_IN_WINDOW_MINUTES],
+  );
+  if (rows[0].n >= SIGN_IN_MAX_FAILURES) {
+    throw new AuthError(`too many wrong passwords for this email; wait ${SIGN_IN_WINDOW_MINUTES} minutes, or sign in with an emailed link or reset your password`, 429);
+  }
+}
+
+/** Counts a wrong password, or clears the count after a right one. Old rows are tidied as it goes. */
+export async function recordSignIn(pool: pg.Pool, email: string, ok: boolean): Promise<void> {
+  if (ok) {
+    await pool.query("DELETE FROM sign_in_failures WHERE email = $1", [email]);
+    return;
+  }
+  await pool.query("INSERT INTO sign_in_failures (email) VALUES ($1)", [email]);
+  await pool.query("DELETE FROM sign_in_failures WHERE failed_at < now() - interval '1 day'");
+}

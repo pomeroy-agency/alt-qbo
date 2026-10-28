@@ -79,6 +79,22 @@ export function resolveRules(place: Place, onDate: string, opts: ResolveOptions 
   };
 }
 
+/**
+ * Rules for setting up an entity (framework, chart of accounts, retention):
+ * those in force on `onDate`, or, before a new year's packs are published,
+ * the latest ones. Setup defaults don't change from year to year; pay runs
+ * and tax figures always use `resolveRules` for their own date.
+ */
+export function resolveSetupRules(place: Place, onDate: string): ResolvedRules {
+  try {
+    return resolveRules(place, onDate);
+  } catch (err) {
+    const latest = REGISTRY.map((p) => p.effectiveTo).filter((d) => d < onDate).sort().at(-1);
+    if (!isSupportedPlace(place) || !latest) throw err;
+    return resolveRules(place, latest);
+  }
+}
+
 export function allRulePacks(): readonly RulePack[] {
   return REGISTRY;
 }

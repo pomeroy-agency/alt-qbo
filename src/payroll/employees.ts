@@ -48,6 +48,8 @@ export interface Employee {
   de4: DE4;
   deductions: Deduction[];
   sickBalanceHours: string;
+  /** Front-loaded sick leave: the year the hours were last granted. */
+  sickGrantedYear: number | null;
   ssnLast4: string | null;
   openingYtd: OpeningYtd | null;
   /** Where net pay goes by direct deposit; null means a paper check. */
@@ -78,7 +80,7 @@ export interface EmployeeFields {
 }
 
 const COLS = `id, name, email, address_line1, address_city, address_state, address_zip, work_city, hire_date::text, termination_date::text,
-  pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, deductions, sick_balance_hours::text,
+  pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, deductions, sick_balance_hours::text, sick_granted_year,
   ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4`;
 
 function employeeOf(r: any): Employee {
@@ -90,7 +92,7 @@ function employeeOf(r: any): Employee {
     status: r.termination_date ? "terminated" : "active",
     payType: r.pay_type, payFrequency: r.pay_frequency, payRate: trimZeros(r.pay_rate), usualHours: r.usual_hours ? trimZeros(r.usual_hours) : null,
     overtimeExempt: r.overtime_exempt, w4: r.w4, de4: r.de4, deductions: r.deductions,
-    sickBalanceHours: trimZeros(r.sick_balance_hours), ssnLast4: r.ssn_last4, openingYtd: r.opening_ytd,
+    sickBalanceHours: trimZeros(r.sick_balance_hours), sickGrantedYear: r.sick_granted_year, ssnLast4: r.ssn_last4, openingYtd: r.opening_ytd,
     directDeposit: r.dd_routing ? { routing: r.dd_routing, accountType: r.dd_account_type, accountLast4: r.dd_account_last4 } : null,
   };
 }
@@ -347,6 +349,17 @@ function checkShape(cols: Record<string, unknown>) {
 }
 
 /** The employer's California UI rate, as a fraction, from its EDD notice. */
+/** Accrual or front-loading for paid sick leave. */
+export async function setSickLeavePolicy(tx: Tx, input: { orgId: string; entityId: string; policy: string; actor: Actor }) {
+  requireWriter(input.actor, "change payroll settings");
+  if (input.policy !== "accrual" && input.policy !== "front_load") invalid("pick accrual or front-loading for sick leave");
+  await tx.query("UPDATE entities SET sick_leave_policy = $2 WHERE id = $1", [input.entityId, input.policy]);
+  await appendAudit(tx, {
+    orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "entity.sick_leave_policy_set",
+    objectType: "entity", objectId: input.entityId, after: { sickLeavePolicy: input.policy },
+  });
+}
+
 export async function setUiRate(tx: Tx, input: { orgId: string; entityId: string; rate: string | null; actor: Actor }) {
   requireWriter(input.actor, "change payroll settings");
   if (input.rate !== null && (!/^\d(\.\d{1,5})?$/.test(input.rate) || new D(input.rate).gt("0.2"))) {

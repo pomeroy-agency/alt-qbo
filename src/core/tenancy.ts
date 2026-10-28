@@ -1,5 +1,5 @@
 import type { Tx } from "../db/pool.js";
-import { resolveRules, type Place } from "../rules/index.js";
+import { resolveSetupRules, type Place } from "../rules/index.js";
 import { COA_TEMPLATES, returnTypeFor } from "../rules/coa/us-service.js";
 import { appendAudit, initAuditChain } from "./audit.js";
 import { LedgerError } from "./errors.js";
@@ -81,7 +81,7 @@ export interface CreateEntityInput {
 export async function createEntity(tx: Tx, input: CreateEntityInput): Promise<Entity> {
   const fyStart = input.fiscalYearStartMonth ?? 1;
   const firstDay = `${input.firstFiscalYear}-${String(fyStart).padStart(2, "0")}-01`;
-  const rules = resolveRules(input.place, firstDay);
+  const rules = resolveSetupRules(input.place, firstDay);
   const defaults = rules.federal.entityDefaults;
   const template = COA_TEMPLATES[defaults.coaTemplate];
   if (!template) throw new LedgerError("INVALID", `no chart-of-accounts template ${defaults.coaTemplate}`);

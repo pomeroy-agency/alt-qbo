@@ -22,6 +22,7 @@ import { GatewayError } from "../billing/gateway.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
+import { csvCell } from "../core/csv.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
@@ -32,7 +33,7 @@ import { addConnection, createEntity, createOrganization, getEntity, type Connec
 import { JurisdictionError, allRulePacks, resolveRules } from "../rules/index.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
-import { createEmployee, listEmployees, setUiRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
+import { createEmployee, listEmployees, setSickLeavePolicy, setUiRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
 import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
 import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
@@ -40,7 +41,7 @@ import { form940, form941, formDe9, formsFor, formW2, type PreparedForm } from "
 import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
 import { calculateSavedRun, carrySickLeave, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import {
-  AuthError, SESSION_COOKIE, createSession, endSession, hashPassword, membershipRole, normaliseEmail,
+  AuthError, SESSION_COOKIE, checkSignInAllowed, createSession, recordSignIn, endSession, hashPassword, membershipRole, normaliseEmail,
   sessionUser, verifyPassword, type SessionUser,
 } from "./auth.js";
 
@@ -176,7 +177,8 @@ route("POST", "/api/orgs/:org/entities", async (req, _p, ctx) => {
   const b = await body(req);
   const entityType = b.entityType as EntityType;
   if (!ENTITY_TYPES.includes(entityType)) throw new HttpError(400, "pick an entity type");
-  const year = Number(b.firstFiscalYear ?? 2026);
+  const year = Number(b.firstFiscalYear ?? pacificToday().slice(0, 4));
+  if (!Number.isInteger(year) || year < 2026 || year > Number(pacificToday().slice(0, 4))) throw new HttpError(400, "the first fiscal year can be 2026 up to this year");
   const entity = await tenant(ctx, (tx) =>
     createEntity(tx, {
       orgId: ctx.orgId,
@@ -475,7 +477,7 @@ route("POST", "/api/orgs/:org/entities/:entity/periods/:period", async (req, p, 
 });
 
 route("GET", "/api/orgs/:org/entities/:entity/trial-balance", async (req, p, ctx) => {
-  const asOf = new URL(req.url).searchParams.get("asOf") ?? "2026-12-31";
+  const asOf = new URL(req.url).searchParams.get("asOf") ?? pacificToday();
   return tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
     return json(await trialBalance(tx, p.entity!, date(asOf, "asOf")));
@@ -483,7 +485,7 @@ route("GET", "/api/orgs/:org/entities/:entity/trial-balance", async (req, p, ctx
 });
 
 route("GET", "/api/orgs/:org/entities/:entity/tax-export", async (req, p, ctx) => {
-  const asOf = date(new URL(req.url).searchParams.get("asOf") ?? "2026-12-31", "asOf");
+  const asOf = date(new URL(req.url).searchParams.get("asOf") ?? pacificToday(), "asOf");
   const csv = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
     return taxLineExportCsv(tx, p.entity!, asOf);
@@ -873,7 +875,8 @@ function csvResponse(csv: string, filename: string): Response {
   });
 }
 
-const serverToday = () => new Date().toISOString().slice(0, 10);
+// California books: "today" is the Pacific date, so evening work isn't dated tomorrow.
+const serverToday = () => pacificToday();
 
 route("GET", "/api/orgs/:org/entities/:entity/reports/profit-and-loss", async (req, p, ctx) => {
   const q = new URL(req.url).searchParams;
@@ -920,7 +923,7 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
       await ensureEntity(tx, p.entity!);
       return aging(tx, p.entity!, kind, asOf);
     });
-    const cell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+    const cell = csvCell;
     const lines = [`${kind === "invoice" ? "Receivables" : "Payables"} aging,as of ${asOf}`, "Number,Contact,Due date,Days past due,Bucket,Still due"];
     for (const r of ag.rows) lines.push([r.number, cell(r.contactName), r.dueDate, String(r.daysPastDue), r.bucket, toMajor(r.dueMinor).toFixed(2)].join(","));
     lines.push(`Total,,,,,${toMajor(ag.totalMinor).toFixed(2)}`);
@@ -975,7 +978,7 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/sales-tax", async (req, p,
   });
   if (q.get("format") !== "csv") return json(r);
   const m = (v: bigint) => toMajor(v).toFixed(2);
-  const cell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  const cell = csvCell;
   const lines = [
     `Sales tax return figures,${from} to ${to}`, "Line,Amount",
     `Total sales,${m(r.totalSalesMinor)}`,
@@ -1105,10 +1108,11 @@ const toJson = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "bigin
 route("GET", "/api/orgs/:org/entities/:entity/employees", async (_req, p, ctx) =>
   tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    const uiRate = (await tx.query("SELECT ca_ui_rate::text FROM entities WHERE id = $1", [p.entity])).rows[0]?.ca_ui_rate;
+    const ent = (await tx.query("SELECT ca_ui_rate::text, sick_leave_policy FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const uiRate = ent?.ca_ui_rate;
     const employees = await listEmployees(tx, p.entity!);
     return json({
-      employees: withLocalMinimums(employees, pacificToday()), caUiRate: uiRate ? String(Number(uiRate)) : null,
+      employees: withLocalMinimums(employees, pacificToday()), caUiRate: uiRate ? String(Number(uiRate)) : null, sickLeavePolicy: ent?.sick_leave_policy ?? "accrual",
       directDeposit: await getDirectDepositSettings(tx, p.entity!), workCities: LOCAL_MINIMUM_WAGE_PLACES,
     });
   }),
@@ -1125,12 +1129,42 @@ route("POST", "/api/orgs/:org/entities/:entity/employees", async (req, p, ctx) =
 
 route("POST", "/api/orgs/:org/entities/:entity/employees/:employee", async (req, p, ctx) => {
   const b = await body(req);
-  const employee = await tenant(ctx, async (tx) => {
+  const employeeId = uuid(p.employee, "employee not found");
+  const { employee, before, business } = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    return updateEmployee(tx, { orgId: ctx.orgId, entityId: p.entity!, employeeId: uuid(p.employee, "employee not found"), ...employeeFields(b), actor: ctx.actor });
+    const before = (await tx.query("SELECT dd_routing, dd_account_last4 FROM employees WHERE id = $1 AND entity_id = $2", [employeeId, p.entity])).rows[0];
+    const business = (await tx.query("SELECT legal_name FROM entities WHERE id = $1", [p.entity])).rows[0].legal_name as string;
+    const employee = await updateEmployee(tx, { orgId: ctx.orgId, entityId: p.entity!, employeeId, ...employeeFields(b), actor: ctx.actor });
+    return { employee, before, business };
   });
+  // Changed pay-to bank details are the usual way payroll gets diverted, so every owner and admin hears about it.
+  const after = employee.directDeposit;
+  if (before && ((before.dd_routing ?? null) !== (after?.routing ?? null) || (before.dd_account_last4 ?? null) !== (after?.accountLast4 ?? null))) {
+    await notifyAdmins(ctx, {
+      subject: `Direct deposit details changed for ${employee.name}`,
+      text: `${ctx.user.name} (${ctx.user.email}) changed where ${employee.name}'s pay is deposited, for ${business} on TrailBook.\n\n` +
+        `Before: ${before?.dd_account_last4 ? `account ending ${before.dd_account_last4}` : "no account"}\nNow: ${after?.accountLast4 ? `account ending ${after.accountLast4}` : "no account"}\n\n` +
+        "If you didn't expect this, confirm it with the employee directly (not by replying to an email) before approving the next pay run.\n",
+    });
+  }
   return json(employee);
 });
+
+/** Emails every owner and admin of the organisation. Best effort: a failed email doesn't undo the change. */
+async function notifyAdmins(ctx: Ctx, msg: { subject: string; text: string }) {
+  if (!ctx.opts.mailer) return;
+  const { rows } = await ctx.pool.query(
+    "SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 AND m.role IN ('owner', 'admin')",
+    [ctx.orgId],
+  );
+  for (const r of rows) {
+    try {
+      await ctx.opts.mailer({ to: r.email, ...msg });
+    } catch (err) {
+      console.error("admin notice failed", err);
+    }
+  }
+}
 
 /** Each hourly employee paid below a higher city or county minimum wage today gets `belowLocalMinimum`. */
 function withLocalMinimums(employees: Employee[], today: string) {
@@ -1181,6 +1215,10 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
         orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.updated", objectType: "entity", objectId: p.entity!,
         before: { caEmployerAccount: before }, after: { caEmployerAccount: account || null }, context: { role: ctx.role },
       });
+    }
+    if (b.sickLeavePolicy !== undefined) {
+      requireRole(ctx, ["owner", "admin", "accountant"]);
+      await setSickLeavePolicy(tx, { orgId: ctx.orgId, entityId: p.entity!, policy: String(b.sickLeavePolicy), actor: ctx.actor });
     }
     if (b.federalDepositSchedule !== undefined) {
       await setFederalDepositSchedule(tx, { orgId: ctx.orgId, entityId: p.entity!, schedule: String(b.federalDepositSchedule), actor: ctx.actor });
@@ -1260,7 +1298,7 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms/prepared", async (re
       return [[k, cents(v)]];
     })));
     const cols = [...new Set(flat.flatMap((r) => Object.keys(r)))];
-    const cell = (v: unknown) => { const s = v === null || v === undefined ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const cell = csvCell;
     const csv = [cols.join(","), ...flat.map((r) => cols.map((c) => cell(r[c])).join(","))].join("\r\n") + "\r\n";
     return new Response(csv, {
       headers: {
@@ -1342,6 +1380,8 @@ function payRunRequest(b: Record<string, any>): PayRunRequest {
         bonus: amount(l.bonus, `${n} bonus`),
         commission: amount(l.commission, `${n} commission`),
         reimbursement: amount(l.reimbursement, `${n} reimbursement`),
+        bonusDiscretionary: l.bonusDiscretionary === true,
+        sickHoursUsed: amount(l.sickHoursUsed, `${n} sick hours`),
       };
     }),
   };
@@ -1383,7 +1423,7 @@ route("GET", "/api/orgs/:org/entities/:entity/pay-runs", async (_req, p, ctx) =>
          FROM pay_runs WHERE entity_id = $1 ORDER BY created_at DESC LIMIT 50`,
       [p.entity],
     );
-    return json({ payRuns: rows });
+    return json({ payRuns: rows, soleApprover: await soleApprover(ctx) });
   }),
 );
 
@@ -1421,6 +1461,7 @@ route("GET", "/api/orgs/:org/entities/:entity/pay-runs/:run", async (_req, p, ct
     const directDeposit = await directDepositSummary(tx, p.entity!, pr.id);
     return new Response(toJson({
       ...pr,
+      soleApprover: await soleApprover(ctx),
       directDeposit,
       employer: { name: ent.legal_name, ein: ent.ein, address: ent.address_line1 ? { line1: ent.address_line1, city: ent.address_city, state: ent.address_state, zip: ent.address_zip } : null },
       stubs,
@@ -1443,8 +1484,18 @@ route("GET", "/api/orgs/:org/entities/:entity/pay-runs/:run/direct-deposit", asy
   });
 });
 
+/** True when nobody in the organisation but this person can approve pay runs, so they may approve runs they prepared. */
+async function soleApprover(ctx: Ctx): Promise<boolean> {
+  const { rows } = await ctx.pool.query(
+    "SELECT count(*)::int AS n FROM memberships WHERE org_id = $1 AND user_id <> $2 AND role IN ('owner', 'admin', 'approver')",
+    [ctx.orgId, ctx.user.id],
+  );
+  return rows[0].n === 0;
+}
+
 route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_req, p, ctx) => {
   requireRole(ctx, ["owner", "admin", "approver"]);
+  const sole = await soleApprover(ctx);
   const entry = await tenant(ctx, async (tx) => {
     const { rows } = await tx.query(
       "SELECT input, prepared_by, status FROM pay_runs WHERE id = $1 AND entity_id = $2 FOR UPDATE",
@@ -1453,15 +1504,18 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
     const pr = rows[0];
     if (!pr) throw new HttpError(404, "pay run not found");
     if (pr.status !== "prepared") throw new HttpError(409, `pay run is already ${pr.status}`);
+    // California pay stubs must show the employer's legal name and address (Labor Code 226(a)(8)).
+    const addr = (await tx.query("SELECT address_line1 FROM entities WHERE id = $1", [p.entity])).rows[0];
+    if (!addr?.address_line1) throw new HttpError(409, "add the business address on the Overview page first; California pay stubs must show it");
     // Recalculate from the saved input, with year-to-date wages as they stand now, so the
     // posted figures can't be tampered with in transit and caps count every earlier run.
     const run = await calculateSavedRun(tx, p.entity!, pr.input as PayRunInput);
     const posted = await approveAndPostPayRun(tx, {
       orgId: ctx.orgId, entityId: p.entity!, run,
-      preparedBy: { id: pr.prepared_by, role: "bookkeeper" }, approvedBy: ctx.actor,
+      preparedBy: { id: pr.prepared_by, role: "bookkeeper" }, approvedBy: ctx.actor, soleApprover: sole,
     });
     await tx.query("UPDATE pay_runs SET status = 'posted', approved_by = $2, entry_id = $3, result = $4 WHERE id = $1", [p.run, ctx.actor.id, posted.id, toJson(run)]);
-    await carrySickLeave(tx, p.entity!, run.paychecks);
+    await carrySickLeave(tx, p.entity!, run.paychecks, run.payDate);
     return posted;
   });
   return json(entry, 201);
@@ -1677,8 +1731,10 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
   if (req.method === "POST" && path === "/api/auth/login") {
     const b = await body(req);
     const email = normaliseEmail(b.email);
+    await checkSignInAllowed(pool, email);
     const { rows } = await pool.query("SELECT id, password_hash FROM users WHERE email = $1", [email]);
-    const ok = rows[0] && (await verifyPassword(String(b.password ?? ""), rows[0].password_hash));
+    const ok = Boolean(rows[0] && (await verifyPassword(String(b.password ?? ""), rows[0].password_hash)));
+    await recordSignIn(pool, email, ok);
     if (!ok) throw new AuthError("wrong email or password");
     return signedIn(pool, rows[0].id, b.inviteToken);
   }

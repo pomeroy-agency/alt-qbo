@@ -45,6 +45,11 @@ async function entity(s: { cookie: string; orgId: string }) {
     cookie: s.cookie, body: { legalName: "API Studio LLC", entityType: "llc_single", region: "CA", firstFiscalYear: 2026 },
   });
   expect(r.status).toBe(201);
+  // Pay stubs need the employer's address before a run can be approved.
+  const addr = await call(`/api/orgs/${s.orgId}/entities/${r.data.id}/address`, {
+    cookie: s.cookie, body: { address: { line1: "500 Market St", city: "San Francisco", state: "CA", zip: "94105" } },
+  });
+  expect(addr.status).toBe(200);
   return r.data.id as string;
 }
 
@@ -65,6 +70,19 @@ describe("API", () => {
     const login = await call("/api/auth/login", { body: { email: s.email.toUpperCase(), password: "long-enough-pw" } });
     expect(login.status).toBe(200);
     expect(login.cookie).toMatch(/^altqbo_session=/);
+  });
+
+  it("pauses password sign-in for an email after too many wrong passwords", async () => {
+    const s = await signup();
+    for (let i = 0; i < 10; i++) {
+      expect((await call("/api/auth/login", { body: { email: s.email, password: `wrong-password-${i}` } })).status).toBe(401);
+    }
+    const blocked = await call("/api/auth/login", { body: { email: s.email, password: "long-enough-pw" } });
+    expect(blocked.status).toBe(429);
+    expect(blocked.data.error).toMatch(/emailed link/);
+    // Other people aren't affected.
+    const t = await signup();
+    expect((await call("/api/auth/login", { body: { email: t.email, password: "long-enough-pw" } })).status).toBe(200);
   });
 
   it("refuses cross-site writes", async () => {
@@ -105,11 +123,11 @@ describe("API", () => {
     expect(prepared.status).toBe(201);
     expect(prepared.data.run.totals.netPayMinor).toBe("228358");
 
-    const self = await call(`/api/orgs/${s.orgId}/entities/${ent}/pay-runs/${prepared.data.id}/approve`, { cookie: s.cookie, body: {} });
-    expect(self.status).toBe(403);
-
+    // With another approver on the team, the preparer can't approve their own run.
     const approverEmail = `approver${Date.now()}@example.com`;
     const ava = await join(s, approverEmail, "approver");
+    const self = await call(`/api/orgs/${s.orgId}/entities/${ent}/pay-runs/${prepared.data.id}/approve`, { cookie: s.cookie, body: {} });
+    expect(self.status).toBe(403);
     const approved = await call(`/api/orgs/${s.orgId}/entities/${ent}/pay-runs/${prepared.data.id}/approve`, { cookie: ava.cookie, body: {} });
     expect(approved.status).toBe(201);
     expect(approved.data.sourceType).toBe("pay_run");
@@ -125,6 +143,46 @@ describe("API", () => {
     const audit = await call(`/api/orgs/${s.orgId}/audit`, { cookie: vic.cookie });
     expect(audit.data.verification.ok).toBe(true);
     expect(audit.data.events.map((e: any) => e.action)).toContain("pay_run.approved");
+  });
+});
+
+describe("one-person payroll", () => {
+  it("lets the only person who can approve approve their own run, and needs the business address first", async () => {
+    const s = await signup();
+    const r = await call(`/api/orgs/${s.orgId}/entities`, {
+      cookie: s.cookie, body: { legalName: "Solo LLC", entityType: "llc_single", region: "CA", firstFiscalYear: 2026 },
+    });
+    const ent = r.data.id as string;
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    const emp = await call(`${base}/employees`, { cookie: s.cookie, body: maya });
+    const prepared = await call(`${base}/pay-runs`, { cookie: s.cookie, body: runFor([emp.data.id]) });
+    expect((await call(`${base}/pay-runs`, { cookie: s.cookie })).data.soleApprover).toBe(true);
+    const noAddress = await call(`${base}/pay-runs/${prepared.data.id}/approve`, { cookie: s.cookie, body: {} });
+    expect(noAddress.status).toBe(409);
+    expect(noAddress.data.error).toMatch(/address/);
+    await call(`${base}/address`, { cookie: s.cookie, body: { address: { line1: "1 Main St", city: "Fresno", state: "CA", zip: "93721" } } });
+    const approved = await call(`${base}/pay-runs/${prepared.data.id}/approve`, { cookie: s.cookie, body: {} });
+    expect(approved.status).toBe(201);
+    const audit = await call(`/api/orgs/${s.orgId}/audit`, { cookie: s.cookie });
+    const ev = audit.data.events.find((e: any) => e.action === "pay_run.approved");
+    expect(ev.context.selfApproved).toMatch(/no one else/);
+  });
+});
+
+describe("sick leave policy", () => {
+  it("front-loads 40 hours once a year, on the first approved run", async () => {
+    const s = await signup();
+    const ent = await entity(s);
+    const base = `/api/orgs/${s.orgId}/entities/${ent}`;
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { sickLeavePolicy: "front_load" } })).status).toBe(200);
+    expect((await call(`${base}/employees`, { cookie: s.cookie })).data.sickLeavePolicy).toBe("front_load");
+    const emp = await call(`${base}/employees`, { cookie: s.cookie, body: { ...maya, payType: "hourly", payRate: "30", overtimeExempt: false } });
+    const line = { employeeId: emp.data.id, regularHours: "72", sickHoursUsed: "8" };
+    const prepared = await call(`${base}/pay-runs`, { cookie: s.cookie, body: { ...runFor([]), lines: [line] } });
+    expect(prepared.data.run.paychecks[0].sickLeave).toEqual({ accruedHours: "0", usedHours: "8", grantedHours: "40", balanceHours: "32" });
+    expect((await call(`${base}/pay-runs/${prepared.data.id}/approve`, { cookie: s.cookie, body: {} })).status).toBe(201);
+    const next = await call(`${base}/pay-runs/preview`, { cookie: s.cookie, body: { ...runFor([], "2026-07-03"), periodStart: "2026-06-15", periodEnd: "2026-06-28", lines: [line] } });
+    expect(next.data.paychecks[0].sickLeave).toEqual({ accruedHours: "0", usedHours: "8", balanceHours: "24" });
   });
 });
 

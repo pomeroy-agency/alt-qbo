@@ -1,4 +1,5 @@
 import type { Tx } from "../db/pool.js";
+import { csvCell } from "./csv.js";
 import { LedgerError } from "./errors.js";
 import { toMajor } from "./money.js";
 
@@ -87,6 +88,4 @@ export async function taxLineExportCsv(tx: Tx, entityId: string, asOf: string): 
   return lines.join("\n") + "\n";
 }
 
-function csv(s: string): string {
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+const csv = csvCell;
