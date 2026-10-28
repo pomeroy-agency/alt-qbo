@@ -41,7 +41,7 @@ export function sealBackup(backup: Backup, key: Buffer): Buffer {
 
 export function openBackup(data: Uint8Array, key: Buffer): Backup {
   const buf = Buffer.from(data);
-  if (!buf.subarray(0, 4).equals(MAGIC)) throw new Error("not an encrypted Alt-QBO backup");
+  if (!buf.subarray(0, 4).equals(MAGIC)) throw new Error("not an encrypted TrailBook backup");
   const d = createDecipheriv("aes-256-gcm", key, buf.subarray(4, 16));
   d.setAuthTag(buf.subarray(16, 32));
   const zipped = Buffer.concat([d.update(buf.subarray(32)), d.final()]);

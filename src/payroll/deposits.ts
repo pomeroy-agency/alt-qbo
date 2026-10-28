@@ -8,7 +8,7 @@ import type { TaxLine } from "./gross-to-net.js";
 // When each payroll tax is due. Liabilities arise on the pay date (cash
 // basis), and the rules come from the rule packs: Pub 15 for Form 941 and
 // 940 taxes, the EDD's deposit table for PIT and SDI, and the DE 9 dates for
-// UI and ETT. Alt-QBO works out what's due and when; the business pays the
+// UI and ETT. TrailBook works out what's due and when; the business pays the
 // IRS (EFTPS) and the EDD (e-Services) itself.
 
 export type DepositKind = "federal_941" | "federal_940" | "ca_pit_sdi" | "ca_ui_ett";

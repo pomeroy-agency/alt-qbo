@@ -1,6 +1,6 @@
 // A direct-deposit file in the NACHA format banks accept for payroll: one
 // PPD batch of credits to employees' checking or savings accounts. The
-// business uploads it to its own bank, which moves the money; Alt-QBO never
+// business uploads it to its own bank, which moves the money; TrailBook never
 // does. Every record is 94 characters and the file is padded to a multiple
 // of ten records, as the NACHA Operating Rules require.
 

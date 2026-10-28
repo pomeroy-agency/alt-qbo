@@ -7,7 +7,7 @@ import { REMIND_DAYS } from "../payroll/tax-deposits.js";
 import { prepareSalesTaxReturn, returnPeriods, type FilingFrequency } from "./sales-tax-return.js";
 
 // Emails reminding a business that its own sales and use tax return, or a
-// quarterly prepayment, is coming due. Alt-QBO doesn't know when a return is
+// quarterly prepayment, is coming due. TrailBook doesn't know when a return is
 // filed, so there is one reminder per due date, a few days before it, and no
 // overdue nagging. They go to the owners, admins and accountants of the
 // organisation; a failed send is retried the next day.

@@ -1,7 +1,7 @@
 {
   "name": "alt-qbo",
   "version": "0.1.0",
-  "description": "Alt-QBO accounting platform: ledger core, tenancy, audit log, jurisdiction rule packs, payroll calculation",
+  "description": "TrailBook accounting platform: ledger core, tenancy, audit log, jurisdiction rule packs, payroll calculation",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

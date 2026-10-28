@@ -1,4 +1,4 @@
-// Alt-QBO web client. Plain ES modules, no build step.
+// TrailBook web client. Plain ES modules, no build step.
 
 const app = document.getElementById("app");
 const state = { me: null, orgId: null, org: null, entity: null, cache: {} };
@@ -88,7 +88,7 @@ function topbar() {
   const t = theme();
   return `
     <header class="topbar">
-      <a class="brand" href="#/"><img src="/favicon.svg" alt=""><span>Alt-QBO</span></a>
+      <a class="brand" href="#/"><img src="/favicon.svg" alt=""><span>TrailBook</span></a>
       ${orgs.length > 1 ? `<select data-action="switch-org" aria-label="Organisation">${orgs.map((o) => `<option value="${o.id}" ${o.id === state.orgId ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : `<span>${esc(state.org?.org?.name ?? "")}</span>`}
       <span class="spacer"></span>
       <a class="who" href="#/account" title="Your account and sign-in security">${esc(state.me?.user?.name)} · ${esc(state.org?.role ?? "")}</a>
@@ -179,7 +179,7 @@ async function emailOn() {
 const authPage = (inner) => `
     <div class="wrap auth">
       <div class="panel">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>Alt-QBO</h1></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>TrailBook</h1></div>
         ${inner}
       </div>
       <p class="muted" style="text-align:center;font-size:14px"><a href="/pricing.html">Pricing</a> · <a href="/promises.html">Our promises</a> · <a href="/security.html">Security</a> · <a href="/status.html">Status</a></p>
@@ -591,7 +591,7 @@ const DOC = {
   invoice: { path: "invoices", title: "Invoices", one: "invoice", who: "Customer", contactKinds: ["customer", "both"], lineTypes: ["revenue", "liability"], defaultAccount: "4000",
     blurb: "Issuing an invoice posts it to receivables straight away. An issued invoice can't be edited; void it and issue a new one." },
   bill: { path: "bills", title: "Bills", one: "bill", who: "Vendor", contactKinds: ["vendor", "both"], lineTypes: ["expense", "asset"], defaultAccount: "6000",
-    blurb: "Recording a bill posts it to payables. Sales tax a vendor charges is part of the expense. If a vendor didn't charge California tax on something taxable, such as software from 2027, tick the use tax box and Alt-QBO adds the use tax you owe the state." },
+    blurb: "Recording a bill posts it to payables. Sales tax a vendor charges is part of the expense. If a vendor didn't charge California tax on something taxable, such as software from 2027, tick the use tax box and TrailBook adds the use tax you owe the state." },
 };
 
 function docAccountOptions(kind, selected) {
@@ -1018,7 +1018,7 @@ async function contactsView(id) {
         ${addressFields()}
         <button type="submit">Add</button>
       </form>
-      <p class="hash">A customer who buys to resell can give you a resale certificate (CDTFA-230). Add their seller's permit number with Edit, and Alt-QBO won't charge them sales tax.
+      <p class="hash">A customer who buys to resell can give you a resale certificate (CDTFA-230). Add their seller's permit number with Edit, and TrailBook won't charge them sales tax.
         For software from 2027, an owner or accountant can also record a buyer's use tax direct payment permit, or the California share from their multiple-points-of-use certificate.</p></div>` : ""}`);
 }
 
@@ -1037,7 +1037,7 @@ async function itemsView(id) {
   const label = (cat) => taxCategories().find((c) => c.id === cat)?.label ?? cat;
   const income = (selected) => docAccountOptions("invoice", selected);
   app.innerHTML = shell("items", `
-    <div class="head"><div><h1>Products and services</h1><p class="muted">What you sell. Picking one on an invoice fills in the description and price, and its kind of sale tells Alt-QBO whether California taxes it.</p></div></div>
+    <div class="head"><div><h1>Products and services</h1><p class="muted">What you sell. Picking one on an invoice fills in the description and price, and its kind of sale tells TrailBook whether California taxes it.</p></div></div>
     <div class="panel table-wrap"><table>
       <thead><tr><th>Name</th><th>Kind of sale</th><th>Sales tax</th><th class="num">Price</th><th></th></tr></thead>
       <tbody>${items.map((i) => `<tr class="${i.isActive ? "" : "muted"}"><td>${esc(i.name)}${i.isActive ? "" : " <span class=\"pill grey\">Retired</span>"}</td><td>${esc(label(i.taxCategory))}</td>
@@ -1178,7 +1178,7 @@ async function overviewView(id) {
         <h2>To do</h2>
         ${todo.length ? `<ul class="todo">${todo.map(([n, what, k]) => `<li><a href="${go(k)}"><span class="badge">${n}</span> ${what}</a></li>`).join("")}</ul>` : `<p class="muted">Nothing waiting on you.</p>`}
         ${!e.address && canSettings ? `<form data-form="business-address" style="margin-top:12px">
-          <p><strong>Add your business address.</strong> <span class="muted">Alt-QBO uses it for the sales tax rate when a customer has no address of their own.</span></p>
+          <p><strong>Add your business address.</strong> <span class="muted">TrailBook uses it for the sales tax rate when a customer has no address of their own.</span></p>
           <div class="row">
             <label>Street<input name="line1" required placeholder="123 Main St"></label><label>City<input name="city" required style="width:140px"></label>
             <label>State<input name="state" value="CA" maxlength="2" style="width:56px"></label><label>ZIP<input name="zip" required inputmode="numeric" style="width:90px"></label>
@@ -1322,7 +1322,7 @@ async function reportsView(id) {
   } else if (rep.tab === "st") {
     const r = await api(entPath(`${path}?${q}`));
     const line = (label, minor, note = "") => `<tr><td>${label}${note ? `<div class="hash">${note}</div>` : ""}</td><td class="num">${usd(minor)}</td></tr>`;
-    body = `<p class="muted">The figures for your CDTFA sales and use tax return, from invoices and bills dated in this period. Alt-QBO prepares them; you or your accountant file and pay on the CDTFA's site.</p>
+    body = `<p class="muted">The figures for your CDTFA sales and use tax return, from invoices and bills dated in this period. TrailBook prepares them; you or your accountant file and pay on the CDTFA's site.</p>
       <table><tbody>
         ${line("Total sales", r.totalSalesMinor, "All invoiced sales before tax")}
         ${r.nontaxable.map((n) => line(`Less nontaxable: ${esc(n.label)}`, n.amountMinor)).join("")}
@@ -1526,7 +1526,7 @@ function employeeForm(e = null) {
       <label>After-tax deduction ($)<input name="postTax" value="${v(ded("post_tax"))}" inputmode="decimal" placeholder="0"></label>
       <label data-only="hourly" ${hourly ? "" : "hidden"}>Sick leave balance (hours)<input name="sickBalanceHours" value="${v(e?.sickBalanceHours ?? "0")}" inputmode="decimal"></label>
     </div>
-    <details ${o.wages ? "open" : ""}><summary>Paid earlier this year, before Alt-QBO</summary>
+    <details ${o.wages ? "open" : ""}><summary>Paid earlier this year, before TrailBook</summary>
       <p class="hash">If you switched from another payroll service mid-year, enter this year's totals so far. They keep Social Security and unemployment taxes from going over their yearly limits, and they go on the W-2.</p>
       <div class="grid">
         <label>Year<input name="ytdYear" value="${v(o.year ?? bookDate().slice(0, 4))}" inputmode="numeric"></label>
@@ -1645,7 +1645,7 @@ async function payrollView(id) {
   const active = employees.filter((e) => e.status === "active");
   const next = nextPeriod(payRuns);
   app.innerHTML = shell("payroll", `
-    <div class="head"><div><h1>Payroll</h1><p class="muted">Alt-QBO works out pay, taxes and deductions, makes pay stubs and posts payroll to the books. You pay employees from your own bank and file and pay the taxes with the IRS and EDD yourself.</p></div>
+    <div class="head"><div><h1>Payroll</h1><p class="muted">TrailBook works out pay, taxes and deductions, makes pay stubs and posts payroll to the books. You pay employees from your own bank and file and pay the taxes with the IRS and EDD yourself.</p></div>
       <div class="row"><a class="btn secondary" href="#/e/${id}/payroll/forms">Tax forms</a></div></div>
     <div class="panel">
       <div class="row" style="justify-content:space-between"><h2>Employees</h2>${canWrite && !pay.adding ? `<button data-action="emp-add">+ Add employee</button>` : ""}</div>
@@ -1725,7 +1725,7 @@ function taxDepositsPanel(t, canPay, canSet) {
     </form></td></tr>` : ""}`;
   return `<div class="panel">
     <h2>Tax deposits</h2>
-    <p class="muted">What each approved pay run owes the IRS and the EDD, and when. Pay through EFTPS (or IRS Direct Pay) and EDD e-Services, then record each payment here so your books show it. Alt-QBO emails a reminder a few days before each due date.</p>
+    <p class="muted">What each approved pay run owes the IRS and the EDD, and when. Pay through EFTPS (or IRS Direct Pay) and EDD e-Services, then record each payment here so your books show it. TrailBook emails a reminder a few days before each due date.</p>
     <form data-form="deposit-schedule" class="row" style="margin-bottom:12px">
       <label>Federal deposit schedule<select name="federalDepositSchedule" ${canSet ? "" : "disabled"}>
         <option value="monthly" ${t.federalSchedule === "monthly" ? "selected" : ""}>Monthly</option>
@@ -1745,7 +1745,7 @@ function directDepositPanel(dd, canEdit) {
   const v = (x) => esc(x ?? "");
   return `<div class="panel">
     <div class="row" style="justify-content:space-between"><h2>Direct deposit</h2>${dd ? `<span class="pill">Set up</span>` : ""}</div>
-    <p class="muted">After a pay run is approved, download its bank file and upload it to your bank's ACH or direct-deposit page. Your bank moves the money; Alt-QBO never does.
+    <p class="muted">After a pay run is approved, download its bank file and upload it to your bank's ACH or direct-deposit page. Your bank moves the money; TrailBook never does.
       Ask your bank for ACH origination if it isn't turned on; they'll give you the details below.</p>
     ${dd ? `<p>${esc(dd.destinationName)}, routing ${esc(dd.odfiRouting)}, company ID ${esc(dd.companyId)}, shown to employees as <strong>${esc(dd.companyName)}</strong>.${dd.balanced ? ` Balanced file, taken from account ending ${esc(dd.accountLast4)}.` : ""}</p>` : ""}
     ${canEdit ? `<details ${dd ? "" : "open"}><summary>${dd ? "Change bank details" : "Add your bank details"}</summary>
@@ -1822,7 +1822,7 @@ async function formsView(id, yearParam) {
   const acct = t.caEmployerAccount;
   app.innerHTML = shell("payroll", `
     <div class="head"><div><p><a href="#/e/${id}/payroll">&larr; Payroll</a></p><h1>Payroll tax forms</h1>
-      <p class="muted">Each form's figures come from approved pay runs and the deposits you've recorded. Copy them into the filing site (or hand them to your accountant), check them, and sign. Alt-QBO doesn't file anything.</p></div>
+      <p class="muted">Each form's figures come from approved pay runs and the deposits you've recorded. Copy them into the filing site (or hand them to your accountant), check them, and sign. TrailBook doesn't file anything.</p></div>
       <div class="row"><a class="btn secondary" href="#/e/${id}/payroll/forms/${year - 1}">${year - 1}</a>${year < Number(bookDate().slice(0, 4)) ? `<a class="btn secondary" href="#/e/${id}/payroll/forms/${year + 1}">${year + 1}</a>` : ""}</div></div>
     <div class="panel">
       <form data-form="edd-account" class="row" style="margin-bottom:12px">
@@ -1892,7 +1892,7 @@ async function salesTaxView(id, yearParam) {
   const freq = Object.entries(t.frequencies).map(([k, l]) => `<option value="${k}" ${k === t.filingFrequency ? "selected" : ""}>${esc(l)}</option>`).join("");
   app.innerHTML = shell("sales-tax", `
     <div class="head"><div><h1>Sales tax returns</h1>
-      <p class="muted">Your own California sales and use tax returns. The figures come from the invoices you've issued and the tax on each. Copy them into CDTFA online services (or hand them to your accountant), check them, and file. Alt-QBO doesn't file or pay anything.</p></div>
+      <p class="muted">Your own California sales and use tax returns. The figures come from the invoices you've issued and the tax on each. Copy them into CDTFA online services (or hand them to your accountant), check them, and file. TrailBook doesn't file or pay anything.</p></div>
       <div class="row"><a class="btn secondary" href="#/e/${id}/sales-tax/${year - 1}">${year - 1}</a>${year <= Number(bookDate().slice(0, 4)) ? `<a class="btn secondary" href="#/e/${id}/sales-tax/${year + 1}">${year + 1}</a>` : ""}</div></div>
     <div class="panel">
       <form data-form="sales-tax-settings" class="row" style="margin-bottom:12px">
@@ -2028,7 +2028,7 @@ async function joinView(token, error = "") {
   else if (signedInAs === inv.email) body = `<button data-action="accept-invite" data-token="${esc(token)}">Join ${esc(inv.orgName)}</button>`;
   else if (signedInAs) body = `<p>You're signed in as ${esc(signedInAs)}, but this invitation is for ${esc(inv.email)}.</p><button class="secondary" data-action="logout-join">Sign out and continue</button>`;
   else body = `
-    <h2>New to Alt-QBO</h2>
+    <h2>New to TrailBook</h2>
     <form data-form="join-signup" data-token="${esc(token)}">
       <label>Your name<input name="name" required autocomplete="name"></label>
       <label>Email<input name="email" value="${esc(inv.email)}" readonly></label>
@@ -2044,7 +2044,7 @@ async function joinView(token, error = "") {
   app.innerHTML = `
     <div class="wrap auth">
       <div class="panel">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>Alt-QBO</h1></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><img src="/favicon.svg" width="32" height="32" alt=""><h1>TrailBook</h1></div>
         ${inv ? `<p>You're invited to join <strong>${esc(inv.orgName)}</strong> as ${esc(ROLE_LABEL[inv.role] ?? inv.role)}.</p>` : ""}
         ${error ? `<div class="alert bad">${esc(error)}</div>` : ""}
         ${body}
@@ -2070,7 +2070,7 @@ const bill = { interval: null };
 async function billingView() {
   const b = await api(orgPath("/billing"));
   if (b.free) {
-    app.innerHTML = shell("billing", `<div class="head"><div><h1>Billing</h1></div></div><div class="panel"><p>This organisation doesn't pay for Alt-QBO.</p></div>`);
+    app.innerHTML = shell("billing", `<div class="head"><div><h1>Billing</h1></div></div><div class="panel"><p>This organisation doesn't pay for TrailBook.</p></div>`);
     return;
   }
   const owner = state.org.role === "owner";
@@ -2135,7 +2135,7 @@ async function billingView() {
       ${b.card ? `<p>${esc(b.card.brand.toUpperCase())} ending ${esc(b.card.last4)}, expires ${esc(b.card.exp)}.</p>` : `<p class="muted">No card yet.</p>`}
       ${b.cardPayments
         ? b.billing.address ? `<button data-action="bill-card">${b.card ? "Replace card" : "Add a card"}</button>
-          <p class="muted">You type the card on our payment processor's secure page (Stripe). Alt-QBO never sees or stores the card number.</p>` : `<p class="muted">Save the billing details first.</p>`
+          <p class="muted">You type the card on our payment processor's secure page (Stripe). TrailBook never sees or stores the card number.</p>` : `<p class="muted">Save the billing details first.</p>`
         : `<p class="muted">Card payments aren't switched on yet. Your trial carries on in the meantime.</p>`}
     </div>
     ${b.charges.length ? `<div class="panel table-wrap"><h2>Payments</h2><table>
@@ -2512,7 +2512,7 @@ document.addEventListener("click", async (ev) => {
       b.disabled = true;
       const res = await api(entPath(`/backups/${b.dataset.id}/download`), { body: {}, raw: true });
       if (!res.ok) throw new Error((await res.json()).error);
-      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "alt-qbo-backup.json";
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "trailbook-backup.json";
       const url = URL.createObjectURL(await res.blob());
       Object.assign(document.createElement("a"), { href: url, download: name }).click();
       URL.revokeObjectURL(url);
@@ -2521,7 +2521,7 @@ document.addEventListener("click", async (ev) => {
       b.disabled = true;
       const res = await api(entPath("/backup"), { body: {}, raw: true });
       if (!res.ok) throw new Error((await res.json()).error);
-      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "alt-qbo-backup.json";
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "trailbook-backup.json";
       const url = URL.createObjectURL(await res.blob());
       Object.assign(document.createElement("a"), { href: url, download: name }).click();
       URL.revokeObjectURL(url);
@@ -2679,7 +2679,7 @@ document.addEventListener("submit", async (ev) => {
       } catch (err) {
         return authView(kind, err.message);
       }
-      return authView(kind, "", `If ${d.email} has an Alt-QBO account, a link is on its way. Check your inbox and spam folder.`);
+      return authView(kind, "", `If ${d.email} has an TrailBook account, a link is on its way. Check your inbox and spam folder.`);
     } else if (kind === "reset-password") {
       let r;
       try {

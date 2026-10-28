@@ -9,17 +9,17 @@ import {
   addDays, addMonths, daysBetween, periodEnd, type Interval, type Plan, type PriceList,
 } from "./plans.js";
 
-// Alt-QBO's own subscriptions. Each organisation starts with a 30-day trial
+// TrailBook's own subscriptions. Each organisation starts with a 30-day trial
 // of everything. After that it pays per business, by card, monthly or
-// yearly. Every charge is an invoice in the seller's own Alt-QBO books, so
-// Alt-QBO's revenue and sales tax are recorded the same way as any client's,
+// yearly. Every charge is an invoice in the seller's own TrailBook books, so
+// TrailBook's revenue and sales tax are recorded the same way as any client's,
 // and the card is then charged for that invoice's total. A business that
 // stops paying never loses its books: they stay readable and downloadable,
 // and only changes are paused.
 
 export interface BillingConfig {
   gateway?: PaymentGateway;
-  /** The business that sells Alt-QBO: its books get the invoices and payments. */
+  /** The business that sells TrailBook: its books get the invoices and payments. */
   seller?: { orgId: string; entityId: string; bankAccount?: string };
   /** When on, an organisation whose trial ended unpaid, or whose payment is overdue past the grace period, becomes read-only. */
   enforce?: boolean;
@@ -127,7 +127,7 @@ export async function peoplePaid(tx: Tx, orgId: string, from: string, to: string
 const intervalWord = (i: Interval) => (i === "month" ? "monthly" : "yearly");
 
 function planLines(prices: PriceList, plan: Plan, interval: Interval, businesses: number, start: string, end: string): ChargeLine[] {
-  const lines: ChargeLine[] = [{ description: `Alt-QBO ${PLAN_NAMES[plan]}, ${intervalWord(interval)}`, quantity: 1, unitMinor: prices.plan[plan][interval], periodStart: start, periodEnd: end }];
+  const lines: ChargeLine[] = [{ description: `TrailBook ${PLAN_NAMES[plan]}, ${intervalWord(interval)}`, quantity: 1, unitMinor: prices.plan[plan][interval], periodStart: start, periodEnd: end }];
   if (businesses > 1) {
     lines.push({ description: `Additional business, ${PLAN_NAMES[plan]}, ${intervalWord(interval)}`, quantity: businesses - 1, unitMinor: prices.extraBusiness[plan][interval], periodStart: start, periodEnd: end });
   }
@@ -183,8 +183,8 @@ export async function saveBillingDetails(
   const state = text(a.state, "the state", 2).toUpperCase(), zip = text(a.zip, "the ZIP code", 10);
   if (!/^[A-Z]{2}$/.test(state)) throw new BillingError("the state is two letters, like CA");
   if (!/^\d{5}(-\d{4})?$/.test(zip)) throw new BillingError("the ZIP code looks like 90012");
-  // At launch Alt-QBO is sold to California businesses only.
-  if (state !== "CA") throw new BillingError("for now, Alt-QBO is only available to businesses based in California");
+  // At launch TrailBook is sold to California businesses only.
+  if (state !== "CA") throw new BillingError("for now, TrailBook is only available to businesses based in California");
   await tx.query(
     `UPDATE subscriptions SET billing_name = $2, billing_email = $3, address_line1 = $4, address_city = $5, address_state = $6, address_zip = $7, updated_at = now()
       WHERE org_id = $1`,
@@ -411,7 +411,7 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
       const contactId = await sellerContact(tx, cfg, sub);
       const doc = await issueInvoice(tx, {
         orgId: seller.orgId, entityId: seller.entityId, contactId, issueDate: today, dueDate: today,
-        memo: `Alt-QBO subscription, ${c.period_start} to ${c.period_end}`,
+        memo: `TrailBook subscription, ${c.period_start} to ${c.period_end}`,
         lines: (c.lines as ChargeLine[]).map((l) => ({
           description: l.description, quantity: String(l.quantity), unitPrice: money(l.unitMinor), taxCategory: SOFTWARE,
           servicePeriodStart: l.periodStart, servicePeriodEnd: l.periodEnd,
@@ -437,7 +437,7 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
     ? { ok: true as const, id: "already-paid" }
     : await gateway.charge({
       customerId: sub.processor_customer!, paymentMethodId: sub.processor_card!, amountMinor: invoice.dueMinor,
-      description: `Alt-QBO ${invoice.number}`, idempotencyKey: `${chargeId}:${c.attempts + 1}`,
+      description: `TrailBook ${invoice.number}`, idempotencyKey: `${chargeId}:${c.attempts + 1}`,
       metadata: { org_id: sub.org_id, charge_id: chargeId, invoice: invoice.number },
     }).catch((err) => ({ ok: false as const, message: err instanceof Error ? err.message : String(err), unknown: true }));
 
@@ -457,7 +457,7 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
       // A first payment that fails leaves the trial ended; the books are read-only until a card works.
     });
     await notifyOwners(pool, cfg, sub.org_id, (name) => ({
-      subject: "Your Alt-QBO payment didn't go through",
+      subject: "Your TrailBook payment didn't go through",
       text: `We couldn't charge the card ending ${sub.card_last4} for ${invoice.number} ($${money(invoice.dueMinor)}) for ${name}: ${result.message}.\n\n`
         + `Update the card under Billing${cfg.appUrl ? ` (${cfg.appUrl}/#/billing)` : ""}. ${attempts % MAX_ATTEMPTS ? `We'll try again in ${RETRY_DAYS} days.` : "We won't try again until the card is updated."} `
         + `Your books stay fully usable for ${GRACE_DAYS} days after the first failed payment, and always readable and downloadable after that.\n`,
@@ -492,8 +492,8 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
     }
   });
   await notifyOwners(pool, cfg, sub.org_id, (name) => ({
-    subject: `Alt-QBO receipt ${invoice.number}`,
-    text: `Thanks. We charged $${money(invoice.dueMinor)} to the card ending ${sub.card_last4} for ${name}'s Alt-QBO subscription, ${c.period_start} to ${c.period_end}.\n\n`
+    subject: `TrailBook receipt ${invoice.number}`,
+    text: `Thanks. We charged $${money(invoice.dueMinor)} to the card ending ${sub.card_last4} for ${name}'s TrailBook subscription, ${c.period_start} to ${c.period_end}.\n\n`
       + `${(c.lines as ChargeLine[]).map((l) => `${l.description}: ${l.quantity} x $${money(l.unitMinor)}`).join("\n")}\n`
       + `${invoice.taxMinor > 0n ? `California sales tax: $${money(invoice.taxMinor)}\n` : ""}Total: $${money(invoice.totalMinor)}\n\nYour invoices are under Billing.\n`,
   }));

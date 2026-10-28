@@ -10,7 +10,7 @@ async function check() {
     const res = await fetch("/api/status", { cache: "no-store" });
     s = await res.json();
   } catch {
-    rows.innerHTML = row("Alt-QBO", false, "The service didn't answer.");
+    rows.innerHTML = row("TrailBook", false, "The service didn't answer.");
     return;
   }
   const b = s.backups;

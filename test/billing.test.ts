@@ -33,7 +33,7 @@ const opts = { signupCode: "c", billing, mailer: async (m: { to: string; subject
 const cfg = () => ({ ...billing, mailer: opts.mailer });
 
 beforeAll(async () => {
-  const s = await setupCaliforniaBusiness("Alt-QBO Seller");
+  const s = await setupCaliforniaBusiness("TrailBook Seller");
   seller = { orgId: s.org.id, entityId: s.entity.id };
   billing.seller = seller;
 });
@@ -96,7 +96,7 @@ describe("billing", () => {
     expect(ch).toMatchObject({ status: "paid", subtotal_minor: 3500n, kind: "renewal" });
     const doc = await withTenant(pool, seller.orgId, (tx) => getDocument(tx, ch.invoice_id));
     expect(doc).toMatchObject({ status: "paid", totalMinor: 3500n, number: ch.invoice_number });
-    expect(doc.lines[0]).toMatchObject({ description: "Alt-QBO Books + Payroll, monthly", taxCategory: "prewritten_software", servicePeriodStart: today });
+    expect(doc.lines[0]).toMatchObject({ description: "TrailBook Books + Payroll, monthly", taxCategory: "prewritten_software", servicePeriodStart: today });
     expect(sent.at(-1)?.subject).toMatch(/receipt/);
 
     // Running again the same day charges nothing more.

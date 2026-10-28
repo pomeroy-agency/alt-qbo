@@ -53,4 +53,4 @@ createServer(async (req, res) => {
     res.writeHead(200, { "content-type": "text/html" });
     res.end(await readFile(path.join(root, "index.html")));
   }
-}).listen(port, () => console.log(`Alt-QBO on http://localhost:${port}`));
+}).listen(port, () => console.log(`TrailBook on http://localhost:${port}`));

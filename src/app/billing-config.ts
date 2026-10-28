@@ -5,7 +5,7 @@ import { EXAMPLE_ORG_NAME } from "./example.js";
 /**
  * Billing settings from the environment:
  * STRIPE_SECRET_KEY (card payments), BILLING_SELLER_ORG_ID and
- * BILLING_SELLER_ENTITY_ID (the books that sell Alt-QBO), BILLING_BANK_ACCOUNT
+ * BILLING_SELLER_ENTITY_ID (the books that sell TrailBook), BILLING_BANK_ACCOUNT
  * (the account card payments land in, default the operating account) and
  * BILLING_ENFORCE=true (unpaid organisations become read-only). With none of
  * them set, everyone keeps full use and nobody is charged.

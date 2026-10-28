@@ -18,7 +18,7 @@ const DRIFT_STEPS = 1;
 const TICKET_MINUTES = 5;
 const TICKET_ATTEMPTS = 5;
 const RECOVERY_CODES = 10;
-const ISSUER = "Alt-QBO";
+const ISSUER = "TrailBook";
 
 const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 

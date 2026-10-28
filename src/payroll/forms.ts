@@ -11,7 +11,7 @@ import type { Paycheck, TaxLine } from "./gross-to-net.js";
 
 // Prepared payroll tax forms: Form 941 and Form 940 for the IRS, the DE 9
 // and DE 9C for the EDD, and W-2s with their W-3 for employees and the SSA.
-// Every figure comes from posted pay runs and recorded deposits. Alt-QBO
+// Every figure comes from posted pay runs and recorded deposits. TrailBook
 // prepares the figures; the business (or its accountant) files them in
 // EFTPS/e-file, EDD e-Services and SSA Business Services Online, and signs.
 
@@ -411,9 +411,9 @@ export async function formW2(
   if (w2s.some((w) => !w.ssn)) warnings.push("Some employees have no Social Security number on file; every W-2 needs one.");
   if (w2s.some((w) => !w.address)) warnings.push("Some employees have no home address on file; every W-2 needs one.");
   for (const w of w2s.filter((x) => x.hasEarlierPay)) {
-    warnings.push(`${w.name} was paid earlier in ${input.year} before Alt-QBO. These figures cover only pay through Alt-QBO; add the earlier payroll's W-2 figures, or have the earlier provider issue a W-2 for that part.`);
+    warnings.push(`${w.name} was paid earlier in ${input.year} before TrailBook. These figures cover only pay through TrailBook; add the earlier payroll's W-2 figures, or have the earlier provider issue a W-2 for that part.`);
   }
-  if (sumDeduction(runs, "section125")) warnings.push("Box 12 code DD (cost of employer health coverage) isn't filled in: Alt-QBO knows only the employee's pre-tax share. Employers filing fewer than 250 W-2s don't have to report it.");
+  if (sumDeduction(runs, "section125")) warnings.push("Box 12 code DD (cost of employer health coverage) isn't filled in: TrailBook knows only the employee's pre-tax share. Employers filing fewer than 250 W-2s don't have to report it.");
   return {
     form: "W-2", title: "Forms W-2 and W-3, Wage and Tax Statements", period: String(input.year),
     dueDate: onOrNextBusinessDay(`${input.year + 1}-01-31`, "federal"), employer,

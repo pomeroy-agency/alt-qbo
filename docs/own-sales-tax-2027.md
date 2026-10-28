@@ -1,16 +1,16 @@
-# Alt-QBO's own sales tax from 2027
+# TrailBook's own sales tax from 2027
 
-From January 1, 2027, California taxes prewritten software, including SaaS (SB 122, Rev. & Tax. Code §6016.1). Alt-QBO's subscription fees to California customers become taxable then. This page covers what the business selling Alt-QBO has to do, and how to bill and report through Alt-QBO itself.
+From January 1, 2027, California taxes prewritten software, including SaaS (SB 122, Rev. & Tax. Code §6016.1). TrailBook's subscription fees to California customers become taxable then. This page covers what the business selling TrailBook has to do, and how to bill and report through TrailBook itself.
 
-Alt-QBO has no subscription billing of its own. The plan is for the selling business to use Alt-QBO's invoicing like any other client. The invoicing already taxes software by the customer's billing address and access period (PR #22). This change adds the seller's permit, filing frequency and the return worksheet.
+TrailBook has no subscription billing of its own. The plan is for the selling business to use TrailBook's invoicing like any other client. The invoicing already taxes software by the customer's billing address and access period (PR #22). This change adds the seller's permit, filing frequency and the return worksheet.
 
 ## Steps for Greg
 
-1. **Decide which legal entity sells Alt-QBO.** The permit, the returns and the liability belong to whoever contracts with customers. If that business already holds a California seller's permit, no new permit is needed. Add the new activity and update the expected sales with the CDTFA instead.
-2. **Apply for a seller's permit before the first taxable invoice.** Apply through CDTFA online services, under registering a new business or activity. There is no fee, but the CDTFA can ask for a security deposit. Timing matters. Alt-QBO taxes software by the access period, so a December 2026 invoice for January 2027 access already charges tax. The permit therefore has to be in place before December's invoices go out, not by January 1. Rev. & Tax. Code §6066 requires the permit before making taxable sales.
+1. **Decide which legal entity sells TrailBook.** The permit, the returns and the liability belong to whoever contracts with customers. If that business already holds a California seller's permit, no new permit is needed. Add the new activity and update the expected sales with the CDTFA instead.
+2. **Apply for a seller's permit before the first taxable invoice.** Apply through CDTFA online services, under registering a new business or activity. There is no fee, but the CDTFA can ask for a security deposit. Timing matters. TrailBook taxes software by the access period, so a December 2026 invoice for January 2027 access already charges tax. The permit therefore has to be in place before December's invoices go out, not by January 1. Rev. & Tax. Code §6066 requires the permit before making taxable sales.
 3. **Note the filing frequency the CDTFA assigns.** It comes with the permit and depends on the taxable sales you estimate in the application (monthly, quarterly, quarterly with prepayments, or yearly). You can ask the CDTFA to change it later.
-4. **Record both in Alt-QBO.** In the selling business, open **Sales tax** (under Accountant tools) and enter the permit number and frequency.
-5. **Set up the product.** Under **Products and services**, add the subscription with the kind of sale "Software or app access". Each customer needs a billing address. Without one, Alt-QBO won't issue a taxed software line.
+4. **Record both in TrailBook.** In the selling business, open **Sales tax** (under Accountant tools) and enter the permit number and frequency.
+5. **Set up the product.** Under **Products and services**, add the subscription with the kind of sale "Software or app access". Each customer needs a billing address. Without one, TrailBook won't issue a taxed software line.
 6. **Invoice with access dates.** Every subscription line carries the first and last day of access. The tax follows those dates, not the invoice date.
 7. **File and pay each period.** Open the period on the Sales tax page, read the warnings, and copy the figures into CDTFA online services by the due date shown. Then record the payment in the books by debiting Sales tax payable (2200) and crediting the bank, or match it on the Bank page.
 

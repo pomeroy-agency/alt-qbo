@@ -93,7 +93,7 @@ function plain<T>(v: T): T {
 /** Checks a downloaded file: right format, and nothing changed since it was made. */
 export function verifyBackup(file: unknown): { ok: boolean; reason?: string } {
   const b = file as Partial<Backup> | null;
-  if (b?.format !== BACKUP_FORMAT) return { ok: false, reason: "not an Alt-QBO backup" };
+  if (b?.format !== BACKUP_FORMAT) return { ok: false, reason: "not an TrailBook backup" };
   if (b.version !== BACKUP_VERSION) return { ok: false, reason: `backup version ${b.version} isn't supported` };
   const sum = createHash("sha256").update(canonicalJson({ entity: b.entity, tables: b.tables, events: b.audit?.events })).digest("hex");
   return sum === b.checksum ? { ok: true } : { ok: false, reason: "the file has been changed or damaged since it was made" };
