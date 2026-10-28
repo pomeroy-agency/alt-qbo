@@ -122,10 +122,11 @@ const CAN_APPROVE: Role[] = ["owner", "admin", "approver"];
  */
 export async function approveAndPostPayRun(
   tx: Tx,
-  input: { orgId: string; entityId: string; run: PayRun; preparedBy: Actor; approvedBy: Actor },
+  input: { orgId: string; entityId: string; run: PayRun; preparedBy: Actor; approvedBy: Actor; soleApprover?: boolean },
 ): Promise<PostedEntry> {
   const { run, preparedBy, approvedBy } = input;
-  if (approvedBy.id === preparedBy.id) {
+  // A business with nobody else who can approve (a one-person business) approves its own runs; the audit log says so.
+  if (approvedBy.id === preparedBy.id && !input.soleApprover) {
     throw new LedgerError("FORBIDDEN", "a pay run must be approved by someone other than its preparer");
   }
   if (!CAN_APPROVE.includes(approvedBy.role)) {
@@ -147,7 +148,7 @@ export async function approveAndPostPayRun(
     objectType: "pay_run",
     objectId: run.payRunId,
     after: run,
-    context: { preparedBy: preparedBy.id, rulePacks: run.rulePacks },
+    context: { preparedBy: preparedBy.id, rulePacks: run.rulePacks, ...(approvedBy.id === preparedBy.id ? { selfApproved: "no one else in the organisation can approve pay runs" } : {}) },
   });
   return postJournal(tx, {
     orgId: input.orgId,

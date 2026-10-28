@@ -46,6 +46,8 @@ export interface EmployeePayInput {
   /** True for employees classified exempt from overtime; checked against the salary floor. */
   overtimeExempt?: boolean;
   bonus?: string;
+  /** A bonus given at the employer's sole discretion (not promised or tied to work), which stays out of the regular rate. */
+  bonusDiscretionary?: boolean;
   commission?: string;
   /** Non-taxable expense reimbursement, added to net pay. */
   reimbursement?: string;
@@ -53,9 +55,24 @@ export interface EmployeePayInput {
   de4: DE4;
   deductions?: Deduction[];
   ytd?: Partial<YearToDate>;
-  sickLeave?: { balanceHours: string };
+  sickLeave?: SickLeaveInput;
   /** A city or county minimum wage above the state's where they work, if any. */
   localMinimumWage?: { place: string; rate: string; sizeNote?: string };
+}
+
+export type SickLeavePolicy = "accrual" | "front_load";
+
+/** Paid sick leave for one paycheck (Labor Code 245-249). */
+export interface SickLeaveInput {
+  /** Hours available before this paycheck. */
+  balanceHours: string;
+  policy?: SickLeavePolicy;
+  /** Hours of sick leave taken in this pay period. */
+  usedHours?: string;
+  /** Front-loading: hours granted for the year with this paycheck; the balance becomes at least this (no carryover required). */
+  grantHours?: string;
+  /** Exempt and salaried employees: hours they are deemed to work for accrual (40 a week, Labor Code 246(b)(3)). */
+  deemedHoursWorked?: string;
 }
 
 export interface EmployerSettings {
@@ -83,7 +100,7 @@ export interface Paycheck {
   employeeTaxMinor: bigint;
   employerTaxMinor: bigint;
   netPayMinor: bigint;
-  sickLeave?: { accruedHours: string; balanceHours: string };
+  sickLeave?: { accruedHours: string; usedHours: string; grantedHours?: string; balanceHours: string };
   /** Problems a reviewer must clear before approval (minimum wage, exempt test, negative net). */
   blockers: string[];
   warnings: string[];
@@ -128,6 +145,8 @@ export function calculatePaycheck(
     addHours("REGULAR", input.regularHours, 1);
     addHours("OVERTIME", input.overtimeHours, 1.5);
     addHours("DOUBLE_TIME", input.doubleTimeHours, 2);
+    // Sick leave taken is paid at the hourly rate; it isn't hours worked for overtime or accrual.
+    addHours("SICK", input.sickLeave?.usedHours, 1);
   }
   if (input.salaryPerPeriod) {
     earnings.push({ code: "SALARY", amountMinor: toMinor(input.salaryPerPeriod) });
@@ -140,9 +159,30 @@ export function calculatePaycheck(
   }
   if (input.bonus) earnings.push({ code: "BONUS", amountMinor: toMinor(input.bonus) });
   if (input.commission) earnings.push({ code: "COMMISSION", amountMinor: toMinor(input.commission) });
+  // Overtime on a bonus or commission (Labor Code 510): it raises the regular rate for the overtime hours.
+  // A flat-sum bonus is spread over the non-overtime hours and paid at 1.5x / 2x (Alvarado v. Dave & Buster's,
+  // 2018); a commission is spread over all hours, with the extra half (or whole) rate for overtime (or double
+  // time). Worked over the pay period, which matches the workweek method when the hours and pay fall in it.
+  const ot = money(input.overtimeHours), dt = money(input.doubleTimeHours), reg = money(input.regularHours);
+  if (input.hourlyRate && (ot.gt(0) || dt.gt(0))) {
+    let extra = new D(0);
+    if (input.bonus && !input.bonusDiscretionary) {
+      const spread = reg.gt(0) ? reg : reg.add(ot).add(dt);
+      const r = money(input.bonus).div(spread);
+      extra = extra.add(r.mul(1.5).mul(ot)).add(r.mul(2).mul(dt));
+    }
+    if (input.commission) {
+      const r = money(input.commission).div(reg.add(ot).add(dt));
+      extra = extra.add(r.mul(0.5).mul(ot)).add(r.mul(dt));
+    }
+    if (extra.gt(0)) earnings.push({ code: "OVERTIME_ON_BONUS", amountMinor: toMinor(extra) });
+  }
+  if (input.salaryPerPeriod && !input.overtimeExempt && (input.bonus || input.commission)) {
+    warnings.push("this employee is salaried and not exempt; enter any overtime they worked as an hourly employee so it's paid");
+  }
   const grossMinor = earnings.reduce((s, e) => s + e.amountMinor, 0n);
   if (input.bonus || input.commission) {
-    warnings.push("supplemental wages withheld with the aggregate method; overtime regular-rate adjustment for bonuses is not applied");
+    warnings.push("bonus and commission withheld with the aggregate method");
   }
 
   // Deductions and taxable wage bases
@@ -206,15 +246,28 @@ export function calculatePaycheck(
   const netPayMinor = grossMinor - employeeTaxMinor - deductionMinor + reimbursementMinor;
   if (netPayMinor < 0n) blockers.push("deductions and taxes exceed gross pay");
 
-  // Paid sick leave: one hour per 30 worked, capped at the accrual cap.
+  // Paid sick leave: front-loaded hours at the start of the year, or one hour per 30 worked up to the
+  // accrual cap; hours taken come off the balance and can't exceed it.
   let sickLeave: Paycheck["sickLeave"];
   if (input.sickLeave) {
-    const worked = money(input.regularHours).add(money(input.overtimeHours)).add(money(input.doubleTimeHours));
-    const balance = new D(input.sickLeave.balanceHours);
-    const cap = new D(wh.sickLeave.accrualCapHours);
-    const accrued = D.max(D.min(worked.div(wh.sickLeave.hoursWorkedPerHourAccrued), cap.sub(balance)), 0)
-      .toDecimalPlaces(4);
-    sickLeave = { accruedHours: accrued.toString(), balanceHours: balance.add(accrued).toString() };
+    const sl = input.sickLeave;
+    // A grant tops the balance up to the year's hours; hours already earned above that (say, before
+    // the business switched from accrual) are kept.
+    const granted = sl.grantHours ? new D(sl.grantHours) : null;
+    const start = granted ? D.max(granted, sl.balanceHours) : new D(sl.balanceHours);
+    const used = money(sl.usedHours);
+    if (used.gt(start)) blockers.push(`${used.toString()} sick hours taken, but only ${start.toString()} available`);
+    const after = D.max(start.sub(used), 0);
+    let accrued = new D(0);
+    if ((sl.policy ?? "accrual") === "accrual") {
+      const worked = sl.deemedHoursWorked ? new D(sl.deemedHoursWorked) : reg.add(ot).add(dt);
+      const cap = new D(wh.sickLeave.accrualCapHours);
+      accrued = D.max(D.min(worked.div(wh.sickLeave.hoursWorkedPerHourAccrued), cap.sub(after)), 0).toDecimalPlaces(4);
+    }
+    sickLeave = {
+      accruedHours: accrued.toString(), usedHours: used.toString(), ...(granted ? { grantedHours: granted.toString() } : {}),
+      balanceHours: after.add(accrued).toString(),
+    };
   }
 
   return {

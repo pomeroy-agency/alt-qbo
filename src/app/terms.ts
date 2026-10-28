@@ -3,7 +3,7 @@ import type { Tx } from "../db/pool.js";
 // The terms of service in force, as published at /terms.html. Change the
 // version (the date the new text takes effect) whenever the text changes,
 // and owners and admins are asked to accept it again.
-export const TERMS_VERSION = "2026-10-27";
+export const TERMS_VERSION = "2026-10-28";
 
 /** Records that a person accepted the current terms for an organisation. Safe to repeat. */
 export async function acceptTerms(tx: Tx, orgId: string, userId: string): Promise<void> {

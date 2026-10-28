@@ -181,7 +181,40 @@ describe("gross-to-net", () => {
     );
     expect(p.earnings.map((e) => [e.code, e.amountMinor])).toEqual([["REGULAR", 100000n], ["OVERTIME", 15000n]]);
     expect(p.grossMinor).toBe(115000n);
-    expect(p.sickLeave).toEqual({ accruedHours: "1.4667", balanceHours: "11.4667" });
+    expect(p.sickLeave).toEqual({ accruedHours: "1.4667", usedHours: "0", balanceHours: "11.4667" });
+  });
+
+  it("pays overtime on a nondiscretionary bonus (Alvarado) and on commission, but not on a discretionary bonus", () => {
+    const base: EmployeePayInput = {
+      employeeId: "emp-3", name: "Ana Ruiz", payFrequency: "weekly", hourlyRate: "20.00",
+      regularHours: "40", overtimeHours: "5", doubleTimeHours: "1",
+      w4: { filingStatus: "single_or_mfs", step2Checked: false }, de4: { filingStatus: "single", regularAllowances: 1 },
+    };
+    const extra = (p: ReturnType<typeof calculatePaycheck>) => p.earnings.find((e) => e.code === "OVERTIME_ON_BONUS")?.amountMinor ?? 0n;
+    // $400 / 40 non-overtime hours = $10; 1.5 x $10 x 5 + 2 x $10 x 1 = $95.
+    expect(extra(calculatePaycheck({ ...base, bonus: "400" }, rules))).toBe(9500n);
+    expect(extra(calculatePaycheck({ ...base, bonus: "400", bonusDiscretionary: true }, rules))).toBe(0n);
+    // $460 / 46 hours = $10; 0.5 x $10 x 5 + 1 x $10 x 1 = $35.
+    expect(extra(calculatePaycheck({ ...base, commission: "460" }, rules))).toBe(3500n);
+    expect(extra(calculatePaycheck({ ...base, overtimeHours: "0", doubleTimeHours: "0", bonus: "400" }, rules))).toBe(0n);
+  });
+
+  it("pays sick leave taken, refuses more than the balance, front-loads 40 hours, and accrues for exempt employees at 40 hours a week", () => {
+    const hourly: EmployeePayInput = {
+      employeeId: "emp-4", name: "Kai Lee", payFrequency: "weekly", hourlyRate: "25.00", regularHours: "32",
+      w4: { filingStatus: "single_or_mfs", step2Checked: false }, de4: { filingStatus: "single", regularAllowances: 1 },
+      sickLeave: { balanceHours: "10", usedHours: "8" },
+    };
+    const used = calculatePaycheck(hourly, rules);
+    expect(used.earnings.find((e) => e.code === "SICK")?.amountMinor).toBe(20000n);
+    expect(used.sickLeave).toEqual({ accruedHours: "1.0667", usedHours: "8", balanceHours: "3.0667" });
+    expect(calculatePaycheck({ ...hourly, sickLeave: { balanceHours: "4", usedHours: "8" } }, rules).blockers.join()).toMatch(/only 4 available/);
+    const front = calculatePaycheck({ ...hourly, sickLeave: { balanceHours: "6", usedHours: "8", policy: "front_load", grantHours: "40" } }, rules);
+    expect(front.sickLeave).toEqual({ accruedHours: "0", usedHours: "8", grantedHours: "40", balanceHours: "32" });
+    const exempt = calculatePaycheck({ ...salaried, sickLeave: { balanceHours: "0", deemedHoursWorked: "80" } }, rules);
+    expect(exempt.sickLeave?.accruedHours).toBe("2.6667");
+    // Switching to front-loading never takes away hours already earned.
+    expect(calculatePaycheck({ ...hourly, sickLeave: { balanceHours: "52", policy: "front_load", grantHours: "40" } }, rules).sickLeave?.balanceHours).toBe("52");
   });
 
   it("withholds no California PIT under the low-income exemption", () => {

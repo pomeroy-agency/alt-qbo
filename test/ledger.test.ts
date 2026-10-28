@@ -172,17 +172,32 @@ describe("immutability", () => {
 });
 
 describe("periods", () => {
-  it("opens twelve monthly periods for the fiscal year and refuses dates outside them", async () => {
+  it("opens twelve monthly periods for the fiscal year, opens the next year when a posting needs it, and refuses other dates", async () => {
     const { org, entity } = await setupCaliforniaBusiness();
-    const { rows } = await withTenant(pool, org.id, (tx) =>
+    const periods = async () => (await withTenant(pool, org.id, (tx) =>
       tx.query("SELECT start_date, end_date FROM periods WHERE entity_id = $1 ORDER BY start_date", [entity.id]),
-    );
+    )).rows;
+    const rows = await periods();
     expect(rows).toHaveLength(12);
     expect(rows[1]).toEqual({ start_date: "2026-02-01", end_date: "2026-02-28" });
+    // Before the first fiscal year, and years ahead (a typo), are refused.
     await expectLedgerError(
-      withTenant(pool, org.id, (tx) => postJournal(tx, invoice(org.id, entity.id, "late", "1.00", "2027-01-05"))),
+      withTenant(pool, org.id, (tx) => postJournal(tx, invoice(org.id, entity.id, "early", "1.00", "2025-12-31"))),
       "NO_PERIOD",
     );
+    await expectLedgerError(
+      withTenant(pool, org.id, (tx) => postJournal(tx, invoice(org.id, entity.id, "far", "1.00", "2036-01-05"))),
+      "NO_PERIOD",
+    );
+    expect(await periods()).toHaveLength(12);
+    // The first posting in the new year opens it.
+    const entry = await withTenant(pool, org.id, (tx) => postJournal(tx, invoice(org.id, entity.id, "late", "1.00", "2027-01-05")));
+    expect(entry.date).toBe("2027-01-05");
+    const after = await periods();
+    expect(after).toHaveLength(24);
+    expect(after[23]).toEqual({ start_date: "2027-12-01", end_date: "2027-12-31" });
+    const audit = await withTenant(pool, org.id, (tx) => tx.query("SELECT 1 FROM audit_events WHERE org_id = $1 AND action = 'entity.fiscal_year_opened'", [org.id]));
+    expect(audit.rows).toHaveLength(1);
   });
 
   it("soft close admits only accountants, lock admits nobody, reopen needs a reason and is logged", async () => {
