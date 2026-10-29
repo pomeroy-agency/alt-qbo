@@ -17,13 +17,13 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DE", "FL", "GA", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
     expect(isLive("US", "CA")).toBe(true);
     expect(isLive("CA", "ON")).toBe(false);
-    expect(isSupportedPlace({ country: "US", region: "NE" })).toBe(false);
+    expect(isSupportedPlace({ country: "US", region: "ME" })).toBe(false);
     expect(() => resolveRules({ country: "CA", region: "BC" }, "2026-06-01")).toThrow(/not launched/);
   });
 
@@ -746,5 +746,32 @@ describe("Montana, New Mexico, Rhode Island, Vermont and West Virginia (from sec
     const p = calculatePaycheck({ employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "25.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } },
       { federal, state: pack("RI"), provenance: [] }, {}, "2026-09-04");
     expect(p.taxes.find((t) => t.code === "RI_TDI")?.amountMinor).toBe(1100n);
+  });
+});
+
+describe("Hawaii and Nebraska", () => {
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number) =>
+    stateWithholding(pack(region).payroll.incomeTax, { state }, new D(wages), periods).toFixed(2);
+
+  it("matches Booklet A's annualized example and its rounded table amounts", () => {
+    expect(w("HI", { filingStatus: "single", allowances: 3 }, 500, 52)).toBe("9.58");
+    // $24,000 of wages after allowances: exactly the table's $859 (not $859.20).
+    expect(w("HI", { filingStatus: "single" }, 24000 + 4350, 1)).toBe("859.00");
+    expect(w("HI", { filingStatus: "married" }, 250000 + 4350, 1)).toBe("16782.00");
+    expect(w("HI", null, 500, 52)).toBe(w("HI", { filingStatus: "single" }, 500, 52));
+  });
+
+  it("matches Nebraska's Table 7 base amounts", () => {
+    expect(w("NE", null, 30000, 1)).toBe("905.15");
+    expect(w("NE", { filingStatus: "married", allowances: 2 }, 87800, 1)).toBe("2932.22");
+    expect(w("NE", { filingStatus: "single" }, 3430, 1)).toBe("0.00");
+  });
+
+  it("caps Hawaii TDI at $7.50 a week", () => {
+    const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+    const p = calculatePaycheck({ employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "50.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } },
+      { federal, state: pack("HI"), provenance: [] }, {}, "2026-09-04");
+    expect(p.taxes.find((t) => t.code === "HI_TDI")?.amountMinor).toBe(750n);
   });
 });
