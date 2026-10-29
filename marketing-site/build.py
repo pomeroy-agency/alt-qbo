@@ -12,6 +12,8 @@ import pathlib, re
 APP = "https://app.pomeroyagency.com"
 ROOT = pathlib.Path(__file__).parent
 part = lambda n: (ROOT / "partials" / n).read_text()
+# USD/CAD price switch, shared with the app pricing page.
+CURRENCY = "<script>\n" + (ROOT.parent / "web" / "currency.js").read_text() + "</script>\n"
 
 def build(src: pathlib.Path) -> str:
     head, rest = src.read_text().split("---CSS---\n", 1)
@@ -22,7 +24,7 @@ def build(src: pathlib.Path) -> str:
         "%%HEADER_CSS%%": part("header-css.html"),
         "%%ANALYTICS%%": part("analytics.html"),
         "%%HEADER%%": part("header.html"),
-        "%%TAIL%%": part("tail.html"),
+        "%%TAIL%%": part("tail.html") + CURRENCY,
         "%%PAGE_CSS%%": css,
         "%%BODY%%": body,
     }.items():
