@@ -5,8 +5,8 @@ import type { StateRulePack } from "./types.js";
 // guide itself on 2026-10-29: the year's wages less a sliding deduction
 // ($6,702 single, less 12% of wages over $17,780; $9,461 married, less 20%
 // over $25,727) and $400 for each WT-4 exemption, through the 3.54% to 7.65%
-// rates, divided by the pay periods. Draft until Greg reviews it
-// (docs/rule-pack-review.md).
+// rates, divided by the pay periods. Released 2026-10-29 after Greg's
+// review (docs/rule-pack-review.md).
 export const usWisconsin2026: StateRulePack = {
   kind: "state",
   id: "us-wi",
@@ -15,7 +15,7 @@ export const usWisconsin2026: StateRulePack = {
   place: { country: "US", region: "WI" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Wisconsin DOR Publication W-166, Withholding Tax Guide, alternate method (laws as of January 15, 2026)", covers: "deduction $6,702 single (less 12% over $17,780, none from $73,630) and $9,461 married (less 20% over $25,727, none from $73,032); $400 per exemption; 3.54% to $12,760, 4.65% to $25,520, 5.30% to $280,950, 7.65% above; the three worked examples", basis: "published" },

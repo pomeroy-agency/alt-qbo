@@ -6,8 +6,8 @@ import type { StateRulePack } from "./types.js";
 // allowance and, once at least one is claimed, a standard deduction of 10%
 // of wages up to $7,500; 0% to $3,640, 3% to $18,230 and 6% above. Act 110
 // (2026) cut the income tax rates for 2026, but SCDOR hasn't published new
-// withholding tables yet; this pack follows the published ones. Draft until
-// Greg reviews it (docs/rule-pack-review.md).
+// withholding tables yet; this pack follows the published ones. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usSouthCarolina2026: StateRulePack = {
   kind: "state",
   id: "us-sc",
@@ -16,7 +16,7 @@ export const usSouthCarolina2026: StateRulePack = {
   place: { country: "US", region: "SC" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "SCDOR WH-1603F, Formula for Computing South Carolina 2026 Withholding Tax (Rev. 11/4/25)", covers: "$5,000 per allowance; standard deduction of 10% of wages up to $7,500 with one or more allowances, none with zero; 0% to $3,640, 3% to $18,230, 6% above; the $750 weekly example ($10.58)", basis: "published" },

@@ -6,7 +6,8 @@ import type { StateRulePack } from "./types.js";
 // allowance, through the single or married schedule (5.35% to 9.85%),
 // divided by the pay periods. Paid Leave premiums start in 2026: 0.88% of
 // wages (0.66% for qualifying small employers), up to half of it from the
-// employee. Draft until Greg reviews it (docs/rule-pack-review.md).
+// employee. Released 2026-10-29 after Greg's
+// review (docs/rule-pack-review.md).
 export const usMinnesota2026: StateRulePack = {
   kind: "state",
   id: "us-mn",
@@ -15,7 +16,7 @@ export const usMinnesota2026: StateRulePack = {
   place: { country: "US", region: "MN" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Minnesota Department of Revenue, 2026 Minnesota Income Tax Withholding instruction booklet, computer formula", covers: "$5,300 per allowance; single schedule from $4,700 (5.35%, 6.80% from $38,010, 7.85% from $114,130, 9.85% from $207,850); married from $14,700 (6.80% from $63,400, 7.85% from $208,180, 9.85% from $352,630)", basis: "published" },

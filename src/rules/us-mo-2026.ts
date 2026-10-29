@@ -6,8 +6,8 @@ import type { StateRulePack } from "./types.js";
 // standard deduction ($16,100; $32,200 when the spouse doesn't work; $24,150
 // head of household), through the 0% to 4.7% rates, divided by the pay
 // periods and rounded to the whole dollar. Kansas City and St. Louis levy a
-// 1% earnings tax on residents and on nonresidents who work there. Draft
-// until Greg reviews it (docs/rule-pack-review.md).
+// 1% earnings tax on residents and on nonresidents who work there. Released 2026-10-29
+// after Greg's review (docs/rule-pack-review.md).
 export const usMissouri2026: StateRulePack = {
   kind: "state",
   id: "us-mo",
@@ -16,7 +16,7 @@ export const usMissouri2026: StateRulePack = {
   place: { country: "US", region: "MO" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Missouri DOR, Employer's Tax Guide (Form 4282), 2026 Missouri Withholding Tax Formula", covers: "standard deductions $16,100 / $32,200 / $24,150; annual brackets 0% to $1,348, then 2% to 4.5% in $1,348 steps, 4.7% over $9,436; rounding to the whole dollar", basis: "published" },

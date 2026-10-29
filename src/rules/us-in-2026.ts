@@ -7,8 +7,8 @@ import type { StateRulePack } from "./types.js";
 // child, spread over the pay periods. County income tax is withheld on the
 // same base at the rate of the county the employee lived in on January 1
 // (or worked in, for someone living out of state), entered for each
-// employee from the notice's county table. Draft until Greg reviews it
-// (docs/rule-pack-review.md).
+// employee from the notice's county table. Released 2026-10-29 after Greg's
+// review (docs/rule-pack-review.md).
 export const usIndiana2026: StateRulePack = {
   kind: "state",
   id: "us-in",
@@ -17,7 +17,7 @@ export const usIndiana2026: StateRulePack = {
   place: { country: "US", region: "IN" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Indiana Department of Revenue, Departmental Notice #1 (R47 / 10-26, effective October 1, 2026)", covers: "2.95% state rate for 2026; $1,000 per personal exemption (WH-4 line 5), $1,500 per dependent and first-time dependent exemption (lines 6 and 7), $3,000 per adopted child (line 8); county tax on the same base at the January 1 county of residence (or of principal work for nonresidents); the 92 county rates; the $800 weekly example", basis: "published" },

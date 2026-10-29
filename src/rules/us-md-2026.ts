@@ -6,8 +6,8 @@ import type { StateRulePack } from "./types.js";
 // deduction and $3,200 for each MW507 exemption, at the state rate for the
 // bracket (4.75% to 6.5%; the guide starts at 4.75%, not the return's 2% to
 // 4% steps) plus the employee's county rate (2.25% to 3.30%). Nonresidents
-// pay the special 2.25% nonresident rate in place of a county rate. Draft
-// until Greg reviews it (docs/rule-pack-review.md).
+// pay the special 2.25% nonresident rate in place of a county rate. Released 2026-10-29
+// after Greg's review (docs/rule-pack-review.md).
 export const usMaryland2026: StateRulePack = {
   kind: "state",
   id: "us-md",
@@ -16,7 +16,7 @@ export const usMaryland2026: StateRulePack = {
   place: { country: "US", region: "MD" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Comptroller of Maryland, 2026 percentage method of withholding tables (e.g. 3.30 percent local income tax)", covers: "$3,400 standard deduction; $3,200 per exemption; combined rates from 8.05% (4.75% + 3.30%) with brackets at $150,000 joint / $100,000 single and up", basis: "published" },
