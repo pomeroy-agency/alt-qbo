@@ -20,6 +20,8 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 
 ## us-ca 2026.1 (`src/rules/us-ca-2026.ts`), released 2026-10-27
 
+Version 2026.2 (October 2026) is the same pack moved into the shared state pack format so other states can be added. No figure changed; pay runs approved earlier keep "us-ca@2026.1" in their history.
+
 | Figure | Value | Source | Check |
 |---|---|---|---|
 | PIT Method B tables 1-7 (annual) | as in file | EDD 26methb.pdf | ✅ single and head-of-household thresholds and rates match the USDA payroll bulletin that reproduces the EDD tables; married thresholds are exactly twice single below $1M; every base amount is consistent. ⚠️ The EDD site is blocked from our build machines, so the $1,000 estimated-deduction allowance is confirmed only by third-party summaries |
@@ -151,6 +153,10 @@ A worksheet for the business's own CDTFA-401, built on the sales tax report. Tra
 ## Chart of accounts tax lines (`src/rules/coa/us-service.ts`)
 
 Tax-line codes for Schedule C, 1065, 1120S and 1120 are from working knowledge and need checking against the current forms and against each Intuit product's trial-balance import layout.
+
+## Adding a state
+
+Each state is one file in `src/rules` with a `StateRulePack`, added to the registry in `src/rules/index.ts` and to `LIVE` in `src/rules/jurisdictions.ts`. New packs start as `draft`: a business can be set up there and preview payroll, but saved pay runs are refused until Greg reviews the figures here and the pack is `released`. Each new state gets its own section in this file, and its agencies are added to the daily rule watch below.
 
 ## Monitoring
 

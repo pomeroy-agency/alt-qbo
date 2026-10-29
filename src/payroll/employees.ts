@@ -8,6 +8,8 @@ import { cleanAddress, type Address } from "../core/sales-tax.js";
 import { localWagePlace } from "../rules/local-minimum-wage.js";
 import { cleanAccountNumber, validRouting } from "./nacha.js";
 import type { DE4 } from "./california.js";
+import type { StateWithholding } from "./state-withholding.js";
+import { statePackFor } from "../rules/index.js";
 import type { W4 } from "./federal.js";
 import { PERIODS_PER_YEAR, type Deduction, type DeductionKind, type PayFrequency } from "./gross-to-net.js";
 
@@ -24,7 +26,9 @@ export interface OpeningYtd {
   federalIncomeTax: string;
   socialSecurityTax: string;
   medicareTax: string;
+  /** State income tax withheld (California PIT, or the business's own state's); the name is kept from when California was the only state. */
   caIncomeTax: string;
+  /** State disability or other employee payroll tax withheld (California SDI). */
   caSdi: string;
 }
 
@@ -46,6 +50,8 @@ export interface Employee {
   overtimeExempt: boolean;
   w4: W4;
   de4: DE4;
+  /** Withholding certificate for a state other than California; null where none was filed or the state has no income tax. */
+  stateWithholding: StateWithholding | null;
   deductions: Deduction[];
   sickBalanceHours: string;
   /** Front-loaded sick leave: the year the hours were last granted. */
@@ -70,6 +76,7 @@ export interface EmployeeFields {
   overtimeExempt?: boolean;
   w4?: Partial<Record<keyof W4, unknown>>;
   de4?: Partial<Record<keyof DE4, unknown>>;
+  stateWithholding?: Partial<Record<keyof StateWithholding, unknown>> | null;
   deductions?: { kind?: unknown; amount?: unknown; description?: unknown }[];
   sickBalanceHours?: string;
   /** Write-only: sealed on the way in, only the last four digits come back. */
@@ -80,7 +87,7 @@ export interface EmployeeFields {
 }
 
 const COLS = `id, name, email, address_line1, address_city, address_state, address_zip, work_city, hire_date::text, termination_date::text,
-  pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, deductions, sick_balance_hours::text, sick_granted_year,
+  pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, state_withholding, deductions, sick_balance_hours::text, sick_granted_year,
   ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4`;
 
 function employeeOf(r: any): Employee {
@@ -91,7 +98,7 @@ function employeeOf(r: any): Employee {
     hireDate: r.hire_date, terminationDate: r.termination_date,
     status: r.termination_date ? "terminated" : "active",
     payType: r.pay_type, payFrequency: r.pay_frequency, payRate: trimZeros(r.pay_rate), usualHours: r.usual_hours ? trimZeros(r.usual_hours) : null,
-    overtimeExempt: r.overtime_exempt, w4: r.w4, de4: r.de4, deductions: r.deductions,
+    overtimeExempt: r.overtime_exempt, w4: r.w4, de4: r.de4, stateWithholding: r.state_withholding ?? null, deductions: r.deductions,
     sickBalanceHours: trimZeros(r.sick_balance_hours), sickGrantedYear: r.sick_granted_year, ssnLast4: r.ssn_last4, openingYtd: r.opening_ytd,
     directDeposit: r.dd_routing ? { routing: r.dd_routing, accountType: r.dd_account_type, accountLast4: r.dd_account_last4 } : null,
   };
@@ -155,6 +162,30 @@ function cleanDe4(d: EmployeeFields["de4"] = {}): DE4 {
   return out;
 }
 
+function cleanStateWithholding(w: EmployeeFields["stateWithholding"]): StateWithholding | null {
+  if (!w) return null;
+  const out: StateWithholding = {};
+  if (w.rate !== undefined && w.rate !== null && w.rate !== "") {
+    if (typeof w.rate !== "string" || !/^0(\.\d{1,4})?$/.test(w.rate)) invalid("the state withholding rate should be a fraction like 0.025");
+    out.rate = new D(w.rate).toString();
+  }
+  const extra = amount(w.additionalWithholding, "extra state withholding", { optional: true });
+  if (extra && !new D(extra).isZero()) out.additionalWithholding = extra;
+  if (w.exempt) out.exempt = true;
+  return Object.keys(out).length ? out : null;
+}
+
+/** An elected rate must be one the state's certificate offers. */
+async function checkStateRate(tx: Tx, entityId: string, cols: Record<string, unknown>) {
+  if (typeof cols.state_withholding !== "string") return;
+  const rate = (JSON.parse(cols.state_withholding) as StateWithholding).rate;
+  if (!rate) return;
+  const e = (await tx.query("SELECT country, region FROM entities WHERE id = $1", [entityId])).rows[0];
+  const tax = statePackFor({ country: e.country, region: e.region }, new Date().toISOString().slice(0, 10)).payroll.incomeTax;
+  if (tax.method !== "elected_percent") invalid("this state doesn't use an elected withholding rate");
+  if (!tax.choices.includes(rate)) invalid(`pick one of the ${tax.certificate} rates`);
+}
+
 function cleanDeductions(list: EmployeeFields["deductions"]): Deduction[] {
   if (!Array.isArray(list)) invalid("deductions should be a list");
   if (list.length > 20) invalid("too many deductions");
@@ -179,8 +210,8 @@ function cleanOpeningYtd(o: EmployeeFields["openingYtd"]): OpeningYtd | null {
     federalIncomeTax: f("federalIncomeTax", "federal income tax withheld"),
     socialSecurityTax: f("socialSecurityTax", "Social Security withheld"),
     medicareTax: f("medicareTax", "Medicare withheld"),
-    caIncomeTax: f("caIncomeTax", "California income tax withheld"),
-    caSdi: f("caSdi", "California SDI withheld"),
+    caIncomeTax: f("caIncomeTax", "state income tax withheld"),
+    caSdi: f("caSdi", "state disability (SDI) withheld"),
   };
   const anything = Object.entries(out).some(([k, v]) => k !== "year" && !new D(v as string).isZero());
   return anything ? out : null;
@@ -236,6 +267,10 @@ function columns(f: EmployeeFields): Record<string, unknown> {
   if (f.overtimeExempt !== undefined) out.overtime_exempt = Boolean(f.overtimeExempt);
   if (f.w4 !== undefined) out.w4 = JSON.stringify(cleanW4(f.w4));
   if (f.de4 !== undefined) out.de4 = JSON.stringify(cleanDe4(f.de4));
+  if (f.stateWithholding !== undefined) {
+    const sw = cleanStateWithholding(f.stateWithholding);
+    out.state_withholding = sw ? JSON.stringify(sw) : null;
+  }
   if (f.deductions !== undefined) out.deductions = JSON.stringify(cleanDeductions(f.deductions));
   if (f.sickBalanceHours !== undefined) out.sick_balance_hours = amount(f.sickBalanceHours, "sick leave balance", { places: 4 });
   if (f.ssn !== undefined) {
@@ -307,6 +342,7 @@ export async function createEmployee(
   }
   const cols = columns({ w4: {}, de4: {}, deductions: [], ...input });
   checkShape(cols);
+  await checkStateRate(tx, input.entityId, cols);
   if (cols.dd_routing && !cols.dd_account_sealed) invalid("enter the account number for direct deposit");
   const names = Object.keys(cols);
   const { rows } = await run(() => tx.query(
@@ -331,6 +367,7 @@ export async function updateEmployee(
   if (!before) invalid("employee not found");
   const cols = columns(input);
   checkShape({ pay_type: before.pay_type, overtime_exempt: before.overtime_exempt, ...cols });
+  await checkStateRate(tx, input.entityId, cols);
   if (cols.dd_routing && !cols.dd_account_sealed && !before.dd_account_last4) invalid("enter the account number for direct deposit");
   if (!Object.keys(cols).length) return employeeOf(before);
   const { rows } = await run(() => tx.query(
@@ -348,7 +385,6 @@ function checkShape(cols: Record<string, unknown>) {
   if (cols.pay_type === "hourly" && cols.overtime_exempt === true) invalid("hourly employees can't be exempt from overtime");
 }
 
-/** The employer's California UI rate, as a fraction, from its EDD notice. */
 /** Accrual or front-loading for paid sick leave. */
 export async function setSickLeavePolicy(tx: Tx, input: { orgId: string; entityId: string; policy: string; actor: Actor }) {
   requireWriter(input.actor, "change payroll settings");
@@ -360,15 +396,22 @@ export async function setSickLeavePolicy(tx: Tx, input: { orgId: string; entityI
   });
 }
 
-export async function setUiRate(tx: Tx, input: { orgId: string; entityId: string; rate: string | null; actor: Actor }) {
+/** A rate the state assigned the employer (its UI rate, from the agency's notice), as a fraction; null goes back to the new-employer rate. */
+export async function setStateTaxRate(tx: Tx, input: { orgId: string; entityId: string; code: string; rate: string | null; actor: Actor }) {
   requireWriter(input.actor, "change payroll settings");
   if (input.rate !== null && (!/^\d(\.\d{1,5})?$/.test(input.rate) || new D(input.rate).gt("0.2"))) {
-    invalid("the UI rate should be a percentage between 0 and 20");
+    invalid("the rate should be a percentage between 0 and 20");
   }
-  await tx.query("UPDATE entities SET ca_ui_rate = $2 WHERE id = $1", [input.entityId, input.rate]);
+  const e = (await tx.query("SELECT country, region, state_tax_rates FROM entities WHERE id = $1", [input.entityId])).rows[0];
+  const tax = statePackFor({ country: e.country, region: e.region }, new Date().toISOString().slice(0, 10)).payroll.taxes.find((t) => t.code === input.code);
+  if (!tax?.assignedRate) invalid("that tax doesn't have an employer rate");
+  const rates = { ...e.state_tax_rates } as Record<string, string>;
+  if (input.rate === null) delete rates[input.code];
+  else rates[input.code] = input.rate;
+  await tx.query("UPDATE entities SET state_tax_rates = $2 WHERE id = $1", [input.entityId, JSON.stringify(rates)]);
   await appendAudit(tx, {
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "entity.ui_rate_set",
-    objectType: "entity", objectId: input.entityId, after: { caUiRate: input.rate },
+    objectType: "entity", objectId: input.entityId, before: { [input.code]: e.state_tax_rates[input.code] ?? null }, after: { [input.code]: input.rate },
   });
 }
 

@@ -1,7 +1,9 @@
 import { D, type Dec, maxBig, minBig, toMajor, toMinor } from "../core/money.js";
 import type { ResolvedRules } from "../rules/index.js";
-import { californiaWithholding, type DE4 } from "./california.js";
+import type { DE4 } from "./california.js";
 import { federalWithholding, type W4 } from "./federal.js";
+import { stateWithholding, type StateWithholding } from "./state-withholding.js";
+import { minimumWageOn } from "../rules/minimum-wage.js";
 
 export type PayFrequency = "weekly" | "biweekly" | "semimonthly" | "monthly";
 
@@ -13,9 +15,9 @@ export const PERIODS_PER_YEAR: Record<PayFrequency, number> = {
 };
 
 export type DeductionKind =
-  /** Cafeteria plan (health premiums, FSA): exempt from FIT, FICA, FUTA, CA PIT, SDI and UI. */
+  /** Cafeteria plan (health premiums, FSA): exempt from FIT, FICA, FUTA, state income tax, SDI and UI. */
   | "section125"
-  /** Traditional 401(k) deferral: exempt from FIT and CA PIT only. */
+  /** Traditional 401(k) deferral: exempt from FIT and state income tax only. */
   | "traditional401k"
   /** After-tax deduction (Roth, union dues, garnishment). */
   | "post_tax";
@@ -31,7 +33,8 @@ export interface YearToDate {
   socialSecurityWages: bigint;
   medicareWages: bigint;
   futaWages: bigint;
-  caUiWages: bigint;
+  /** Wages already taxed this year by each capped state tax, by tax code (CA_UI, TX_UI...). */
+  stateWages?: Record<string, bigint>;
 }
 
 export interface EmployeePayInput {
@@ -52,7 +55,10 @@ export interface EmployeePayInput {
   /** Non-taxable expense reimbursement, added to net pay. */
   reimbursement?: string;
   w4: W4;
-  de4: DE4;
+  /** California employees' DE 4. */
+  de4?: DE4;
+  /** Other states' withholding certificate (Arizona A-4...). */
+  stateWithholding?: StateWithholding | null;
   deductions?: Deduction[];
   ytd?: Partial<YearToDate>;
   sickLeave?: SickLeaveInput;
@@ -62,13 +68,15 @@ export interface EmployeePayInput {
 
 export type SickLeavePolicy = "accrual" | "front_load";
 
-/** Paid sick leave for one paycheck (Labor Code 245-249). */
+/** Paid sick leave for one paycheck, under the state's law (California Labor Code 245-249, Arizona A.R.S. 23-371...). */
 export interface SickLeaveInput {
   /** Hours available before this paycheck. */
   balanceHours: string;
   policy?: SickLeavePolicy;
   /** Hours of sick leave taken in this pay period. */
   usedHours?: string;
+  /** Lower accrual cap where the law allows it for a small employer (Arizona, under 15 employees). */
+  accrualCapHours?: string;
   /** Front-loading: hours granted for the year with this paycheck; the balance becomes at least this (no carryover required). */
   grantHours?: string;
   /** Exempt and salaried employees: hours they are deemed to work for accrual (40 a week, Labor Code 246(b)(3)). */
@@ -76,14 +84,15 @@ export interface SickLeaveInput {
 }
 
 export interface EmployerSettings {
-  /** The employer's assigned UI rate from its EDD notice; defaults to the new-employer rate. */
-  caUiRate?: string;
+  /** Rates the agency assigned this employer (UI), by tax code; others use the pack's new-employer rate. */
+  stateRates?: Record<string, string>;
 }
 
 export interface TaxLine {
-  code: "FIT" | "SS_EE" | "MEDICARE_EE" | "ADDL_MEDICARE_EE" | "CA_PIT" | "CA_SDI"
-    | "SS_ER" | "MEDICARE_ER" | "FUTA" | "CA_UI" | "CA_ETT";
-  agency: "IRS" | "EDD";
+  /** Federal codes (FIT, SS_EE...) or a state pack's codes (CA_PIT, CA_SDI, TX_UI...). */
+  code: string;
+  /** "IRS" or the state agency's short name. */
+  agency: string;
   paidBy: "employee" | "employer";
   taxableWagesMinor: bigint;
   amountMinor: bigint;
@@ -118,10 +127,14 @@ export function calculatePaycheck(
   input: EmployeePayInput,
   rules: ResolvedRules,
   employer: EmployerSettings = {},
+  /** The date the minimum wage is checked on (the period's last day); the pack's start when omitted. */
+  onDate: string = rules.state.effectiveFrom,
 ): Paycheck {
   const fed = rules.federal.payroll;
-  const ca = rules.state.payroll;
+  const st = rules.state.payroll;
   const wh = rules.state.wageHour;
+  const stateName = rules.state.name;
+  const minimumWage = minimumWageOn(wh, onDate);
   const periods = PERIODS_PER_YEAR[input.payFrequency];
   const blockers: string[] = [];
   const warnings: string[] = [];
@@ -135,8 +148,8 @@ export function calculatePaycheck(
     earnings.push({ code, hours, rate: r.toString(), amountMinor: toMinor(r.mul(hours)) });
   };
   if (input.hourlyRate) {
-    if (rate.lt(wh.minimumWage)) {
-      blockers.push(`hourly rate ${rate.toFixed(2)} is below the California minimum wage of ${wh.minimumWage}`);
+    if (rate.lt(minimumWage)) {
+      blockers.push(`hourly rate ${rate.toFixed(2)} is below the ${stateName} minimum wage of ${minimumWage}`);
     } else if (input.localMinimumWage && rate.lt(input.localMinimumWage.rate)) {
       const local = input.localMinimumWage;
       warnings.push(`hourly rate ${rate.toFixed(2)} is below the ${local.place} minimum wage of ${local.rate}` +
@@ -152,14 +165,14 @@ export function calculatePaycheck(
     earnings.push({ code: "SALARY", amountMinor: toMinor(input.salaryPerPeriod) });
     if (input.overtimeExempt && money(input.salaryPerPeriod).mul(periods).lt(wh.exemptAnnualSalaryMinimum)) {
       blockers.push(
-        `annualised salary is below the California exempt minimum of ${wh.exemptAnnualSalaryMinimum}; ` +
+        `annualised salary is below the ${stateName} exempt minimum of ${wh.exemptAnnualSalaryMinimum}; ` +
         "the employee cannot be classified exempt from overtime",
       );
     }
   }
   if (input.bonus) earnings.push({ code: "BONUS", amountMinor: toMinor(input.bonus) });
   if (input.commission) earnings.push({ code: "COMMISSION", amountMinor: toMinor(input.commission) });
-  // Overtime on a bonus or commission (Labor Code 510): it raises the regular rate for the overtime hours.
+  // Overtime on a bonus or commission (FLSA regular rate; Labor Code 510 in California): it raises the regular rate for the overtime hours.
   // A flat-sum bonus is spread over the non-overtime hours and paid at 1.5x / 2x (Alvarado v. Dave & Buster's,
   // 2018); a commission is spread over all hours, with the extra half (or whole) rate for overtime (or double
   // time). Worked over the pay period, which matches the workweek method when the hours and pay fall in it.
@@ -195,21 +208,19 @@ export function calculatePaycheck(
 
   const ficaWages = maxBig(grossMinor - s125, 0n);
   const incomeTaxWages = maxBig(grossMinor - s125 - k401, 0n);
-  const sdiWages = ficaWages;
-  const uiWagesThisPeriod = ficaWages;
 
   const ytd: YearToDate = {
     socialSecurityWages: input.ytd?.socialSecurityWages ?? 0n,
     medicareWages: input.ytd?.medicareWages ?? 0n,
     futaWages: input.ytd?.futaWages ?? 0n,
-    caUiWages: input.ytd?.caUiWages ?? 0n,
+    stateWages: input.ytd?.stateWages ?? {},
   };
   const capped = (wages: bigint, ytdWages: bigint, base: string) =>
     minBig(wages, maxBig(toMinor(base) - ytdWages, 0n));
   const pct = (wagesMinor: bigint, r: string) => toMinor(toMajor(wagesMinor).mul(r));
 
   const taxes: TaxLine[] = [];
-  const add = (code: TaxLine["code"], agency: TaxLine["agency"], paidBy: TaxLine["paidBy"], wages: bigint, amount: bigint) => {
+  const add = (code: string, agency: string, paidBy: TaxLine["paidBy"], wages: bigint, amount: bigint) => {
     taxes.push({ code, agency, paidBy, taxableWagesMinor: wages, amountMinor: amount });
   };
 
@@ -223,21 +234,24 @@ export function calculatePaycheck(
   const addlWages = maxBig(ytd.medicareWages + ficaWages - maxBig(threshold, ytd.medicareWages), 0n);
   if (addlWages > 0n) add("ADDL_MEDICARE_EE", "IRS", "employee", addlWages, pct(addlWages, fed.medicare.additionalRate));
 
-  // California
-  const pit = californiaWithholding(ca.pit, input.de4, toMajor(incomeTaxWages), periods);
-  add("CA_PIT", "EDD", "employee", incomeTaxWages, toMinor(pit));
-  const sdiTaxable = ca.sdi.wageBase ? capped(sdiWages, 0n, ca.sdi.wageBase) : sdiWages;
-  add("CA_SDI", "EDD", "employee", sdiTaxable, pct(sdiTaxable, ca.sdi.rate));
+  // State income tax, then the state's other wage taxes (SDI, UI, ETT...), all on wages less section 125.
+  if (st.incomeTaxAgency) {
+    const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding }, toMajor(incomeTaxWages), periods);
+    add(st.incomeTaxAgency.code, st.incomeTaxAgency.agency, "employee", incomeTaxWages, toMinor(sit));
+  }
+  const stateTax = (t: (typeof st.taxes)[number]) => {
+    const wages = t.wageBase ? capped(ficaWages, ytd.stateWages?.[t.code] ?? 0n, t.wageBase) : ficaWages;
+    const r = (t.assignedRate && employer.stateRates?.[t.code]) || t.rate;
+    add(t.code, t.agency, t.paidBy, wages, pct(wages, r));
+  };
+  for (const t of st.taxes) if (t.paidBy === "employee") stateTax(t);
 
   // Employer
   add("SS_ER", "IRS", "employer", ssWages, pct(ssWages, fed.socialSecurity.employerRate));
   add("MEDICARE_ER", "IRS", "employer", ficaWages, pct(ficaWages, fed.medicare.employerRate));
   const futaWages = capped(ficaWages, ytd.futaWages, fed.futa.wageBase);
   add("FUTA", "IRS", "employer", futaWages, pct(futaWages, fed.futa.rate));
-  const uiWages = capped(uiWagesThisPeriod, ytd.caUiWages, ca.ui.wageBase);
-  add("CA_UI", "EDD", "employer", uiWages, pct(uiWages, employer.caUiRate ?? ca.ui.newEmployerRate));
-  const ettWages = capped(uiWagesThisPeriod, ytd.caUiWages, ca.ett.wageBase);
-  add("CA_ETT", "EDD", "employer", ettWages, pct(ettWages, ca.ett.rate));
+  for (const t of st.taxes) if (t.paidBy === "employer") stateTax(t);
 
   const employeeTaxMinor = taxes.filter((t) => t.paidBy === "employee").reduce((s, t) => s + t.amountMinor, 0n);
   const employerTaxMinor = taxes.filter((t) => t.paidBy === "employer").reduce((s, t) => s + t.amountMinor, 0n);
@@ -249,7 +263,8 @@ export function calculatePaycheck(
   // Paid sick leave: front-loaded hours at the start of the year, or one hour per 30 worked up to the
   // accrual cap; hours taken come off the balance and can't exceed it.
   let sickLeave: Paycheck["sickLeave"];
-  if (input.sickLeave) {
+  if (input.sickLeave && wh.sickLeave) {
+    const law = wh.sickLeave;
     const sl = input.sickLeave;
     // A grant tops the balance up to the year's hours; hours already earned above that (say, before
     // the business switched from accrual) are kept.
@@ -261,8 +276,8 @@ export function calculatePaycheck(
     let accrued = new D(0);
     if ((sl.policy ?? "accrual") === "accrual") {
       const worked = sl.deemedHoursWorked ? new D(sl.deemedHoursWorked) : reg.add(ot).add(dt);
-      const cap = new D(wh.sickLeave.accrualCapHours);
-      accrued = D.max(D.min(worked.div(wh.sickLeave.hoursWorkedPerHourAccrued), cap.sub(after)), 0).toDecimalPlaces(4);
+      const cap = new D(sl.accrualCapHours ?? law.accrualCapHours);
+      accrued = D.max(D.min(worked.div(law.hoursWorkedPerHourAccrued), cap.sub(after)), 0).toDecimalPlaces(4);
     }
     sickLeave = {
       accruedHours: accrued.toString(), usedHours: used.toString(), ...(granted ? { grantedHours: granted.toString() } : {}),

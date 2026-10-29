@@ -4,11 +4,11 @@ import { appendAudit } from "../core/audit.js";
 import { LedgerError, translateDbError } from "../core/errors.js";
 import { postJournal, type Actor, type LineInput, type Role } from "../core/ledger.js";
 import { addDays } from "./business-days.js";
-import { DEPOSIT_ACCOUNTS, DEPOSIT_LABEL, depositSchedule, type Deposit, type FederalSchedule, type RunTaxes } from "./deposits.js";
-import type { TaxLine } from "./gross-to-net.js";
+import { statePackFor, type Place } from "../rules/index.js";
+import { depositAccounts, depositLabel, depositSchedule, type Deposit, type FederalSchedule, type RunTaxes } from "./deposits.js";
 
 // Payroll tax deposits for a business: what's due from its posted pay runs,
-// what's been paid, and recording a payment made at EFTPS or the EDD.
+// what's been paid, and recording a payment made at EFTPS or the state agency.
 
 const CAN_PAY: Role[] = ["owner", "admin", "bookkeeper", "accountant", "system"];
 const CAN_SET: Role[] = ["owner", "admin", "accountant", "system"];
@@ -19,13 +19,25 @@ export const REMIND_DAYS = 5;
 export type DepositStatus = "paid" | "overdue" | "due_soon" | "upcoming";
 
 export interface DepositView extends Deposit {
-  agency: "IRS" | "EDD";
+  agency: string;
   what: string;
   where: string;
   paidMinor: bigint;
   remainingMinor: bigint;
   status: DepositStatus;
   payments: { paidDate: string; amountMinor: bigint; confirmation: string | null; entryId: string; createdBy: string }[];
+}
+
+function runTaxes(r: any): RunTaxes {
+  return {
+    payRunId: r.id, payDate: r.pay_date,
+    byTax: Object.fromEntries(Object.entries(r.result.totals.byTax as Record<string, string>).map(([k, v]) => [k, BigInt(v)])),
+  };
+}
+
+export async function placeOf(tx: Tx, entityId: string): Promise<Place> {
+  const e = (await tx.query("SELECT country, region FROM entities WHERE id = $1", [entityId])).rows[0];
+  return { country: e.country, region: e.region };
 }
 
 function invalid(message: string): never {
@@ -54,11 +66,20 @@ export async function taxDeposits(tx: Tx, entityId: string, year: number, today:
       WHERE entity_id = $1 AND status = 'posted' AND pay_date >= $2 AND pay_date <= $3 ORDER BY pay_date, created_at`,
     [entityId, `${year}-01-01`, `${year}-12-31`],
   );
-  const runs: RunTaxes[] = rows.map((r) => ({
-    payRunId: r.id, payDate: r.pay_date,
-    byTax: Object.fromEntries(Object.entries(r.result.totals.byTax as Record<string, string>).map(([k, v]) => [k, BigInt(v)])),
-  }));
-  const deposits = depositSchedule(runs, await federalDepositSchedule(tx, entityId));
+  const runs: RunTaxes[] = rows.map(runTaxes);
+  const place = await placeOf(tx, entityId);
+  const state = statePackFor(place, `${year}-12-31`);
+  // Some states' timing depends on how much was withheld in the four quarters before the year.
+  let priorQuarterlyAverageMinor: bigint | undefined;
+  const incomeCode = state.payroll.incomeTaxAgency?.code;
+  if (incomeCode && state.payroll.deposits.some((d) => d.schedule === "federal_timing_by_average")) {
+    const prior = await tx.query(
+      `SELECT id, pay_date::text, result FROM pay_runs WHERE entity_id = $1 AND status = 'posted' AND pay_date >= $2 AND pay_date <= $3`,
+      [entityId, `${year - 1}-01-01`, `${year - 1}-12-31`],
+    );
+    priorQuarterlyAverageMinor = prior.rows.map(runTaxes).reduce((s, r) => s + (r.byTax[incomeCode] ?? 0n), 0n) / 4n;
+  }
+  const deposits = depositSchedule(runs, await federalDepositSchedule(tx, entityId), place, { priorQuarterlyAverageMinor });
   const { rows: paid } = await tx.query(
     `SELECT deposit_key, paid_date::text, amount_minor, by_tax, confirmation, entry_id, created_by
        FROM tax_deposit_payments WHERE entity_id = $1 AND deposit_key = ANY($2) ORDER BY created_at`,
@@ -76,12 +97,12 @@ export async function taxDeposits(tx: Tx, entityId: string, year: number, today:
       : due < today ? "overdue"
       : due <= addDays(today, REMIND_DAYS) ? "due_soon"
       : "upcoming";
-    return { ...d, ...DEPOSIT_LABEL[d.kind], paidMinor, remainingMinor: remainingMinor > 0n ? remainingMinor : 0n, status, payments };
+    return { ...d, ...depositLabel(d.kind, state), paidMinor, remainingMinor: remainingMinor > 0n ? remainingMinor : 0n, status, payments };
   });
 }
 
 /**
- * Records a deposit made at EFTPS or the EDD: pays what's left of it from a
+ * Records a deposit made at EFTPS or the state agency: pays what's left of it from a
  * bank account and posts the entry that clears the tax liabilities.
  */
 export async function recordDepositPayment(
@@ -98,12 +119,12 @@ export async function recordDepositPayment(
   if (deposit.remainingMinor <= 0n) invalid("this deposit is already paid");
 
   const { rows: earlier } = await tx.query("SELECT by_tax FROM tax_deposit_payments WHERE entity_id = $1 AND deposit_key = $2", [input.entityId, input.key]);
-  const remaining: Partial<Record<TaxLine["code"], bigint>> = {};
-  for (const [code, amount] of Object.entries(deposit.byTax) as [TaxLine["code"], bigint][]) {
+  const remaining: Record<string, bigint> = {};
+  for (const [code, amount] of Object.entries(deposit.byTax)) {
     const before = earlier.reduce((s, r) => s + BigInt(r.by_tax[code] ?? 0), 0n);
     if (amount - before > 0n) remaining[code] = amount - before;
   }
-  const amount = Object.values(remaining).reduce((s, v) => s + (v ?? 0n), 0n);
+  const amount = Object.values(remaining).reduce((s, v) => s + v, 0n);
   if (amount <= 0n) invalid("this deposit is already paid");
 
   const bankKey = input.bankAccount || "cash_operating";
@@ -111,8 +132,9 @@ export async function recordDepositPayment(
   if (!bank || bank.subtype !== "bank") invalid(`${bankKey} is not a bank account`);
 
   const byAccount = new Map<string, bigint>();
-  for (const [code, v] of Object.entries(remaining) as [TaxLine["code"], bigint][]) {
-    const account = DEPOSIT_ACCOUNTS[deposit.kind][code]!;
+  const accounts = depositAccounts(deposit.kind, statePackFor(await placeOf(tx, input.entityId), `${year}-12-31`));
+  for (const [code, v] of Object.entries(remaining)) {
+    const account = accounts[code]!;
     byAccount.set(account, (byAccount.get(account) ?? 0n) + v);
   }
   const id = randomUUID();

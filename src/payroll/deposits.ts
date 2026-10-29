@@ -1,9 +1,8 @@
 import { D, toMinor } from "../core/money.js";
-import { resolveRules } from "../rules/index.js";
+import { resolveRules, type Place, type StateRulePack } from "../rules/index.js";
 import {
   addDays, businessDaysAfter, endOfNextMonth, fifteenthOfNextMonth, onOrNextBusinessDay, quarterEnd, quarterOf, weekday,
 } from "./business-days.js";
-import type { TaxLine } from "./gross-to-net.js";
 
 // When each payroll tax is due. Liabilities arise on the pay date (cash
 // basis), and the rules come from the rule packs: Pub 15 for Form 941 and
@@ -11,36 +10,48 @@ import type { TaxLine } from "./gross-to-net.js";
 // UI and ETT. TrailBook works out what's due and when; the business pays the
 // IRS (EFTPS) and the EDD (e-Services) itself.
 
-export type DepositKind = "federal_941" | "federal_940" | "ca_pit_sdi" | "ca_ui_ett";
+/** "federal_941", "federal_940", or a state pack's deposit kind ("ca_pit_sdi", "tx_ui"...). */
+export type DepositKind = string;
 export type FederalSchedule = "monthly" | "semiweekly";
 
-export const DEPOSIT_LABEL: Record<DepositKind, { agency: "IRS" | "EDD"; what: string; where: string }> = {
-  federal_941: { agency: "IRS", what: "Federal income tax, Social Security and Medicare (Form 941)", where: "EFTPS or IRS Direct Pay" },
-  federal_940: { agency: "IRS", what: "Federal unemployment tax (Form 940)", where: "EFTPS or IRS Direct Pay" },
-  ca_pit_sdi: { agency: "EDD", what: "California income tax and SDI withheld", where: "EDD e-Services for Business" },
-  ca_ui_ett: { agency: "EDD", what: "California UI and ETT", where: "EDD e-Services for Business" },
+const FEDERAL: Record<string, { agency: string; what: string; where: string; codes: string[]; accounts: Record<string, string> }> = {
+  federal_941: {
+    agency: "IRS", what: "Federal income tax, Social Security and Medicare (Form 941)", where: "EFTPS or IRS Direct Pay",
+    codes: ["FIT", "SS_EE", "SS_ER", "MEDICARE_EE", "MEDICARE_ER", "ADDL_MEDICARE_EE"],
+    accounts: { FIT: "fit_payable", SS_EE: "fica_payable", SS_ER: "fica_payable", MEDICARE_EE: "fica_payable", MEDICARE_ER: "fica_payable", ADDL_MEDICARE_EE: "fica_payable" },
+  },
+  federal_940: { agency: "IRS", what: "Federal unemployment tax (Form 940)", where: "EFTPS or IRS Direct Pay", codes: ["FUTA"], accounts: { FUTA: "futa_payable" } },
 };
 
-const CODES: Record<DepositKind, TaxLine["code"][]> = {
-  federal_941: ["FIT", "SS_EE", "SS_ER", "MEDICARE_EE", "MEDICARE_ER", "ADDL_MEDICARE_EE"],
-  federal_940: ["FUTA"],
-  ca_pit_sdi: ["CA_PIT", "CA_SDI"],
-  ca_ui_ett: ["CA_UI", "CA_ETT"],
-};
+/** Who a deposit is paid to and what it covers. */
+export function depositLabel(kind: DepositKind, state: StateRulePack): { agency: string; what: string; where: string } {
+  const f = FEDERAL[kind];
+  if (f) return { agency: f.agency, what: f.what, where: f.where };
+  const r = state.payroll.deposits.find((d) => d.kind === kind);
+  if (!r) throw new Error(`unknown deposit kind ${kind}`);
+  return { agency: r.agency, what: r.what, where: r.where };
+}
 
-/** The liability accounts each deposit pays down. */
-export const DEPOSIT_ACCOUNTS: Record<DepositKind, Partial<Record<TaxLine["code"], string>>> = {
-  federal_941: { FIT: "fit_payable", SS_EE: "fica_payable", SS_ER: "fica_payable", MEDICARE_EE: "fica_payable", MEDICARE_ER: "fica_payable", ADDL_MEDICARE_EE: "fica_payable" },
-  federal_940: { FUTA: "futa_payable" },
-  ca_pit_sdi: { CA_PIT: "ca_pit_payable", CA_SDI: "ca_sdi_payable" },
-  ca_ui_ett: { CA_UI: "ca_ui_payable", CA_ETT: "ca_ett_payable" },
-};
+/** The liability account each tax code in a deposit pays down. */
+export function depositAccounts(kind: DepositKind, state: StateRulePack): Record<string, string> {
+  const f = FEDERAL[kind];
+  if (f) return f.accounts;
+  const r = state.payroll.deposits.find((d) => d.kind === kind);
+  if (!r) throw new Error(`unknown deposit kind ${kind}`);
+  const accounts: Record<string, string> = {};
+  for (const code of r.codes) {
+    const account = state.payroll.incomeTaxAgency?.code === code ? state.payroll.incomeTaxAgency.account
+      : state.payroll.taxes.find((t) => t.code === code)?.account;
+    if (account) accounts[code] = account;
+  }
+  return accounts;
+}
 
 /** One posted pay run's taxes, as the schedule needs them. */
 export interface RunTaxes {
   payRunId: string;
   payDate: string;
-  byTax: Partial<Record<TaxLine["code"], bigint>>;
+  byTax: Record<string, bigint>;
 }
 
 export interface Deposit {
@@ -51,7 +62,7 @@ export interface Deposit {
   period: string;
   dueDate: string;
   amountMinor: bigint;
-  byTax: Partial<Record<TaxLine["code"], bigint>>;
+  byTax: Record<string, bigint>;
   payDates: string[];
   payRunIds: string[];
   /** Why it's due when it is. */
@@ -67,10 +78,10 @@ const qLabel = (date: string) => `Q${quarterOf(date)} ${date.slice(0, 4)}`;
 const qKey = (date: string) => `${date.slice(0, 4)}-Q${quarterOf(date)}`;
 
 class Bucket {
-  byTax: Partial<Record<TaxLine["code"], bigint>> = {};
+  byTax: Record<string, bigint> = {};
   payDates: string[] = [];
   payRunIds: string[] = [];
-  add(run: RunTaxes, codes: TaxLine["code"][]) {
+  add(run: RunTaxes, codes: string[]) {
     let added = 0n;
     for (const c of codes) {
       const v = run.byTax[c] ?? 0n;
@@ -85,7 +96,7 @@ class Bucket {
     return added;
   }
   get total() {
-    return Object.values(this.byTax).reduce((s, v) => s + (v ?? 0n), 0n);
+    return Object.values(this.byTax).reduce((s, v) => s + v, 0n);
   }
   take(kind: DepositKind, key: string, period: string, dueDate: string, rule: string): Deposit | null {
     const amountMinor = this.total;
@@ -107,12 +118,20 @@ function semiweeklyPeriodEnd(payDate: string): string {
 
 const minor = (v: string) => toMinor(new D(v).toFixed(2));
 
+export interface StateDepositOptions {
+  /**
+   * Average state income tax withheld per quarter over the four quarters
+   * before the year, for states whose timing depends on it (Arizona).
+   */
+  priorQuarterlyAverageMinor?: bigint;
+}
+
 /**
  * Every deposit for one calendar year's posted runs. `federalSchedule` is the
  * business's schedule for the year from its lookback period (new employers
- * are monthly).
+ * are monthly); `place` picks the state's deposit rules.
  */
-export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedule): Deposit[] {
+export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedule, place: Place, opts: StateDepositOptions = {}): Deposit[] {
   const sorted = [...runs].sort((a, b) => a.payDate.localeCompare(b.payDate));
   const out: Deposit[] = [];
   const push = (d: Deposit | null) => { if (d) out.push(d); };
@@ -137,7 +156,7 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
       periodKey = "";
     };
     for (const run of sorted) {
-      const rules = resolveRules({ country: "US", region: "CA" }, run.payDate).federal.payroll.deposits;
+      const rules = resolveRules(place, run.payDate).federal.payroll.deposits;
       const key = schedule === "monthly" ? run.payDate.slice(0, 7) : `${semiweeklyPeriodEnd(run.payDate)}:${qKey(run.payDate)}`;
       if (key !== periodKey || schedule !== periodSchedule) {
         close();
@@ -146,7 +165,7 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
         periodEnd = schedule === "monthly" ? run.payDate : semiweeklyPeriodEnd(run.payDate);
         periodLabel = schedule === "monthly" ? monthName(run.payDate) : `Paydays through ${semiweeklyPeriodEnd(run.payDate)}`;
       }
-      bucket.add(run, CODES.federal_941);
+      bucket.add(run, FEDERAL.federal_941!.codes);
       if (bucket.total >= minor(rules.nextDayAtOrAbove)) {
         push(bucket.take("federal_941", `federal_941:nd:${run.payDate}:${run.payRunId}`, `Payday ${run.payDate}`,
           businessDaysAfter(run.payDate, 1, "federal"), "$100,000 next-day rule: by the next business day"));
@@ -161,7 +180,7 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
     for (const d of out) byQuarter.set(qKey(d.payDates[0]!), (byQuarter.get(qKey(d.payDates[0]!)) ?? 0n) + d.amountMinor);
     for (const d of out) {
       const q = qKey(d.payDates[0]!);
-      const limit = minor(resolveRules({ country: "US", region: "CA" }, d.payDates[0]!).federal.payroll.deposits.payWithReturnUnder);
+      const limit = minor(resolveRules(place, d.payDates[0]!).federal.payroll.deposits.payWithReturnUnder);
       if (byQuarter.get(q)! < limit && !d.key.includes(":nd:")) {
         const end = quarterEnd(Number(q.slice(0, 4)), Number(q.slice(-1)));
         const returnDue = onOrNextBusinessDay(endOfNextMonth(end), "federal");
@@ -178,9 +197,9 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
     const lastQuarter = qKey(sorted.at(-1)!.payDate);
     for (const q of [1, 2, 3, 4].map((n) => `${year}-Q${n}`)) {
       if (q > lastQuarter) break;
-      for (const run of sorted.filter((r) => qKey(r.payDate) === q)) bucket.add(run, CODES.federal_940);
+      for (const run of sorted.filter((r) => qKey(r.payDate) === q)) bucket.add(run, FEDERAL.federal_940!.codes);
       const end = quarterEnd(Number(q.slice(0, 4)), Number(q.slice(-1)));
-      const limit = minor(resolveRules({ country: "US", region: "CA" }, end).federal.payroll.deposits.futaDepositOver);
+      const limit = minor(resolveRules(place, end).federal.payroll.deposits.futaDepositOver);
       if (bucket.total > limit || (q.endsWith("Q4") && bucket.total > 0n)) {
         push(bucket.take("federal_940", `federal_940:${q}`, `${q.slice(-2)} ${q.slice(0, 4)}`, onOrNextBusinessDay(endOfNextMonth(end), "federal"),
           q.endsWith("Q4") ? "Whatever FUTA is left for the year is due by January 31" : "FUTA over $500 is deposited by the end of the month after the quarter"));
@@ -188,54 +207,78 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
     }
   }
 
-  // California PIT and SDI.
-  {
-    const bucket = new Bucket();
-    let pit = 0n;
-    const fedTiming = federalSchedule === "semiweekly";
-    for (let i = 0; i < sorted.length; i++) {
-      const run = sorted[i]!;
-      const rules = resolveRules({ country: "US", region: "CA" }, run.payDate).state.payroll.deposits;
-      bucket.add(run, CODES.ca_pit_sdi);
-      pit += run.byTax.CA_PIT ?? 0n;
-      const next = sorted[i + 1];
-      if (fedTiming && pit > minor(rules.federalTimingOver)) {
-        const end = semiweeklyPeriodEnd(run.payDate);
-        // Paydays Wednesday-Friday are due the next Wednesday; Saturday-Tuesday the next Friday.
-        const due = onOrNextBusinessDay(addDays(end, weekday(end) === 5 ? 5 : 3), "california");
-        push(bucket.take("ca_pit_sdi", `ca_pit_sdi:sw:${run.payDate}:${run.payRunId}`, `Payday ${run.payDate}`, due,
-          `Semiweekly: more than $${rules.federalTimingOver} of California income tax withheld, on the federal semiweekly timing`));
-        pit = 0n;
-        continue;
-      }
-      const monthEnds = !next || next.payDate.slice(0, 7) !== run.payDate.slice(0, 7);
-      if (monthEnds && pit >= minor(rules.monthlyAtOrAbove)) {
-        push(bucket.take("ca_pit_sdi", `ca_pit_sdi:m:${run.payDate.slice(0, 7)}`, monthName(run.payDate), onOrNextBusinessDay(fifteenthOfNextMonth(run.payDate), "california"),
-          `Monthly: $${rules.monthlyAtOrAbove} or more of California income tax withheld, due the 15th of the next month`));
-        pit = 0n;
-        continue;
-      }
-      const quarterEnds = !next || qKey(next.payDate) !== qKey(run.payDate);
-      if (quarterEnds) {
+  // State taxes, by each of the state's deposit rules.
+  if (sorted.length) {
+    const state = resolveRules(place, sorted[0]!.payDate).state;
+    for (const rule of state.payroll.deposits) {
+      const cal = state.calendar;
+      const bucket = new Bucket();
+      const stateTaxes = (run: RunTaxes) => resolveRules(place, run.payDate).state;
+      const quarterly = (run: RunTaxes, why: string) => {
         const end = quarterEnd(Number(run.payDate.slice(0, 4)), quarterOf(run.payDate));
-        push(bucket.take("ca_pit_sdi", `ca_pit_sdi:q:${qKey(run.payDate)}`, qLabel(run.payDate), onOrNextBusinessDay(endOfNextMonth(end), "california"),
-          `Quarterly: under $${rules.monthlyAtOrAbove} of California income tax withheld, due with the quarter's DE 9`));
-        pit = 0n;
-      }
-    }
-  }
-
-  // California UI and ETT: quarterly, with the DE 9.
-  {
-    const bucket = new Bucket();
-    for (let i = 0; i < sorted.length; i++) {
-      const run = sorted[i]!;
-      bucket.add(run, CODES.ca_ui_ett);
-      const next = sorted[i + 1];
-      if (!next || qKey(next.payDate) !== qKey(run.payDate)) {
-        const end = quarterEnd(Number(run.payDate.slice(0, 4)), quarterOf(run.payDate));
-        push(bucket.take("ca_ui_ett", `ca_ui_ett:${qKey(run.payDate)}`, qLabel(run.payDate), onOrNextBusinessDay(endOfNextMonth(end), "california"),
-          "UI and ETT are paid quarterly, by the DE 9 due date"));
+        push(bucket.take(rule.kind, `${rule.kind}:${rule.schedule === "ca_edd" ? "q:" : ""}${qKey(run.payDate)}`, qLabel(run.payDate),
+          onOrNextBusinessDay(endOfNextMonth(end), cal), why));
+      };
+      if (rule.schedule === "quarterly") {
+        for (let i = 0; i < sorted.length; i++) {
+          const run = sorted[i]!;
+          bucket.add(run, rule.codes);
+          const next = sorted[i + 1];
+          if (!next || qKey(next.payDate) !== qKey(run.payDate)) quarterly(run, `Paid quarterly, by the ${rule.report} due date`);
+        }
+      } else if (rule.schedule === "federal_timing_by_average") {
+        // Over the average: the same dates as the federal 941 deposits; otherwise quarterly with the return.
+        const followFederal = (opts.priorQuarterlyAverageMinor ?? 0n) > minor(rule.federalTimingAverageOver);
+        for (let i = 0; i < sorted.length; i++) {
+          const run = sorted[i]!;
+          bucket.add(run, rule.codes);
+          const next = sorted[i + 1];
+          if (followFederal) {
+            const fed = out.find((d) => d.kind === "federal_941" && d.payRunIds.includes(run.payRunId));
+            const periodEnds = !next || out.find((d) => d.kind === "federal_941" && d.payRunIds.includes(next.payRunId))?.key !== fed?.key;
+            if (fed && periodEnds) {
+              push(bucket.take(rule.kind, `${rule.kind}:${fed.key.replace(/^federal_941:/, "")}`, fed.period, fed.dueDate,
+                `More than $${rule.federalTimingAverageOver} a quarter withheld on average last year: due with your federal deposits`));
+            } else if (!fed && (!next || qKey(next.payDate) !== qKey(run.payDate))) {
+              quarterly(run, `Paid with the quarter's ${rule.report}`);
+            }
+          } else if (!next || qKey(next.payDate) !== qKey(run.payDate)) {
+            quarterly(run, `Quarterly: $${rule.federalTimingAverageOver} or less a quarter withheld on average last year, due with the ${rule.report}`);
+          }
+        }
+      } else {
+        // California PIT and SDI.
+        let pit = 0n;
+        const incomeCode = state.payroll.incomeTaxAgency?.code ?? "";
+        const fedTiming = federalSchedule === "semiweekly";
+        for (let i = 0; i < sorted.length; i++) {
+          const run = sorted[i]!;
+          const r = stateTaxes(run).payroll.deposits.find((d) => d.kind === rule.kind);
+          const rules = r?.schedule === "ca_edd" ? r : rule;
+          bucket.add(run, rule.codes);
+          pit += run.byTax[incomeCode] ?? 0n;
+          const next = sorted[i + 1];
+          if (fedTiming && pit > minor(rules.federalTimingOver)) {
+            const end = semiweeklyPeriodEnd(run.payDate);
+            // Paydays Wednesday-Friday are due the next Wednesday; Saturday-Tuesday the next Friday.
+            const due = onOrNextBusinessDay(addDays(end, weekday(end) === 5 ? 5 : 3), cal);
+            push(bucket.take(rule.kind, `${rule.kind}:sw:${run.payDate}:${run.payRunId}`, `Payday ${run.payDate}`, due,
+              `Semiweekly: more than $${rules.federalTimingOver} of ${state.name} income tax withheld, on the federal semiweekly timing`));
+            pit = 0n;
+            continue;
+          }
+          const monthEnds = !next || next.payDate.slice(0, 7) !== run.payDate.slice(0, 7);
+          if (monthEnds && pit >= minor(rules.monthlyAtOrAbove)) {
+            push(bucket.take(rule.kind, `${rule.kind}:m:${run.payDate.slice(0, 7)}`, monthName(run.payDate), onOrNextBusinessDay(fifteenthOfNextMonth(run.payDate), cal),
+              `Monthly: $${rules.monthlyAtOrAbove} or more of ${state.name} income tax withheld, due the 15th of the next month`));
+            pit = 0n;
+            continue;
+          }
+          if (!next || qKey(next.payDate) !== qKey(run.payDate)) {
+            quarterly(run, `Quarterly: under $${rules.monthlyAtOrAbove} of ${state.name} income tax withheld, due with the quarter's DE 9`);
+            pit = 0n;
+          }
+        }
       }
     }
   }

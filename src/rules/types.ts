@@ -78,38 +78,172 @@ export interface FederalPayrollRules {
 
 export type CaFilingStatus = "single" | "married" | "hoh";
 
-export interface CaliforniaPayrollRules {
-  /** EDD Method B (exact calculation), annual tables. */
-  pit: {
-    lowIncomeExemption: { single: string; marriedLow: string; marriedHigh: string; hoh: string };
-    standardDeduction: { single: string; marriedLow: string; marriedHigh: string; hoh: string };
-    estimatedDeductionPerAllowance: string;
-    exemptionCreditPerAllowance: string;
-    brackets: Record<CaFilingStatus, Bracket[]>;
-    supplementalRate: string;
-    bonusSupplementalRate: string;
-  };
-  sdi: { rate: string; wageBase: string | null };
-  ui: { wageBase: string; newEmployerRate: string };
-  ett: { rate: string; wageBase: string };
-  /** When PIT and SDI withholding must be deposited, by accumulated PIT; UI and ETT are quarterly. */
-  deposits: {
-    /** Accumulated PIT at or above this by a month's end is due the 15th of the next month. */
-    monthlyAtOrAbove: string;
-    /** For semiweekly and next-day federal depositors, PIT accumulated above this follows the federal timing. */
-    federalTimingOver: string;
-  };
+/** California EDD Method B (exact calculation), annual tables. */
+export interface CaliforniaPitTables {
+  lowIncomeExemption: { single: string; marriedLow: string; marriedHigh: string; hoh: string };
+  standardDeduction: { single: string; marriedLow: string; marriedHigh: string; hoh: string };
+  estimatedDeductionPerAllowance: string;
+  exemptionCreditPerAllowance: string;
+  brackets: Record<CaFilingStatus, Bracket[]>;
+  supplementalRate: string;
+  bonusSupplementalRate: string;
 }
 
-export interface CaliforniaWageHourRules {
+/**
+ * How a state (or province) works out income tax withholding. Each method is
+ * one calculation in src/payroll/state-withholding.ts; a state that uses a
+ * method already written needs only its figures.
+ */
+export type StateIncomeTaxRules =
+  /** No wage income tax (Texas, Florida, Washington, Nevada...). */
+  | { method: "none" }
+  /** California's EDD Method B, from the employee's DE 4. */
+  | { method: "ca_method_b"; certificate: "DE 4"; tables: CaliforniaPitTables }
+  /**
+   * The employee elects a flat percentage of each paycheck on the state's
+   * certificate (Arizona Form A-4); `defaultRate` applies when they haven't
+   * filed one.
+   */
+  | {
+      method: "elected_percent";
+      certificate: string;
+      choices: string[];
+      defaultRate: string;
+      /** The certificate allows electing zero when no tax is expected for the year. */
+      zeroAllowed: boolean;
+    };
+
+/** A state payroll tax on wages other than income tax: SDI, UI, ETT, job training tax and the like. */
+export interface StatePayrollTax {
+  /** Tax code on pay stubs and in pay run totals, like "CA_SDI" or "TX_UI". */
+  code: string;
+  label: string;
+  /** Short agency name, like "EDD" or "TWC". */
+  agency: string;
+  paidBy: "employee" | "employer";
+  /** The rate, or for an assigned rate the new-employer rate used until the employer enters theirs. */
+  rate: string;
+  /** Annual wage base per employee; null for no limit. */
+  wageBase: string | null;
+  /** The agency assigns each employer its own rate (UI); the employer enters it in payroll settings. */
+  assignedRate?: { label: string; hint: string };
+  /** System key of the liability account the tax is credited to. */
+  account: string;
+}
+
+/** A payroll liability account the state's taxes need, added to the chart of accounts at setup. */
+export interface StateAccount {
+  code: string;
+  name: string;
+  systemKey: string;
+}
+
+interface DepositRuleBase {
+  /** Deposit kind, stable across years: payments recorded against it point here. */
+  kind: string;
+  codes: string[];
+  agency: string;
+  what: string;
+  where: string;
+}
+
+/** When the state's taxes are paid. */
+export type StateDepositRule =
+  /** California PIT and SDI: quarterly, monthly or on the federal semiweekly timing by amount withheld. */
+  | (DepositRuleBase & { schedule: "ca_edd"; monthlyAtOrAbove: string; federalTimingOver: string })
+  /** Paid with the quarterly report, by the last day of the month after the quarter (UI everywhere). */
+  | (DepositRuleBase & { schedule: "quarterly"; report: string })
+  /**
+   * Withholding paid on the federal 941 deposit dates when the average of the
+   * last four quarters' state withholding is over `federalTimingAverageOver`,
+   * otherwise quarterly with the return (Arizona).
+   */
+  | (DepositRuleBase & { schedule: "federal_timing_by_average"; federalTimingAverageOver: string; report: string });
+
+/** A quarterly return or wage report the state wants. */
+export interface StateQuarterlyForm {
+  /** As the agency names it, like "DE 9" or "C-3". */
+  form: string;
+  /** URL-safe name for the form page. */
+  slug: string;
+  title: string;
+  /** "ca_de9" is California's combined return; "ui_wage_report" and "withholding_return" are generic. */
+  kind: "ca_de9" | "ui_wage_report" | "withholding_return";
+  /** Tax codes the form reports. */
+  codes: string[];
+  fileAt: string;
+}
+
+export interface StateWageHourRules {
   minimumWage: string;
+  /** Rate changes part-way through the pack's span; each applies from its date on. */
+  minimumWageChanges?: { from: string; rate: string }[];
+  /** Exempt (salaried) employees must earn at least this a year; the federal $684 a week where the state sets nothing higher. */
   exemptAnnualSalaryMinimum: string;
-  dailyOvertimeAfter: string;
-  dailyDoubleTimeAfter: string;
-  weeklyOvertimeAfter: string;
-  seventhDayDoubleTimeAfter: string;
-  sickLeave: { hoursWorkedPerHourAccrued: string; annualUseCapHours: string; accrualCapHours: string };
+  overtime: {
+    weeklyAfter: string;
+    /** California-style daily overtime; absent where only the weekly rule applies. */
+    dailyAfter?: string;
+    dailyDoubleTimeAfter?: string;
+    seventhDayDoubleTimeAfter?: string;
+  };
+  /** Statewide paid sick leave law; null where there is none. */
+  sickLeave: {
+    law: string;
+    hoursWorkedPerHourAccrued: string;
+    annualUseCapHours: string;
+    accrualCapHours: string;
+    /** Smaller employers may cap use and accrual lower (Arizona: under 15 employees, 24 hours). */
+    smallEmployer?: { under: number; annualUseCapHours: string; accrualCapHours: string };
+  } | null;
   newHireReportDays: number;
+  newHireReportTo: string;
+}
+
+/** What the state's payroll settings ask the employer for. */
+export interface StateEmployerAccount {
+  label: string;
+  hint: string;
+  /** Digits only, after spaces and dashes are removed. */
+  pattern: string;
+  /** How it's printed, # for each digit, like "###-####-#". */
+  format?: string;
+}
+
+export interface StateBusinessRules {
+  /** Null until TrailBook has a sales tax pack for the state; invoices then carry no tax. */
+  salesTax: { servicesTaxableByDefault: boolean; remoteSellerNexusThreshold: string } | null;
+  franchiseTax?: { annualMinimum: string; appliesTo: string[] };
+  payDataReportEmployeeThreshold?: number;
+}
+
+/**
+ * One state or province's payroll and business rules for one span of time.
+ * Adding a state is a new pack: a withholding method, its taxes, deposit
+ * rules, forms and wage-and-hour figures.
+ */
+export interface StateRulePack extends RulePackMeta {
+  kind: "state";
+  /** Display name, like "California". */
+  name: string;
+  /** Business-day calendar for the state's own due dates; see src/payroll/business-days.ts. */
+  calendar: "california" | "weekends";
+  payroll: {
+    incomeTax: StateIncomeTaxRules;
+    /** Agency that takes state income tax withheld, when there is one. */
+    incomeTaxAgency?: { agency: string; code: string; label: string; account: string };
+    taxes: StatePayrollTax[];
+    deposits: StateDepositRule[];
+    employerAccount: StateEmployerAccount;
+    accounts: StateAccount[];
+  };
+  forms: {
+    quarterly: StateQuarterlyForm[];
+    /** W-2 box 14 lines for employee taxes, like CASDI. */
+    w2Box14: { code: string; label: string }[];
+  };
+  wageHour: StateWageHourRules;
+  business: StateBusinessRules;
 }
 
 export interface EntityDefaults {
@@ -121,23 +255,10 @@ export interface EntityDefaults {
   payrollRetentionYears: number;
 }
 
-export interface CaliforniaBusinessRules {
-  salesTax: { servicesTaxableByDefault: boolean; remoteSellerNexusThreshold: string };
-  franchiseTax: { annualMinimum: string; appliesTo: string[] };
-  payDataReportEmployeeThreshold: number;
-}
-
 export interface FederalRulePack extends RulePackMeta {
   kind: "us-federal";
   payroll: FederalPayrollRules;
   entityDefaults: EntityDefaults;
 }
 
-export interface CaliforniaRulePack extends RulePackMeta {
-  kind: "us-ca";
-  payroll: CaliforniaPayrollRules;
-  wageHour: CaliforniaWageHourRules;
-  business: CaliforniaBusinessRules;
-}
-
-export type RulePack = FederalRulePack | CaliforniaRulePack;
+export type RulePack = FederalRulePack | StateRulePack;

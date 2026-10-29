@@ -61,7 +61,7 @@ export async function sendDepositReminders(pool: pg.Pool, mailer: Mailer | undef
     const text = [
       `Payroll tax deposits for ${ent.legal_name}:`,
       "",
-      ...(overdue.length ? ["Past due (the IRS and EDD charge penalties and interest on late deposits, so pay these as soon as you can):", ...overdue.map(line), ""] : []),
+      ...(overdue.length ? ["Past due (the IRS and state agencies charge penalties and interest on late deposits, so pay these as soon as you can):", ...overdue.map(line), ""] : []),
       ...(upcoming.length ? ["Coming up:", ...upcoming.map(line), ""] : []),
       "After you pay, record each deposit on the Payroll page so your books show it.",
       ...(appUrl ? ["", `${appUrl.replace(/\/$/, "")}/#/e/${ent.id}/payroll`] : []),
