@@ -9,6 +9,7 @@ import { netlifyBackupStore } from "../../src/app/backup-store.js";
 import { backupKeyFromEnv } from "../../src/core/nightly-backups.js";
 import { billingFromEnv } from "../../src/app/billing-config.js";
 import { oauthClientsFromEnv } from "../../src/app/oauth.js";
+import { newsletterFromEnv, startNewsletterJob } from "../../src/newsletter/config.js";
 import "../../src/db/pool.js";
 
 // One pool per function instance, reused across invocations.
@@ -29,8 +30,14 @@ const billing = billingFromEnv();
 const oauthClients = oauthClientsFromEnv();
 const milepost = { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" };
 
+// TrailBook News: the Newsletter page, in the operator's own organisation only (NEWSLETTER_ORG_ID).
+const newsletter = newsletterFromEnv(process.env, mailer, appUrl);
+// The worker runs on this deploy's own address, so a preview's page starts the preview's worker.
+const workerUrl = process.env.CONTEXT === "production" ? process.env.URL : process.env.DEPLOY_PRIME_URL || process.env.URL;
+
 export default async (req: Request) => handleApi(req, pool, {
   signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing, oauthClients, milepost,
+  newsletter, startNewsletterJob: workerUrl ? (task) => startNewsletterJob(workerUrl, task) : undefined,
   backups: backupKey ? { store: netlifyBackupStore(getStore({ name: "backups", consistency: "strong" })), key: backupKey } : undefined,
 });
 

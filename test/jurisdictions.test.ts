@@ -17,7 +17,7 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "CO", "FL", "GA", "ID", "IL", "IN", "MA", "MD", "MI", "MN", "MO", "NC", "NH", "NJ", "NV", "NY", "OH", "OR", "PA", "SC", "SD", "TN", "TX", "UT", "VA", "WA", "WI", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AZ", "CA", "CO", "CT", "FL", "GA", "IA", "ID", "IL", "IN", "KY", "LA", "MA", "MD", "MI", "MN", "MO", "NC", "NH", "NJ", "NV", "NY", "OH", "OK", "OR", "PA", "SC", "SD", "TN", "TX", "UT", "VA", "WA", "WI", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
@@ -585,5 +585,76 @@ describe("Indiana, Maryland, Missouri, Wisconsin, Minnesota and South Carolina",
     expect(due("MD", "MD_WH", "md_wh")).toEqual(["2026-08-17"]);
     expect(due("WI", "WI_WH", "wi_wh")).toEqual(["2026-08-31"]);
     expect(due("SC", "SC_WH", "sc_wh")).toEqual(["2026-08-17"]);
+  });
+});
+
+describe("Alabama, Louisiana, Kentucky, Oklahoma, Connecticut and Iowa", () => {
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number, fit = 0) =>
+    stateWithholding(pack(region).payroll.incomeTax, { state }, new D(wages), periods, new D(fit)).toFixed(2);
+
+  it("matches Alabama's M-2 example, subtracting federal withholding, and steps the standard deduction", () => {
+    expect(w("AL", { filingStatus: "married", allowances: 2 }, 850, 52, 35.19)).toBe("29.59");
+    // No A-4: "0". $30,000 a year: $2,775 standard deduction from the schedule, no exemption.
+    expect(w("AL", null, 30000, 1)).toBe(new D(30000 - 2775 - 3000).mul("0.05").add(110).toFixed(2));
+    // Dependents are $500 each from $50,000 to $100,000.
+    expect(w("AL", { filingStatus: "married", allowances: 2 }, 60000, 1)).toBe(new D(60000 - 5000 - 3000 - 1000 - 6000).mul("0.05").add(220).toFixed(2));
+    expect(w("AL", { filingStatus: "married_separate" }, 17600, 1)).toBe(new D(17600 - 2578 - 1500 - 3000).mul("0.05").add(110).toFixed(2));
+  });
+
+  it("matches Louisiana's two R-1306 examples", () => {
+    expect(w("LA", { filingStatus: "single" }, 700, 52)).toBe("13.98");
+    expect(w("LA", { filingStatus: "joint" }, 4600, 26)).toBe("111.54");
+    expect(w("LA", null, 700, 52)).toBe("21.63");
+  });
+
+  it("matches Kentucky's 2026 formula examples", () => {
+    expect(w("KY", null, 3270, 12)).toBe("104.65");
+    // The PDF prints $47 for $1,247.40 ÷ 26.
+    expect(w("KY", null, 1500, 26)).toBe("47.98");
+  });
+
+  it("matches the Oklahoma OW-2 example, rounded to the dollar", () => {
+    expect(w("OK", { filingStatus: "married", allowances: 2 }, 1825, 24)).toBe("37.00");
+    expect(w("OK", { filingStatus: "married_single_rate" }, 1825, 24)).toBe(new D(43800 - 13550).mul("0.045").add("109.25").div(24).toDecimalPlaces(0).toFixed(2));
+  });
+
+  it("matches Connecticut's 2026 weekly tables for every code, and 6.99% without a CT-W4", () => {
+    // Each table row is the formula at the row's midpoint.
+    const rows: [number, Record<string, string>][] = [
+      [812, { A: "28.56", B: "14.22", C: "5.96", D: "31.73", F: "27.00" }],
+      [995, { A: "39.97", B: "29.48", C: "15.89", D: "40.78", F: "36.27" }],
+      [1432.5, { A: "69.17", B: "51.66", C: "49.36", D: "69.17", F: "66.29" }],
+      [1913, { A: "95.60", B: "86.75", C: "74.18", D: "95.60", F: "95.12" }],
+    ];
+    for (const [wages, byCode] of rows) {
+      for (const [code, amount] of Object.entries(byCode)) expect(w("CT", { filingStatus: code }, wages, 52)).toBe(amount);
+    }
+    expect(w("CT", null, 1000, 52)).toBe("69.90");
+  });
+
+  it("matches Iowa's 2026 formula examples", () => {
+    expect(w("IA", { filingStatus: "other", allowances: 1 }, 2100, 26)).toBe("59.26");
+    expect(w("IA", { filingStatus: "married_one_income", allowances: 2 }, 2100, 26)).toBe("38.72");
+    expect(w("IA", { filingStatus: "head_of_household", allowances: 4 }, 2100, 26)).toBe("45.15");
+  });
+
+  it("takes Connecticut Paid Leave from the employee", () => {
+    const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+    const p = calculatePaycheck({ employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "25.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } },
+      { federal, state: pack("CT"), provenance: [] }, {}, "2026-09-04");
+    expect(p.taxes.find((t) => t.code === "CT_PL")?.amountMinor).toBe(500n);
+  });
+
+  it("dates each state's withholding deposit", () => {
+    const run = (code: string): RunTaxes => ({ payRunId: "r1", payDate: "2026-07-10", byTax: { [code]: 30000n, FIT: 10000n } });
+    const due = (region: string, code: string, kind: string) =>
+      depositSchedule([run(code)], "monthly", { country: "US", region }, {}).filter((d) => d.kind === kind).map((d) => d.dueDate);
+    expect(due("AL", "AL_WH", "al_wh")).toEqual(["2026-08-17"]);
+    expect(due("LA", "LA_WH", "la_wh")).toEqual(["2026-08-31"]);
+    expect(due("KY", "KY_WH", "ky_wh")).toEqual(["2026-08-17"]);
+    expect(due("OK", "OK_WH", "ok_wh")).toEqual(["2026-08-20"]);
+    expect(due("CT", "CT_WH", "ct_wh")).toEqual(["2026-08-17"]);
+    expect(due("IA", "IA_WH", "ia_wh")).toEqual(["2026-08-17"]);
   });
 });

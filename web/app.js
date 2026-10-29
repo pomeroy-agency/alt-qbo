@@ -151,13 +151,14 @@ function shell(active, content) {
     `<a href="${href}" class="${active === k ? "on" : ""}">${esc(l)}${n ? `<span class="badge" title="${n} ${what}">${n}</span>` : ""}</a>`;
   const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
   const billing = ["owner", "admin"].includes(state.org?.role) ? [["billing", "#/billing", "Billing"]] : [];
-  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ["account", "#/account", "Your account"]];
+  const newsletter = state.org?.newsletter ? [["newsletter", "#/newsletter", "Newsletter"]] : [];
+  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...newsletter, ["account", "#/account", "Your account"]];
   const main = e ? entityTabs().map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
     ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
     ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
   ];
-  const moreOn = e && (["home", "team", "audit", "billing", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const moreOn = e && (["home", "team", "audit", "billing", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
   const mobile = `
       <nav class="mobile">
         <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
@@ -172,6 +173,7 @@ function shell(active, content) {
         <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
         <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
         ${billing.length ? `<a href="#/billing" class="${active === "billing" ? "on" : ""}">Billing</a>` : ""}
+        ${newsletter.length ? `<a href="#/newsletter" class="${active === "newsletter" ? "on" : ""}">Newsletter</a>` : ""}
         <a href="#/account" class="${active === "account" ? "on" : ""}">Your account</a>
       </nav>
       ${mobile}
@@ -2537,6 +2539,131 @@ async function auditView() {
     </table></div>`);
 }
 
+// ------------------------------------------------------------------ newsletter (operator only)
+
+const NL_STATUS = { draft: ["pill warn", "Draft"], scheduled: ["pill", "Scheduled"], sent: ["pill grey", "Sent"], discarded: ["pill grey", "Set aside"] };
+const NL_KIND = { news: "News", trailbook: "New in TrailBook", tip: "Tip" };
+const nlPath = (p = "") => orgPath(`/newsletter${p}`);
+const nlPill = (s) => `<span class="${NL_STATUS[s]?.[0] ?? "pill grey"}">${NL_STATUS[s]?.[1] ?? esc(s)}</span>`;
+const nlWhen = (ts) => (ts ? new Date(ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never");
+
+function nlSetupList(s) {
+  const row = (ok, label, fix) => `<li>${ok ? "✓" : "○"} ${label}${ok ? "" : ` <span class="muted">(${fix})</span>`}</li>`;
+  return `<ul class="plain">
+    ${row(s.claude, "Claude writes up the news and drafts each issue", "set ANTHROPIC_API_KEY; until then drafts come from a plain template")}
+    ${row(s.brevo, "Brevo, for test emails and scheduling", "set BREVO_API_KEY and NEWSLETTER_SENDER_ID")}
+    ${row(s.listId, `Subscriber list${s.listId ? ` (Brevo list ${s.listId})` : ""}`, "set NEWSLETTER_LIST_ID to the opt-in list")}
+    ${row(s.postalAddress, `Footer postal address${s.postalAddress ? `: ${esc(s.postalAddress)}` : ""}`, "set NEWSLETTER_POSTAL_ADDRESS")}
+    ${row(s.reviewerEmail, `Draft-ready email${s.reviewerEmail ? ` to ${esc(s.reviewerEmail)}` : ""}`, "set NEWSLETTER_REVIEWER_EMAIL or OPS_EMAIL")}
+  </ul>`;
+}
+
+async function newsletterView() {
+  const d = await api(nlPath());
+  const facts = (i) => i.facts ? (i.facts.notable ? `<strong>${esc(i.facts.headline)}</strong><div class="muted">${esc(i.facts.summary)}</div>` : `<span class="muted">Not relevant: ${esc(i.facts.headline)}</span>`)
+    : i.facts_error ? `<span class="muted">Write-up failed: ${esc(i.facts_error)}</span> <button class="link" data-action="nl-item" data-do="retry" data-id="${i.id}">Try again</button>`
+    : i.score >= d.notableScore ? `<span class="muted">Waiting for its write-up</span>` : "";
+  const itemAction = (i) => i.status === "used" ? `<span class="muted">In ${esc(i.used_in)}</span>`
+    : i.status === "dismissed" ? `<button class="link" data-action="nl-item" data-do="restore" data-id="${i.id}">Restore</button>`
+    : `<button class="link" data-action="nl-item" data-do="dismiss" data-id="${i.id}">Dismiss</button>`;
+  app.innerHTML = shell("newsletter", `
+    <div class="head"><div><h1>TrailBook News</h1><p class="muted">The weekly newsletter. Every morning TrailBook reads the news feeds below and scores each story; Claude writes up the facts of the notable ones. On Monday morning it drafts Tuesday's issue. Nothing goes to subscribers until you send yourself a test and approve it here.</p></div></div>
+    <div class="panel"><h2>Setup</h2>${nlSetupList(d.setup)}
+      <div class="row" style="margin-top:8px"><button class="secondary" data-action="nl-run" data-task="watch">Check the news now</button><button class="secondary" data-action="nl-run" data-task="draft">Write this week's draft now</button></div></div>
+    <div class="panel table-wrap"><h2>Issues</h2>
+      ${d.issues.length ? `<table><thead><tr><th>Goes out</th><th>Subject</th><th>Status</th><th>Written by</th><th></th></tr></thead><tbody>
+        ${d.issues.map((s) => `<tr><td>${longDate(s.send_on)}</td><td>${esc(s.subject)}</td><td>${nlPill(s.status)}${s.status === "scheduled" ? `<div class="muted">${nlWhen(s.send_at)}</div>` : ""}</td>
+          <td>${s.drafted_by === "claude" ? "Claude" : "Template"}</td><td><a href="#/newsletter/${s.id}">${s.status === "draft" ? "Review" : "Open"}</a></td></tr>`).join("")}</tbody></table>`
+        : `<p class="muted">No issues yet. The first draft is written on the next Monday morning, or now with the button above.</p>`}
+    </div>
+    <div class="panel"><h2>Notes for the next issue</h2>
+      <p class="muted">What's new in TrailBook, and sales tips you want in. The next draft is written from these along with the news.</p>
+      ${d.notes.length ? `<div class="table-wrap"><table><tbody>${d.notes.map((n) => `<tr><td><span class="pill grey">${n.kind === "update" ? "Update" : "Tip"}</span></td>
+        <td><strong>${esc(n.title)}</strong><div class="muted">${esc(n.body)}</div>${n.link ? `<a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.link)}</a>` : ""}</td>
+        <td>${n.used_in ? `<span class="muted">In the ${esc(n.used_in)} draft</span>` : ""}</td><td><button class="link" data-action="nl-note-remove" data-id="${n.id}">Remove</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+      <form data-form="nl-note" class="row" style="margin-top:8px;align-items:flex-end">
+        <label>Kind<select name="kind"><option value="update">TrailBook update</option><option value="tip">Sales tip</option></select></label>
+        <label style="flex:1;min-width:200px">Title<input name="title" required maxlength="200"></label>
+        <label style="flex:2;min-width:260px">Text<textarea name="body" rows="2" required maxlength="4000"></textarea></label>
+        <label style="flex:1;min-width:200px">Link (optional)<input name="link" type="url"></label>
+        <button type="submit">Add note</button>
+      </form>
+    </div>
+    <div class="panel table-wrap"><h2>News found in the last two weeks</h2>
+      <p class="muted">Stories scoring ${d.notableScore} or more get written up and can go in an issue. Hover a score to see why it got it.</p>
+      ${d.items.length ? `<table><thead><tr><th>Score</th><th>Story</th><th>Write-up</th><th></th></tr></thead><tbody>
+        ${d.items.map((i) => `<tr${i.status === "dismissed" ? ` class="muted"` : ""}><td class="num" title="${esc(i.reasons.join("\n"))}">${i.score}</td>
+          <td><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.title)}</a><div class="muted">${esc(i.sourceName)} · found ${nlWhen(i.found_at)}</div></td>
+          <td>${facts(i)}</td><td>${itemAction(i)}</td></tr>`).join("")}</tbody></table>`
+        : `<p class="muted">Nothing yet. The news is checked every morning.</p>`}
+    </div>
+    <div class="panel table-wrap"><h2>Sources</h2><table><thead><tr><th>Source</th><th>Last read</th><th>Stories</th><th>Problem</th></tr></thead><tbody>
+      ${d.sources.map((s) => `<tr><td><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a></td><td>${nlWhen(s.lastOkAt)}</td><td class="num">${s.itemsLastSeen}</td>
+        <td>${s.lastError ? `<span class="pill bad">${esc(s.lastError)}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`);
+}
+
+function nlSectionFields(s, i) {
+  return `<fieldset class="panel" data-section style="margin:8px 0">
+    <div class="row" style="align-items:flex-end">
+      <label>Kind<select name="kind">${Object.entries(NL_KIND).map(([k, l]) => `<option value="${k}" ${k === s.kind ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label style="flex:1;min-width:240px">Heading<input name="heading" value="${esc(s.heading)}" required maxlength="300"></label>
+      <button type="button" class="link" data-action="nl-section-move" data-dir="-1" ${i === 0 ? "disabled" : ""}>Up</button>
+      <button type="button" class="link" data-action="nl-section-move" data-dir="1">Down</button>
+      <button type="button" class="link" data-action="nl-section-remove">Remove</button>
+    </div>
+    <label>Text (a blank line starts a new paragraph)<textarea name="body" rows="6" required maxlength="6000">${esc(s.body)}</textarea></label>
+    <label>Source link<input name="link" type="url" value="${esc(s.link ?? "")}"></label>
+    <input type="hidden" name="itemId" value="${esc(s.itemId ?? "")}"><input type="hidden" name="noteId" value="${esc(s.noteId ?? "")}">
+  </fieldset>`;
+}
+
+async function newsletterIssueView(id) {
+  const d = await api(nlPath(`/issues/${id}`));
+  const s = d.issue;
+  const draft = s.status === "draft";
+  const ready = d.setup.brevo && d.setup.listId && d.setup.postalAddress;
+  const blockers = [!d.setup.brevo && "Brevo isn't set up", !d.setup.listId && "no subscriber list is set", !d.setup.postalAddress && "the footer has no postal address", !d.testedCurrent && "send yourself a test of this version first"].filter(Boolean);
+  app.innerHTML = shell("newsletter", `
+    <p><a href="#/newsletter">← TrailBook News</a></p>
+    <div class="head"><div><h1>${esc(s.subject)}</h1><p>${nlPill(s.status)} Goes out ${longDate(s.send_on)} at 7 a.m. Pacific${s.status === "scheduled" ? ` (scheduled for ${nlWhen(s.send_at)} by ${esc(String(s.approved_by).replace("user:", ""))})` : ""}. ${d.words} words. Written by ${s.drafted_by === "claude" ? "Claude" : "the template"}.</p></div></div>
+    ${draft ? `<div class="panel"><h2>Send it</h2>
+      <p class="muted">Tests go only to the addresses you type (Brevo sends tests only to addresses on its test list). Approving schedules this exact version in Brevo for the subscriber list.</p>
+      <form data-form="nl-test" data-id="${s.id}" class="row" style="align-items:flex-end">
+        <label style="flex:1;min-width:260px">Send a test to<input name="to" value="${esc(state.me.user.email)}" ${d.setup.brevo ? "" : "disabled"}></label>
+        <button type="submit" class="secondary" ${d.setup.brevo ? "" : "disabled"}>Send test</button>
+      </form>
+      <p>${s.last_test_at ? `Last test: ${nlWhen(s.last_test_at)} to ${esc(s.last_test_to)}${d.testedCurrent ? "" : " (before your last edit)"}.` : "No test sent yet."}</p>
+      <div class="row">
+        <button data-action="nl-approve" data-id="${s.id}" ${ready && d.testedCurrent ? "" : "disabled"}>Approve and schedule</button>
+        <button class="secondary" data-action="nl-redraft">Write it again</button>
+        <button class="link" data-action="nl-discard" data-id="${s.id}">Set this issue aside</button>
+      </div>
+      ${blockers.length ? `<p class="muted">Before approving: ${blockers.join("; ")}.</p>` : ""}
+    </div>` : s.status === "scheduled" ? `<div class="panel"><button class="secondary" data-action="nl-cancel" data-id="${s.id}">Cancel the send</button> <span class="muted">Takes it off Brevo's schedule and back to a draft.</span></div>` : ""}
+    ${draft ? `<form data-form="nl-issue" data-id="${s.id}" class="panel">
+      <h2>Edit</h2>
+      <label>Subject<input name="subject" value="${esc(s.subject)}" required maxlength="150"></label>
+      <label>Inbox preview line<input name="preheader" value="${esc(s.preheader)}" maxlength="250"></label>
+      <label>Intro<textarea name="intro" rows="3" required>${esc(s.content.intro)}</textarea></label>
+      <div id="nl-sections">${s.content.sections.map(nlSectionFields).join("")}</div>
+      <p><button type="button" class="link" data-action="nl-section-add">+ Add a section</button></p>
+      <label>Closing<textarea name="closing" rows="2" required>${esc(s.content.closing)}</textarea></label>
+      <p><button type="submit">Save changes</button></p>
+    </form>` : ""}
+    <div class="panel"><h2>Preview</h2><iframe title="Email preview" sandbox srcdoc="${esc(d.html)}" style="width:100%;height:900px;border:1px solid var(--line);border-radius:6px;background:#fff"></iframe></div>`);
+}
+
+function nlReadIssue(f) {
+  return {
+    subject: f.elements.namedItem("subject").value, preheader: f.elements.namedItem("preheader").value,
+    intro: f.elements.namedItem("intro").value, closing: f.elements.namedItem("closing").value,
+    sections: [...f.querySelectorAll("[data-section]")].map((fs) => {
+      const v = (n) => fs.querySelector(`[name=${n}]`).value.trim();
+      return { kind: v("kind"), heading: v("heading"), body: v("body"), link: v("link") || null, itemId: v("itemId") || null, noteId: v("noteId") || null };
+    }),
+  };
+}
+
 // ------------------------------------------------------------------ router
 
 /** Where to go after signing in: back to an app's consent page if that's what sent the person here. */
@@ -2585,6 +2712,8 @@ async function route() {
     if (parts[0] === "billing" && parts[1] === "card" && parts[2]) return await cardReturnView(parts[2]);
     if (parts[0] === "billing") return await billingView();
     if (parts[0] === "audit") return await auditView();
+    if (parts[0] === "newsletter" && parts[1]) return await newsletterIssueView(parts[1]);
+    if (parts[0] === "newsletter") return await newsletterView();
     return await homeView();
   } catch (err) {
     app.innerHTML = shell("", `<div class="alert bad">${esc(err.message)}</div><p><a href="#/">Back to businesses</a></p>`);
@@ -2715,6 +2844,33 @@ document.addEventListener("click", async (ev) => {
       state.me = null; state.org = null; state.orgId = r.orgId;
       try { localStorage.setItem("altqbo_org", r.orgId); } catch {}
       location.hash = `#/e/${r.entityId}/overview`;
+    } else if (a === "nl-run" || a === "nl-redraft") {
+      const task = a === "nl-redraft" ? "redraft" : b.dataset.task;
+      if (a === "nl-redraft" && b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Replace this draft and your edits? Click again"; return; }
+      b.disabled = true;
+      await api(nlPath("/run"), { body: { task } });
+      toast(task === "watch" ? "Checking the news. Refresh in a few minutes" : "Writing the draft. Refresh in a minute or two");
+    } else if (a === "nl-item") {
+      await api(nlPath(`/items/${b.dataset.id}/${b.dataset.do}`), { body: {} });
+      await newsletterView();
+    } else if (a === "nl-note-remove") {
+      await api(nlPath(`/notes/${b.dataset.id}/remove`), { body: {} });
+      await newsletterView();
+    } else if (a === "nl-section-add") {
+      document.getElementById("nl-sections").insertAdjacentHTML("beforeend", nlSectionFields({ kind: "news", heading: "", body: "", link: null }, 1));
+    } else if (a === "nl-section-remove") {
+      b.closest("[data-section]").remove();
+    } else if (a === "nl-section-move") {
+      const fs = b.closest("[data-section]");
+      if (b.dataset.dir === "-1" && fs.previousElementSibling) fs.parentNode.insertBefore(fs, fs.previousElementSibling);
+      if (b.dataset.dir === "1" && fs.nextElementSibling) fs.parentNode.insertBefore(fs.nextElementSibling, fs);
+    } else if (a === "nl-approve" || a === "nl-cancel" || a === "nl-discard") {
+      const ask = { "nl-approve": "Send this to every subscriber on Tuesday? Click again", "nl-cancel": "Take it off the schedule? Click again", "nl-discard": "Set this issue aside? Click again" }[a];
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = ask; return; }
+      b.disabled = true;
+      const r = await api(nlPath(`/issues/${b.dataset.id}/${a.slice(3)}`), { body: {} });
+      toast(a === "nl-approve" ? `Scheduled for ${nlWhen(r.sendAt)}` : a === "nl-cancel" ? "Taken off the schedule; it's a draft again" : "Set aside");
+      if (a === "nl-discard") location.hash = "#/newsletter"; else await newsletterIssueView(b.dataset.id);
     } else if (a === "open-ledger") {
       openLedger(b.dataset.code);
     } else if (a === "journal-clear") {
@@ -2956,7 +3112,19 @@ document.addEventListener("submit", async (ev) => {
   if (btn) btn.disabled = true;
   try {
     const d = formData(f);
-    if (kind === "login" || kind === "signup") {
+    if (kind === "nl-note") {
+      await api(nlPath("/notes"), { body: d });
+      toast("Added for the next issue");
+      await newsletterView();
+    } else if (kind === "nl-issue") {
+      await api(nlPath(`/issues/${f.dataset.id}`), { body: nlReadIssue(f) });
+      toast("Saved. Send yourself a test of this version before approving");
+      await newsletterIssueView(f.dataset.id);
+    } else if (kind === "nl-test") {
+      const r = await api(nlPath(`/issues/${f.dataset.id}/test`), { body: { to: d.to.split(/[,\s]+/).filter(Boolean) } });
+      toast(`Test sent to ${r.sentTo.join(", ")}`);
+      await newsletterIssueView(f.dataset.id);
+    } else if (kind === "login" || kind === "signup") {
       let r;
       try {
         r = await api(`/api/auth/${kind}`, { body: kind === "signup" ? { ...d, acceptTerms: d.acceptTerms === "on" } : d });
