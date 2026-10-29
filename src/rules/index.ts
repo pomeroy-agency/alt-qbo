@@ -21,6 +21,12 @@ import { usIndiana2026 } from "./us-in-2026.js";
 import { usMaryland2026 } from "./us-md-2026.js";
 import { usMissouri2026 } from "./us-mo-2026.js";
 import { usWisconsin2026 } from "./us-wi-2026.js";
+import { usAlabama2026 } from "./us-al-2026.js";
+import { usLouisiana2026 } from "./us-la-2026.js";
+import { usKentucky2026 } from "./us-ky-2026.js";
+import { usOklahoma2026 } from "./us-ok-2026.js";
+import { usConnecticut2026 } from "./us-ct-2026.js";
+import { usIowa2026 } from "./us-ia-2026.js";
 import { usMinnesota2026 } from "./us-mn-2026.js";
 import { usSouthCarolina2026 } from "./us-sc-2026.js";
 import { usPennsylvania2026 } from "./us-pa-2026.js";
@@ -41,7 +47,8 @@ function deepFreeze<T>(value: T): T {
 const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia2026, ...NO_INCOME_TAX_STATES_2026, usArizona2026, usOregon2026, usNewYork2026,
   usIllinois2026, usColorado2026, usNorthCarolina2026, usGeorgia2026, usUtah2026, usIdaho2026,
   usMichigan2026, usVirginia2026, usMassachusetts2026, usNewJersey2026, usPennsylvania2026, usOhio2026,
-  usIndiana2026, usMaryland2026, usMissouri2026, usWisconsin2026, usMinnesota2026, usSouthCarolina2026]);
+  usIndiana2026, usMaryland2026, usMissouri2026, usWisconsin2026, usMinnesota2026, usSouthCarolina2026,
+  usAlabama2026, usLouisiana2026, usKentucky2026, usOklahoma2026, usConnecticut2026, usIowa2026]);
 
 
 export class JurisdictionError extends Error {

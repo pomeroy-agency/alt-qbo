@@ -1,5 +1,5 @@
 import { D, type Dec } from "../core/money.js";
-import type { AnnualFormulaStatus, FederalFilingStatus, LocalIncomeTax, StateIncomeTaxRules } from "../rules/types.js";
+import type { AnnualFormulaStatus, FederalFilingStatus, LocalIncomeTax, StateIncomeTaxRules, WageRow } from "../rules/types.js";
 import { californiaWithholding, type DE4 } from "./california.js";
 
 /**
@@ -135,6 +135,11 @@ export function localWithholding(
   }
 }
 
+/** The amount from a by-wages schedule for the year's wages. */
+function byWages(rows: WageRow[], annual: Dec): Dec {
+  return new D([...rows].reverse().find((r) => annual.gt(r.over))?.amount ?? rows[0]!.amount);
+}
+
 function allowanceCounts(c: StateWithholding | null | undefined): number[] {
   return [c?.allowances ?? 0, c?.allowances2 ?? 0, c?.allowances3 ?? 0];
 }
@@ -144,7 +149,9 @@ function annualDeduction(
   rules: Extract<StateIncomeTaxRules, { method: "annual_formula" }>, status: AnnualFormulaStatus, c: StateWithholding | null | undefined, annual: Dec,
 ): { deduction: Dec; credits: Dec } {
   const counts = allowanceCounts(c);
-  let deduction = new D(rules.dollarAllowance && c?.allowanceAmount !== undefined ? c.allowanceAmount : status.standardDeduction);
+  let deduction = rules.dollarAllowance && c?.allowanceAmount !== undefined ? new D(c.allowanceAmount)
+    : status.deductionByWages ? byWages(status.deductionByWages, annual) : new D(status.standardDeduction);
+  if (status.exemption) deduction = deduction.add(status.exemption);
   // Wisconsin: the standard deduction shrinks by a share of the year's wages above a level, to nothing.
   if (status.phaseOut) deduction = D.max(deduction.sub(D.max(annual.sub(status.phaseOut.from), 0).mul(status.phaseOut.rate)), 0);
   // South Carolina: a share of the year's wages, up to a cap, once at least one allowance is claimed.
@@ -152,7 +159,7 @@ function annualDeduction(
   if (rules.exemptionBase && counts[0]! > 0) deduction = deduction.add(rules.exemptionBase);
   let credits = new D(0);
   rules.allowances.forEach((a, i) => {
-    const amount = new D(a.amount).mul(counts[i] ?? 0);
+    const amount = (a.byWages ? byWages(a.byWages, annual) : new D(a.amount)).mul(counts[i] ?? 0);
     if (a.credit) credits = credits.add(amount);
     else deduction = deduction.add(amount);
   });
@@ -161,10 +168,11 @@ function annualDeduction(
 
 function annualFormulaWithholding(
   rules: Extract<StateIncomeTaxRules, { method: "annual_formula" }>, c: StateWithholding | null | undefined, w4Status: FederalFilingStatus | undefined,
-  wages: Dec, periods: number, fica: EmployeeFica | undefined,
+  wages: Dec, periods: number, fica: EmployeeFica | undefined, federalWithheld: Dec,
 ): Dec {
   const fromW4 = rules.statusFromW4 && w4Status ? rules.statusFromW4[w4Status] : undefined;
   const status = rules.statuses.find((s) => s.id === c?.filingStatus) ?? rules.statuses.find((s) => s.id === (fromW4 ?? rules.noCertificateStatus)) ?? rules.statuses[0]!;
+  if (status.flatRate) return wages.mul(status.flatRate);
   const counts = allowanceCounts(c);
   if (rules.noTaxBelowAnnualWages && counts[0]! > 0 && wages.mul(periods).lt(rules.noTaxBelowAnnualWages)) return new D(0);
   // Massachusetts: this paycheck's Social Security and Medicare, until the year's total reaches the cap.
@@ -173,7 +181,9 @@ function annualFormulaWithholding(
   const annual = wages.sub(ficaOff).mul(periods);
   const { deduction, credits: allowanceCredits } = annualDeduction(rules, status, c, annual);
   let credits = allowanceCredits;
-  const taxable = D.max(annual.sub(deduction), 0);
+  // Alabama: the year's federal withholding comes off as well.
+  const federalOff = rules.subtractFederalWithholding ? federalWithheld.mul(periods) : new D(0);
+  const taxable = D.max(annual.sub(deduction).sub(federalOff), 0);
   let tax = new D(0);
   const rows = rules.tables[status.table]!;
   rows.forEach((r, i) => {
@@ -181,6 +191,9 @@ function annualFormulaWithholding(
     const slice = D.min(taxable, top ?? taxable).sub(r.over);
     if (slice.gt(0)) tax = tax.add(slice.mul(r.rate));
   });
+  // Connecticut: the 2% phase-out add-back and tax recapture, then the personal tax credit as a share of the tax.
+  if (taxable.gt(0)) for (const rows of status.taxAdditions ?? []) tax = tax.add(byWages(rows, annual));
+  if (status.creditShare) tax = tax.mul(new D(1).sub(byWages(status.creditShare, annual)));
   if (status.credit) {
     credits = credits.add(D.max(new D(status.credit.base).sub(D.max(annual.sub(status.credit.phaseOutFrom), 0).mul(status.credit.phaseOutRate)), 0));
   }
@@ -202,7 +215,7 @@ export function stateWithholding(
   cert: { de4?: DE4; state?: StateWithholding | null; w4Status?: FederalFilingStatus },
   wagesThisPeriod: Dec,
   periodsPerYear: number,
-  /** Federal income tax withheld from the same paycheck (Oregon subtracts it). */
+  /** Federal income tax withheld from the same paycheck (Oregon and Alabama subtract it). */
   federalWithheld: Dec = new D(0),
   fica?: EmployeeFica,
 ): Dec {
@@ -232,7 +245,7 @@ export function stateWithholding(
     }
     case "annual_formula": {
       if (cert.state?.exempt) return new D(0);
-      return annualFormulaWithholding(rules, cert.state, cert.w4Status, wagesThisPeriod, periodsPerYear, fica)
+      return annualFormulaWithholding(rules, cert.state, cert.w4Status, wagesThisPeriod, periodsPerYear, fica, federalWithheld)
         .add(cert.state?.additionalWithholding ?? 0).toDecimalPlaces(2);
     }
   }
