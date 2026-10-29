@@ -19,6 +19,7 @@ import {
   runBilling, saveBillingDetails, saveCard, type BillingConfig,
 } from "../billing/billing.js";
 import { GatewayError } from "../billing/gateway.js";
+import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
@@ -67,6 +68,8 @@ export interface ApiOptions {
   backups?: { store: BackupStore; key: Buffer };
   /** TrailBook's own subscriptions: card processor, seller's books, and whether unpaid organisations become read-only. */
   billing?: BillingConfig;
+  /** Reports sign-ups and first payments to Google and Meta (ad-events.ts). */
+  adEvents?: AdEventsConfig;
   /** Apps that may connect to a business with OAuth (MilePost). */
   oauthClients?: OAuthClient[];
   /** Where MilePost's REST API lives, for the MilePost tab. */
@@ -2032,6 +2035,7 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     const orgName = inviteToken ? null : str(b.orgName, "business name");
     const passwordHash = await hashPassword(str(b.password, "password", 200));
     let joined: string | undefined;
+    let created: string | undefined;
     const userId = await withSystem(pool, async (tx) => {
       if ((await tx.query("SELECT 1 FROM users WHERE email = $1", [email])).rows[0]) {
         throw new AuthError("an account with that email already exists; sign in instead", 409);
@@ -2045,9 +2049,13 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
         const org = await createOrganization(tx, { name: orgName!, actor: { id: `user:${email}`, role: "owner" } });
         await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [uid, org.id]);
         await acceptTerms(tx, org.id, uid);
+        created = org.id;
       }
       return uid;
     });
+    if (created) {
+      await recordSignup(pool, opts.adEvents, { ...attributionFromRequest(req, b.attribution, b.adOptOut, opts.adEvents?.ga4MeasurementId), userId, orgId: created });
+    }
     if (opts.mailer) await sendEmailLink(req, pool, opts, email, "verify");
     const s = await createSession(pool, userId);
     return json({ ok: true, joined }, 201, { "set-cookie": sessionCookie(s.token, s.maxAge) });
