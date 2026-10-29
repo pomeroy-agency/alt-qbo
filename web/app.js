@@ -2161,9 +2161,11 @@ async function salesTaxView(id, yearParam) {
     <div class="panel">
       <form data-form="sales-tax-settings" class="row" style="margin-bottom:12px">
         <label>Seller's permit number<input name="sellerPermit" value="${esc(t.sellerPermit ?? "")}" placeholder="As on your permit" style="width:180px" ${canSet ? "" : "disabled"}></label>
+        <label>CDTFA account number<input name="cdtfaAccount" value="${esc(t.cdtfaAccount ?? "")}" placeholder="Like 123-456789" style="width:150px" ${canSet ? "" : "disabled"}></label>
+        <label>Permit takes effect<input type="date" name="startDate" value="${esc(t.startDate ?? "")}" ${canSet ? "" : "disabled"}></label>
         <label>How often you file<select name="filingFrequency" ${canSet ? "" : "disabled"}><option value="">Not set</option>${freq}</select></label>
         ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
-        <span class="hash">Both are on the permit the CDTFA sends you. You need a permit before you charge sales tax, and from January 1, 2027 that includes software and SaaS.</span>
+        <span class="hash">The permit, account number and start date are on the CDTFA's approval. The filing frequency is on your account in CDTFA online services. A return is due every period from the start date, even with no sales. You need a permit before you charge sales tax, and from January 1, 2027 that includes software and SaaS.</span>
       </form>
       ${t.filingFrequency ? `<div class="table-wrap"><table>
         <thead><tr><th>Period</th><th>Due</th><th></th></tr></thead>
@@ -2184,7 +2186,7 @@ async function salesTaxReturnView(id, key) {
         <button class="secondary" data-action="st-range" data-from="${esc(f.period.from)}" data-to="${esc(f.period.to)}">Sales tax report</button></div></div>
     ${f.warnings.map((w) => `<div class="alert warn no-print">${esc(w)}</div>`).join("")}
     <div class="panel">
-      <div><strong>${esc(s.name)}</strong> · seller's permit ${esc(s.sellerPermit ?? "not recorded")}${s.address ? `<div class="hash">${esc(s.address)}</div>` : ""}</div>
+      <div><strong>${esc(s.name)}</strong> · seller's permit ${esc(s.sellerPermit ?? "not recorded")} · CDTFA account ${esc(s.cdtfaAccount ?? "not recorded")}${s.address ? `<div class="hash">${esc(s.address)}</div>` : ""}</div>
       <div class="table-wrap" style="margin-top:12px"><table>
         <thead><tr><th>Line</th><th>Description</th><th class="num">Amount</th></tr></thead>
         <tbody>${f.lines.map((l) => `<tr><td style="white-space:nowrap">${esc(l.line)}</td><td>${esc(l.label)}${l.note ? `<div class="hash">${esc(l.note)}</div>` : ""}</td><td class="num">${fmtLine(l)}</td></tr>`).join("")}</tbody>
@@ -3102,7 +3104,7 @@ document.addEventListener("submit", async (ev) => {
       toast(r.late ? "Recorded. It was paid after the due date, so a late-deposit penalty may follow" : "Payment recorded and posted to the books");
       await payrollView(state.entity.entity.id);
     } else if (kind === "sales-tax-settings") {
-      await api(entPath("/sales-tax-settings"), { body: { sellerPermit: d.sellerPermit, filingFrequency: d.filingFrequency } });
+      await api(entPath("/sales-tax-settings"), { body: { sellerPermit: d.sellerPermit, cdtfaAccount: d.cdtfaAccount, filingFrequency: d.filingFrequency, startDate: d.startDate } });
       toast("Sales tax settings saved");
       await route();
     } else if (kind === "edd-account") {
