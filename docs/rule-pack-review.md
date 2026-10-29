@@ -63,6 +63,19 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | SDI rate | 1.4% forecast | final rate due in December |
 | Federal brackets, Pub 15-T, EDD Method B | not yet published | expected Oct to Dec 2026 |
 
+### Other states: announced for 2027 (rule watch 2026-10-29; each 2027 state pack needs these)
+
+| State | Figure | 2026 pack | 2027 value | Source |
+|---|---|---|---|---|
+| Washington | UI wage base | $78,200 | $82,000 | ESD 2025 average annual wage release (June 2026), as reported by the Washington Research Council and Tri-Cities Business News |
+| Washington | Paid Family and Medical Leave premium | 1.13% (employees 71.43%) | 1.2% (employees 70.7%, employers with 50+ employees 29.3%) | ESD news release, Oct 16, 2026 |
+| Nevada | UI and Career Enhancement wage base | $43,700 | $45,400 | ESD chief economist memo, Jun 1, 2026 (NRS 612.545) |
+| Wyoming | UI wage base | $33,800 | $34,900 | Wyoming DWS, as reported by HR Morning and Thomas & Company (Sep 2026) |
+| New York | Paid Family Leave | 0.432%, at most $411.91 | 0.452%, at most $451.81 | DFS rate decision; paidfamilyleave.ny.gov/2027 |
+| New York | Minimum wage | $17.00 NYC, Long Island, Westchester; $16.00 elsewhere | unchanged on Jan 1, 2027 (the off-ramp was met; a proposal to raise it from March 2027 is not law) | governor.ny.gov, New York State Minimum Wage for 2027 |
+
+Not yet final, so not listed: New Jersey's 2027 wage bases ($46,400 UI, $177,100 disability and family leave) are only a proposed rule (58 N.J.R. 1978(a)). Colorado ($32,100) and Oklahoma ($24,400) appear on one aggregator only.
+
 ## us-ca-sales-tax 2026.1 (`src/rules/sales-tax/us-ca-2026.ts`), released 2026-10-27
 
 | Kind of sale | Taxable | Basis |
