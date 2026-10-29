@@ -8,6 +8,7 @@ import { getStore } from "@netlify/blobs";
 import { netlifyBackupStore } from "../../src/app/backup-store.js";
 import { backupKeyFromEnv } from "../../src/core/nightly-backups.js";
 import { billingFromEnv } from "../../src/app/billing-config.js";
+import { hubFromEnv } from "../../src/app/hub.js";
 import { oauthClientsFromEnv } from "../../src/app/oauth.js";
 import { newsletterFromEnv, startNewsletterJob } from "../../src/newsletter/config.js";
 import "../../src/db/pool.js";
@@ -25,6 +26,8 @@ const taxRates = cdtfaRateLookup();
 // Nightly backups are encrypted with BACKUP_KEY; restore points can be downloaded once it's set.
 const backupKey = backupKeyFromEnv();
 const billing = billingFromEnv();
+// The Pomeroy account hub: ACCOUNT_HUB_URL and ACCOUNT_HUB_SECRET (hub.ts).
+const hub = hubFromEnv();
 
 // MilePost connects with the OAuth client ID and secret set here (and in MilePost's own settings).
 const oauthClients = oauthClientsFromEnv();
@@ -37,7 +40,7 @@ const workerUrl = process.env.CONTEXT === "production" ? process.env.URL : proce
 
 export default async (req: Request) => handleApi(req, pool, {
   signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing, adEvents: billing.adEvents, oauthClients, milepost,
-  newsletter, startNewsletterJob: workerUrl ? (task) => startNewsletterJob(workerUrl, task) : undefined,
+  hub, newsletter, startNewsletterJob: workerUrl ? (task) => startNewsletterJob(workerUrl, task) : undefined,
   backups: backupKey ? { store: netlifyBackupStore(getStore({ name: "backups", consistency: "strong" })), key: backupKey } : undefined,
 });
 

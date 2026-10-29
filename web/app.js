@@ -2413,7 +2413,11 @@ async function billingView() {
   const per = interval === "month" ? "a month" : "a year";
   const price = (minor) => usd(minor).replace(/\.00$/, "");
   const status = {
-    trialing: b.access.level === "full"
+    trialing: b.comped && !b.compUntil
+      ? `<span class="pill">Complimentary</span> ${PLAN_LABEL[b.plan]} is included${b.compReason ? ` with ${esc(b.compReason)}` : ""}, with nothing charged, people paid included, for as long as that lasts.`
+      : b.comped
+      ? `<span class="pill">Complimentary</span> ${PLAN_LABEL[b.plan]} is free until ${longDate(b.compUntil)}${b.compReason ? ` (${esc(b.compReason)})` : ""}. Nothing is charged until then, people paid included.${b.card ? " Your card is charged the day after." : " Add a card before then to keep making changes afterwards."}`
+      : b.access.level === "full"
       ? `<span class="pill">Free trial</span> Everything is included until ${longDate(b.trialEndsOn)}.${b.card ? " Your card is charged the day after." : " Add a card before then to keep making changes."}`
       : `<span class="pill bad">Trial ended</span> Your books are read-only. Add a card to keep going; nothing has been deleted.`,
     active: b.cancelAtPeriodEnd
