@@ -12,15 +12,15 @@ from build import APP, ROOT, part
 PROMOS = {
     "home": dict(KICKER="New from Pomeroy Agency &middot; Software",
                  HEADLINE="TrailBook: your books, payroll and sales tax, <em>kept straight</em>.",
-                 TEXT="The bookkeeping software we built for owner-run California businesses. Invoices, bank reconciliation, payroll calculation and California sales tax in one place, at one price per business.",
+                 TEXT="The bookkeeping software we built for owner-run US businesses. Invoices, bank reconciliation, payroll calculation and sales tax in one place, at one price per business.",
                  LABEL="home_promo"),
     "pricing": dict(KICKER="Software &middot; TrailBook",
                     HEADLINE="Just need the books kept? <em>TrailBook</em>, from $15 a month.",
-                    TEXT="Not every business needs a build. TrailBook is our bookkeeping software for California businesses: invoices, reconciliation, payroll prep and sales tax, with every price published.",
+                    TEXT="Not every business needs a build. TrailBook is our bookkeeping software for US businesses: invoices, reconciliation, payroll prep and sales tax, with every price published.",
                     LABEL="pricing_promo"),
     "systems": dict(KICKER="The books layer &middot; TrailBook",
                     HEADLINE="Your accounting, connected. <em>TrailBook</em> keeps the books.",
-                    TEXT="When we connect your systems, the books are part of it. TrailBook is our own bookkeeping software for California businesses, and it works whether or not you hire us for the rest.",
+                    TEXT="When we connect your systems, the books are part of it. TrailBook is our own bookkeeping software for US businesses, and it works whether or not you hire us for the rest.",
                     LABEL="systems_promo"),
 }
 
