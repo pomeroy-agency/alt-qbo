@@ -16,7 +16,7 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "FL", "NH", "NV", "SD", "TN", "TX", "WA", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "FL", "NH", "NV", "NY", "OR", "SD", "TN", "TX", "WA", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
@@ -199,5 +199,96 @@ describe("Arizona (draft)", () => {
     const big = depositSchedule(runs, "monthly", { country: "US", region: "AZ" }, { priorQuarterlyAverageMinor: 200000n });
     expect(small.find((d) => d.kind === "az_wh")!.dueDate).toBe("2026-11-02");
     expect(big.find((d) => d.kind === "az_wh")!.dueDate).toBe("2026-09-15");
+  });
+});
+
+describe("Oregon (draft)", () => {
+  const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+  const or = statePackFor({ country: "US", region: "OR" }, "2026-06-01");
+  const rules: ResolvedRules = { federal, state: or, provenance: [] };
+  const orTax = or.payroll.incomeTax;
+  const weekly: EmployeePayInput = {
+    employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "20.00", regularHours: "40",
+    w4: { filingStatus: "single_or_mfs", step2Checked: false },
+  };
+
+  it("matches the formula publication's worked example", () => {
+    // Single, $25,000 a year, no allowances, $1,000 federal tax withheld: BASE $21,090, $1,789 a year.
+    expect(stateWithholding(orTax, { state: { filingStatus: "single" } }, new D(25000), 1, new D(1000)).toString()).toBe("1788.88");
+    expect(stateWithholding(orTax, { state: { filingStatus: "single" } }, new D(25000).div(12), 12, new D(1000).div(12)).toString()).toBe("149.07");
+  });
+
+  it("phases out the federal subtraction and allowances at high wages, and uses the married table for 3+ single allowances", () => {
+    // $132,000 single: at most $5,250 of federal tax comes off; over $100,000 no allowances count.
+    const high = stateWithholding(orTax, { state: { filingStatus: "single", allowances: 2 } }, new D(132000), 1, new D(21098));
+    expect(high.toString()).toBe(new D(678).add(new D(132000 - 5250 - 2910 - 11400).mul("0.0875")).toDecimalPlaces(2).toString());
+    // Single with 3 allowances: married deduction ($5,820) and brackets, $263 credit each.
+    const three = stateWithholding(orTax, { state: { filingStatus: "single", allowances: 3 } }, new D(40000), 1, new D(3000));
+    expect(three.toString()).toBe(new D(1620).add(new D(40000 - 3000 - 5820 - 22800).mul("0.0875")).sub(789).toDecimalPlaces(2).toString());
+  });
+
+  it("withholds 8% without an OR-W-4, plus the transit tax, Paid Leave and Workers' Benefit Fund", () => {
+    const p = calculatePaycheck(weekly, rules, {}, "2026-06-05");
+    expect(p.taxes.find((t) => t.code === "OR_WH")!.amountMinor).toBe(6400n); // 8% of $800
+    expect(p.warnings.join(" ")).toMatch(/no OR-W-4 on file/);
+    expect(p.taxes.find((t) => t.code === "OR_STT")!.amountMinor).toBe(80n);
+    expect(p.taxes.find((t) => t.code === "OR_PFML_EE")!.amountMinor).toBe(480n);
+    expect(p.taxes.find((t) => t.code === "OR_WBF_EE")!.amountMinor).toBe(36n); // 40 hours x 0.9 cents
+    expect(p.taxes.find((t) => t.code === "OR_UI")!.amountMinor).toBe(1920n);
+  });
+
+  it("checks the minimum wage for the area the employee works in", () => {
+    const low = { ...weekly, hourlyRate: "16.00" };
+    expect(calculatePaycheck(low, rules, {}, "2026-06-05").blockers).toEqual([]);
+    expect(calculatePaycheck({ ...low, workArea: "Portland metro" }, rules, {}, "2026-06-05").blockers[0]).toMatch(/Oregon \(Portland metro\) minimum wage of 16.30/);
+    expect(calculatePaycheck({ ...low, workArea: "Portland metro" }, rules, {}, "2026-07-03").blockers[0]).toMatch(/16.80/);
+  });
+
+  it("deposits withholding on the federal dates and files the OQ", () => {
+    const d = depositSchedule([{ payRunId: "r1", payDate: "2026-08-14", byTax: { FIT: 50000n, OR_WH: 20000n, OR_UI: 5000n } }], "monthly", { country: "US", region: "OR" });
+    expect(d.find((x) => x.kind === "or_wh")!.dueDate).toBe("2026-09-15");
+    expect(d.find((x) => x.kind === "or_ui")!.dueDate).toBe("2026-11-02");
+    expect(or.forms.quarterly.map((f) => f.slug)).toEqual(["oq", "or-paid-leave"]);
+  });
+});
+
+describe("New York (draft)", () => {
+  const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+  const ny = statePackFor({ country: "US", region: "NY" }, "2026-06-01");
+  const rules: ResolvedRules = { federal, state: ny, provenance: [] };
+  const nyTax = ny.payroll.incomeTax;
+  const w = (status: "single" | "married", allowances: number, wages: number, periods: number) =>
+    stateWithholding(nyTax, { state: { filingStatus: status, allowances } }, new D(wages), periods).toFixed(2);
+
+  it("matches the publication's Method II examples", () => {
+    expect(w("single", 3, 400, 52)).toBe("8.01");
+    // The publication shows $258.51, rounding $165 x 0.0753 = $12.4245 up to $12.43; rounded to the cent it's $258.50.
+    expect(w("single", 1, 5000, 24)).toBe("258.50");
+    expect(w("single", 3, 50000, 12)).toBe("3576.63");
+    expect(w("married", 4, 400, 52)).toBe("6.69");
+    expect(w("married", 3, 50000, 12)).toBe("3622.09");
+  });
+
+  it("uses Method III's top rate above the tables, and single with no allowances without an IT-2104", () => {
+    expect(w("single", 0, 30000, 52)).toBe(new D(30000 - 142.3).mul("0.1045").toFixed(2));
+    expect(stateWithholding(nyTax, {}, new D(400), 52).toFixed(2)).toBe(w("single", 0, 400, 52));
+  });
+
+  it("caps disability at $0.60 a week and charges Paid Family Leave and UI", () => {
+    const weekly: EmployeePayInput = { employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "20.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } };
+    const p = calculatePaycheck(weekly, rules, {}, "2026-06-05");
+    expect(p.taxes.find((t) => t.code === "NY_SDI")!.amountMinor).toBe(60n);
+    expect(p.taxes.find((t) => t.code === "NY_PFL")!.amountMinor).toBe(346n);
+    expect(p.taxes.find((t) => t.code === "NY_UI")!.amountMinor).toBe(3280n);
+    const semi = calculatePaycheck({ ...weekly, payFrequency: "semimonthly", regularHours: "86.67" }, rules, {}, "2026-06-15");
+    expect(semi.taxes.find((t) => t.code === "NY_SDI")!.amountMinor).toBe(130n);
+    expect(calculatePaycheck({ ...weekly, hourlyRate: "16.50", workArea: "New York City, Long Island and Westchester" }, rules, {}, "2026-06-05").blockers[0]).toMatch(/17.00/);
+  });
+
+  it("pays withholding within 3 business days once $700 is owed, and the rest with the NY-45", () => {
+    const run = (id: string, payDate: string, wh: number): RunTaxes => ({ payRunId: id, payDate, byTax: { NY_WH: BigInt(wh * 100) } });
+    const d = depositSchedule([run("r1", "2026-07-10", 400), run("r2", "2026-07-24", 400), run("r3", "2026-08-07", 300)], "monthly", { country: "US", region: "NY" })
+      .filter((x) => x.kind === "ny_wh");
+    expect(d.map((x) => [x.dueDate, x.amountMinor])).toEqual([["2026-07-29", 80000n], ["2026-11-02", 30000n]]);
   });
 });

@@ -488,13 +488,13 @@ export async function formStateQuarterly(
   const label = (code: string) => pack.payroll.taxes.find((t) => t.code === code)?.label ?? pack.payroll.incomeTaxAgency?.label ?? code;
   const warnings = baseWarnings(employer, runs);
   if (!employer.stateEmployerAccount) warnings.push(`Add your ${pack.payroll.employerAccount.label} in payroll settings; the ${spec.form} needs it.`);
-  const paid = await stateDepositsPaid(tx, input.entityId, pack, spec.codes, from, to);
+  const paid = await stateDepositsPaid(tx, input.entityId, pack, [...spec.codes, ...(spec.withholdingCodes ?? [])], from, to);
   const lines: FormLine[] = [];
   let due = 0n;
   let rows: Record<string, unknown>[];
   const each = [...perEmployee(runs).entries()];
 
-  if (spec.kind === "ui_wage_report") {
+  if (spec.kind === "ui_wage_report" || spec.kind === "combined_return") {
     // Gross wages less section 125 (the Medicare base, uncapped) are the wages the state counts.
     const total = sumTax(runs, "MEDICARE_EE", "taxableWagesMinor");
     lines.push(
@@ -512,9 +512,19 @@ export async function formStateQuarterly(
         money(`${label(code)} due`, `${label(code)} due`, tax),
       );
     }
+    const withheld = spec.withholdingCodes ?? [];
+    for (const code of withheld) {
+      const tax = sumTax(runs, code);
+      due += tax;
+      lines.push(
+        money(`${label(code)} wages`, `Wages subject to ${label(code)}`, sumTax(runs, code, "taxableWagesMinor")),
+        money(`${label(code)} withheld`, `${label(code)} withheld`, tax),
+      );
+    }
     rows = each.map(([id, e]) => ({
       ssn: ssnOf(people.get(id), full), name: e.name, wagesMinor: e.byTax.get("MEDICARE_EE")?.wages ?? 0n,
       ...Object.fromEntries(spec.codes.map((c) => [`${c}TaxableMinor`, e.byTax.get(c)?.wages ?? 0n])),
+      ...Object.fromEntries(withheld.map((c) => [`${c}WithheldMinor`, e.byTax.get(c)?.amount ?? 0n])),
     }));
   } else {
     const code = spec.codes[0]!;

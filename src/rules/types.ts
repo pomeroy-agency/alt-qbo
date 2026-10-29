@@ -111,6 +111,44 @@ export type StateIncomeTaxRules =
       defaultRate: string;
       /** The certificate allows electing zero when no tax is expected for the year. */
       zeroAllowed: boolean;
+    }
+  /**
+   * Oregon's annual computer formula (150-206-436): wages less federal tax
+   * withheld (capped, phasing out at high wages) less the standard deduction,
+   * through the brackets, less the exemption credit per allowance.
+   */
+  | {
+      method: "or_formula";
+      certificate: string;
+      /** Withheld when no certificate is on file (ORS 316.182, HB 2119). */
+      noCertificateRate: string;
+      standardDeduction: { single: string; married: string };
+      /** Most federal tax that may be subtracted, by annual wages: the row with the highest `wagesFrom` at or below the wages. */
+      federalSubtraction: { single: { wagesFrom: string; cap: string }[]; married: { wagesFrom: string; cap: string }[] };
+      exemptionCredit: string;
+      /** No allowances above these annual wages. */
+      allowancesZeroAbove: { single: string; married: string };
+      /** Annual wages from which the `high` brackets apply. */
+      highWageFrom: string;
+      /** Each row: tax = base + (BASE - over) x rate, for BASE from `over` up to the next row. */
+      brackets: Record<"low" | "high", Record<"single" | "married", { over: string; base: string; rate: string }[]>>;
+    }
+  /**
+   * New York's exact calculation method (NYS-50-T-NYS, Method II): wages less
+   * the deduction and exemption allowances for the pay period, through the
+   * period's table; Method III's flat top rates above the tables.
+   */
+  | {
+      method: "ny_exact";
+      certificate: string;
+      /** Table B: deduction allowance per pay period. */
+      deduction: Record<"weekly" | "biweekly" | "semimonthly" | "monthly", { single: string; married: string }>;
+      /** Table C: one exemption per pay period. */
+      exemption: Record<"weekly" | "biweekly" | "semimonthly" | "monthly", string>;
+      /** Tables II-A to II-D. Each row: tax = add + (net - subtract) x rate, for net from `from` up to the next row. */
+      tables: Record<"single" | "married", Record<"weekly" | "biweekly" | "semimonthly" | "monthly", { from: string; subtract: string; rate: string; add: string }[]>>;
+      /** Method III: from `from` annualized net wages, that rate of all of it. */
+      topRates: Record<"single" | "married", { from: string; rate: string }[]>;
     };
 
 /** A state payroll tax on wages other than income tax: SDI, UI, ETT, job training tax and the like. */
@@ -132,6 +170,12 @@ export interface StatePayrollTax {
     /** No usable default (Washington's and Wyoming's new-employer rates depend on the industry): pay runs wait for the employer's rate. */
     required?: boolean;
   };
+  /** Charged per hour worked instead of on wages (Oregon's Workers' Benefit Fund: cents an hour); `rate` is then unused. */
+  perHour?: string;
+  /** Most withheld for each week in the pay period (New York SDI: $0.60 a week). */
+  perWeekCap?: string;
+  /** Paid to the employer's insurance carrier rather than a state agency (New York SDI and Paid Family Leave). */
+  paidToCarrier?: boolean;
   /** System key of the liability account the tax is credited to. */
   account: string;
 }
@@ -161,9 +205,16 @@ export type StateDepositRule =
   /**
    * Withholding paid on the federal 941 deposit dates when the average of the
    * last four quarters' state withholding is over `federalTimingAverageOver`,
-   * otherwise quarterly with the return (Arizona).
+   * otherwise quarterly with the return (Arizona). Null: always on the
+   * federal dates (Oregon).
    */
-  | (DepositRuleBase & { schedule: "federal_timing_by_average"; federalTimingAverageOver: string; report: string });
+  | (DepositRuleBase & { schedule: "federal_timing_by_average"; federalTimingAverageOver: string | null; report: string })
+  /**
+   * Withholding paid within `businessDays` business days of the payday on
+   * which the amount not yet paid reaches `atOrAbove`; what's left at the
+   * quarter's end is paid with the return (New York's $700 rule).
+   */
+  | (DepositRuleBase & { schedule: "accumulated_threshold"; atOrAbove: string; businessDays: number; report: string });
 
 /** A quarterly return or wage report the state wants. */
 export interface StateQuarterlyForm {
@@ -172,15 +223,34 @@ export interface StateQuarterlyForm {
   /** URL-safe name for the form page. */
   slug: string;
   title: string;
-  /** "ca_de9" is California's combined return; "ui_wage_report" and "withholding_return" are generic. */
-  kind: "ca_de9" | "ui_wage_report" | "withholding_return";
-  /** Tax codes the form reports. */
+  /**
+   * "ca_de9" is California's combined return; "ui_wage_report" and
+   * "withholding_return" are generic; "combined_return" reports UI wages
+   * (`codes`) and withholding (`withholdingCodes`) together (Oregon OQ, New York NY-45).
+   */
+  kind: "ca_de9" | "ui_wage_report" | "withholding_return" | "combined_return";
+  /** Tax codes the form reports: wage-based taxes, or for a withholding return the amounts withheld. */
   codes: string[];
+  /** A combined return's withheld taxes (state income tax, Oregon's statewide transit tax). */
+  withholdingCodes?: string[];
   fileAt: string;
+}
+
+/** A part of a state with its own minimum wage (and exempt salary): Portland metro, New York City. */
+export interface WageArea {
+  name: string;
+  minimumWage: string;
+  minimumWageChanges?: { from: string; rate: string }[];
+  exemptAnnualSalaryMinimum?: string;
+  exemptAnnualSalaryChanges?: { from: string; amount: string }[];
 }
 
 export interface StateWageHourRules {
   minimumWage: string;
+  /** Areas whose rates replace the statewide ones for employees who work there; the statewide rates apply elsewhere. */
+  areas?: WageArea[];
+  /** What to call the statewide rates when the state has areas, like "Standard (most of Oregon)". */
+  defaultAreaName?: string;
   /** Rate changes part-way through the pack's span; each applies from its date on. */
   minimumWageChanges?: { from: string; rate: string }[];
   /** Exempt (salaried) employees must earn at least this a year; the federal $684 a week where the state sets nothing higher. */

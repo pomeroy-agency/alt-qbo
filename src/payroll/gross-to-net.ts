@@ -3,7 +3,7 @@ import type { ResolvedRules } from "../rules/index.js";
 import type { DE4 } from "./california.js";
 import { federalWithholding, type W4 } from "./federal.js";
 import { stateWithholding, type StateWithholding } from "./state-withholding.js";
-import { exemptSalaryOn, minimumWageOn } from "../rules/minimum-wage.js";
+import { exemptSalaryOn, minimumWageOn, wageAreaName, wageHourFor } from "../rules/minimum-wage.js";
 
 export type PayFrequency = "weekly" | "biweekly" | "semimonthly" | "monthly";
 
@@ -59,6 +59,8 @@ export interface EmployeePayInput {
   de4?: DE4;
   /** Other states' withholding certificate (Arizona A-4...). */
   stateWithholding?: StateWithholding | null;
+  /** Where they work, in states with minimum wage areas (Portland metro, New York City...). */
+  workArea?: string | null;
   deductions?: Deduction[];
   ytd?: Partial<YearToDate>;
   sickLeave?: SickLeaveInput;
@@ -132,9 +134,11 @@ export function calculatePaycheck(
 ): Paycheck {
   const fed = rules.federal.payroll;
   const st = rules.state.payroll;
-  const wh = rules.state.wageHour;
+  const area = wageAreaName(rules.state.wageHour, input.workArea);
+  const wh = wageHourFor(rules.state.wageHour, area);
   const stateName = rules.state.name;
   const minimumWage = minimumWageOn(wh, onDate);
+  const wageLabel = area ? `${stateName} (${area})` : stateName;
   const periods = PERIODS_PER_YEAR[input.payFrequency];
   const blockers: string[] = [];
   const warnings: string[] = [];
@@ -149,7 +153,7 @@ export function calculatePaycheck(
   };
   if (input.hourlyRate) {
     if (rate.lt(minimumWage)) {
-      blockers.push(`hourly rate ${rate.toFixed(2)} is below the ${stateName} minimum wage of ${minimumWage}`);
+      blockers.push(`hourly rate ${rate.toFixed(2)} is below the ${wageLabel} minimum wage of ${minimumWage}`);
     } else if (input.localMinimumWage && rate.lt(input.localMinimumWage.rate)) {
       const local = input.localMinimumWage;
       warnings.push(`hourly rate ${rate.toFixed(2)} is below the ${local.place} minimum wage of ${local.rate}` +
@@ -166,7 +170,7 @@ export function calculatePaycheck(
     const exemptFloor = exemptSalaryOn(wh, onDate);
     if (input.overtimeExempt && money(input.salaryPerPeriod).mul(periods).lt(exemptFloor)) {
       blockers.push(
-        `annualised salary is below the ${stateName} exempt minimum of ${exemptFloor}; ` +
+        `annualised salary is below the ${wageLabel} exempt minimum of ${exemptFloor}; ` +
         "the employee cannot be classified exempt from overtime",
       );
     }
@@ -237,15 +241,22 @@ export function calculatePaycheck(
 
   // State income tax, then the state's other wage taxes (SDI, UI, ETT...), all on wages less section 125.
   if (st.incomeTaxAgency) {
-    const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding }, toMajor(incomeTaxWages), periods);
+    const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding }, toMajor(incomeTaxWages), periods, fit);
+    if (st.incomeTax.method === "or_formula" && !input.stateWithholding) {
+      warnings.push(`no ${st.incomeTax.certificate} on file: ${stateName} income tax withheld at the flat ${new D(st.incomeTax.noCertificateRate).mul(100)}%`);
+    }
     add(st.incomeTaxAgency.code, st.incomeTaxAgency.agency, "employee", incomeTaxWages, toMinor(sit));
   }
+  // Hours worked for taxes charged by the hour; a salaried employee counts as 40 hours a week.
+  const hoursWorked = input.hourlyRate ? money(input.regularHours).add(money(input.overtimeHours)).add(money(input.doubleTimeHours)) : new D(2080).div(periods);
   const stateTax = (t: (typeof st.taxes)[number]) => {
     const wages = t.wageBase ? capped(ficaWages, ytd.stateWages?.[t.code] ?? 0n, t.wageBase) : ficaWages;
     const own = t.assignedRate ? employer.stateRates?.[t.code] : undefined;
     if (t.assignedRate?.required && !own) blockers.push(`enter your ${t.label} rate in payroll settings; ${stateName} sets each new employer's rate by industry`);
     const r = own || t.rate;
-    add(t.code, t.agency, t.paidBy, wages, pct(wages, r));
+    let amount = t.perHour ? toMinor(hoursWorked.mul(t.perHour)) : pct(wages, r);
+    if (t.perWeekCap) amount = minBig(amount, toMinor(new D(t.perWeekCap).mul(52).div(periods)));
+    add(t.code, t.agency, t.paidBy, wages, amount);
   };
   for (const t of st.taxes) if (t.paidBy === "employee") stateTax(t);
 

@@ -172,6 +172,15 @@ function cleanStateWithholding(w: EmployeeFields["stateWithholding"]): StateWith
   const extra = amount(w.additionalWithholding, "extra state withholding", { optional: true });
   if (extra && !new D(extra).isZero()) out.additionalWithholding = extra;
   if (w.exempt) out.exempt = true;
+  if (w.filingStatus !== undefined && w.filingStatus !== null && w.filingStatus !== "") {
+    if (!["single", "married", "married_single_rate"].includes(w.filingStatus as string)) invalid("pick single or married for state withholding");
+    out.filingStatus = w.filingStatus as StateWithholding["filingStatus"];
+  }
+  if (w.allowances !== undefined && w.allowances !== null && (w.allowances as unknown) !== "") {
+    const n = Number(w.allowances);
+    if (!Number.isInteger(n) || n < 0 || n > 99) invalid("state allowances should be a whole number from 0 to 99");
+    out.allowances = n;
+  }
   return Object.keys(out).length ? out : null;
 }
 

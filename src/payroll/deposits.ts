@@ -228,7 +228,10 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
         }
       } else if (rule.schedule === "federal_timing_by_average") {
         // Over the average: the same dates as the federal 941 deposits; otherwise quarterly with the return.
-        const followFederal = (opts.priorQuarterlyAverageMinor ?? 0n) > minor(rule.federalTimingAverageOver);
+        const followFederal = rule.federalTimingAverageOver === null || (opts.priorQuarterlyAverageMinor ?? 0n) > minor(rule.federalTimingAverageOver);
+        const why = rule.federalTimingAverageOver === null
+          ? "Due on the same dates as your federal deposits"
+          : `More than $${rule.federalTimingAverageOver} a quarter withheld on average last year: due with your federal deposits`;
         for (let i = 0; i < sorted.length; i++) {
           const run = sorted[i]!;
           bucket.add(run, rule.codes);
@@ -237,13 +240,25 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
             const fed = out.find((d) => d.kind === "federal_941" && d.payRunIds.includes(run.payRunId));
             const periodEnds = !next || out.find((d) => d.kind === "federal_941" && d.payRunIds.includes(next.payRunId))?.key !== fed?.key;
             if (fed && periodEnds) {
-              push(bucket.take(rule.kind, `${rule.kind}:${fed.key.replace(/^federal_941:/, "")}`, fed.period, fed.dueDate,
-                `More than $${rule.federalTimingAverageOver} a quarter withheld on average last year: due with your federal deposits`));
+              push(bucket.take(rule.kind, `${rule.kind}:${fed.key.replace(/^federal_941:/, "")}`, fed.period, fed.dueDate, why));
             } else if (!fed && (!next || qKey(next.payDate) !== qKey(run.payDate))) {
               quarterly(run, `Paid with the quarter's ${rule.report}`);
             }
           } else if (!next || qKey(next.payDate) !== qKey(run.payDate)) {
             quarterly(run, `Quarterly: $${rule.federalTimingAverageOver} or less a quarter withheld on average last year, due with the ${rule.report}`);
+          }
+        }
+      } else if (rule.schedule === "accumulated_threshold") {
+        // New York: once the withholding not yet paid reaches the threshold, it's due within a few business days.
+        for (let i = 0; i < sorted.length; i++) {
+          const run = sorted[i]!;
+          bucket.add(run, rule.codes);
+          const next = sorted[i + 1];
+          if (bucket.total >= minor(rule.atOrAbove)) {
+            push(bucket.take(rule.kind, `${rule.kind}:t:${run.payDate}:${run.payRunId}`, `Payday ${run.payDate}`, businessDaysAfter(run.payDate, rule.businessDays, cal),
+              `$${rule.atOrAbove} or more withheld and not yet paid: due within ${rule.businessDays} business days of the payday`));
+          } else if (!next || qKey(next.payDate) !== qKey(run.payDate)) {
+            quarterly(run, `Under $${rule.atOrAbove} withheld since the last payment: due with the quarter's ${rule.report}`);
           }
         }
       } else {

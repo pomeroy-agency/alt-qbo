@@ -66,7 +66,8 @@ export async function payRunInputFromEmployees(tx: Tx, entityId: string, req: Pa
     const local = input.hourlyRate
       ? localMinimumAbove(place, minimumWageOn(rules.state.wageHour, req.periodEnd), e.workCity, req.periodEnd, headcount)
       : null;
-    return local ? { ...input, localMinimumWage: local } : input;
+    const withArea = rules.state.wageHour.areas && e.workCity ? { ...input, workArea: e.workCity } : input;
+    return local ? { ...withArea, localMinimumWage: local } : withArea;
   });
   return {
     payRunId, kind: "regular", periodStart: req.periodStart, periodEnd: req.periodEnd, payDate: req.payDate, place,

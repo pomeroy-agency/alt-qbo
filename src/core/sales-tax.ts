@@ -1,5 +1,8 @@
 import type { Tx } from "../db/pool.js";
 import { regionOf } from "../rules/jurisdictions.js";
+
+/** States with no state or local sales tax (Alaska and Montana have local ones, so they aren't here). */
+const NO_STATE_SALES_TAX = ["OR", "NH", "DE"];
 import { latestSalesTaxRules, salesTaxRules, type SalesTaxRulePack } from "../rules/sales-tax/us-ca-2026.js";
 import { appendAudit } from "./audit.js";
 import { LedgerError, translateDbError } from "./errors.js";
@@ -217,7 +220,12 @@ export async function decideSalesTax(
     return decision("manual", manualRate(pack, input.manual, "sales tax"), { jurisdiction: "Set by hand", note: [input.manual.reason.trim().slice(0, 300), ...notes].join(". ") });
   }
   if (pack.kind === "state-sales-tax-manual") {
-    return decision("none", "0.00000", { note: `TrailBook doesn't work out ${regionOf("US", ent.region)?.name ?? ent.region} sales tax yet; if this sale is taxable there, an owner or accountant can set the rate by hand` });
+    const name = regionOf("US", ent.region)?.name ?? ent.region;
+    return decision("none", "0.00000", {
+      note: NO_STATE_SALES_TAX.includes(ent.region)
+        ? `${name} has no state sales tax`
+        : `TrailBook doesn't work out ${name} sales tax yet; if this sale is taxable there, an owner or accountant can set the rate by hand`,
+    });
   }
   if (!taxable.some(Boolean)) {
     return exemptions.includes("direct_pay") ? decision("direct_pay", "0.00000", { note: directPayNote }) : decision("not_taxable");

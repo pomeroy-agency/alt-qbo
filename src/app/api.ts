@@ -1351,9 +1351,11 @@ function payrollProfile(pack: StateRulePack, today: string) {
   return {
     code: pack.place.region, name: pack.name,
     incomeTax: it.method === "none" ? { method: "none" as const }
-      : it.method === "ca_method_b" ? { method: it.method, certificate: it.certificate }
-      : { method: it.method, certificate: it.certificate, choices: it.choices, defaultRate: it.defaultRate, zeroAllowed: it.zeroAllowed },
-    agencies: [...new Set([pack.payroll.incomeTaxAgency?.agency, ...pack.payroll.taxes.map((t) => t.agency)].filter(Boolean))],
+      : it.method === "elected_percent" ? { method: it.method, certificate: it.certificate, choices: it.choices, defaultRate: it.defaultRate, zeroAllowed: it.zeroAllowed }
+      : it.method === "or_formula" ? { method: it.method, certificate: it.certificate, noCertificateRate: it.noCertificateRate }
+      : { method: it.method, certificate: it.certificate },
+    wageAreas: pack.wageHour.areas ? [pack.wageHour.defaultAreaName ?? "Rest of the state", ...pack.wageHour.areas.map((a) => a.name)] : [],
+    agencies: [...new Set([pack.payroll.incomeTaxAgency?.agency, ...pack.payroll.taxes.filter((t) => !t.paidToCarrier).map((t) => t.agency)].filter(Boolean))],
     assignedRates: pack.payroll.taxes.filter((t) => t.assignedRate).map((t) => ({ code: t.code, label: t.assignedRate!.label, hint: t.assignedRate!.hint, newEmployerRate: t.rate })),
     employerAccount: pack.payroll.employerAccount,
     minimumWage: minimumWageOn(pack.wageHour, today),

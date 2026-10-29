@@ -314,7 +314,7 @@ Sources: ESD, "Paid Family & Medical Leave premium rate increases to 1.13% in 20
 
 ## us-az 2026.1 (`src/rules/us-az-2026.ts`), draft, awaiting Greg's review
 
-Added 2026-10-29. Arizona withholding is the flat percentage the employee elects on Form A-4, so no tables are needed. Oregon and New York follow once their 2026 withholding formula publications can be read.
+Added 2026-10-29. Arizona withholding is the flat percentage the employee elects on Form A-4, so no tables are needed. Oregon and New York were added the same day, below.
 
 | Item | Figure | Status |
 |---|---|---|
@@ -340,6 +340,76 @@ Added 2026-10-29. Arizona withholding is the flat percentage the employee elects
 - ⚠️ Sales tax: Arizona's transaction privilege tax isn't worked out yet; invoices carry none unless an owner or accountant sets the rate by hand.
 
 Sources: Bloomberg Law, "Arizona's 2026 Withholding Rates Unchanged From 2025"; A.R.S. 43-401 (A-4 choices 0.5% to 3.5% in half-point steps; 2.0% when no A-4 is filed; 0% may be elected when no Arizona tax is expected); Arizona DES 2026 UI rates, as summarised by Avionté and FirstHR ($8,000 wage base; 2.0% new-employer rate; 0.04% to 9.72% range); A.R.S. 23-769 (job training tax) (0.1% on the UI wage base for rated employers; not charged to new employers or those with a negative balance); A.R.S. 23-363 (Proposition 206, CPI-indexed); Industrial Commission of Arizona ($15.15 minimum wage from January 1, 2026); A.R.S. 23-371 to 23-381 (Fair Wages and Healthy Families Act) (earned paid sick time: 1 hour per 30 worked; 40 hours a year for 15+ employees, 24 for fewer); A.R.S. 43-403, 43-413; ADOR Form A1-QRT and A1-R instructions (quarterly withholding return; deposit timing follows the federal schedule when last year's quarterly average was over $1,500).
+
+## us-or 2026.1 and us-ny 2026.1 (`src/rules/us-or-2026.ts`, `src/rules/us-ny-2026.ts`), draft, awaiting Greg's review
+
+Added 2026-10-29. Withholding for both states was read from the agencies' own 2026 publications (Oregon 150-206-436 Rev. 12-31-25; NYS-50-T-NYS (1/26)); tests check TrailBook against the publications' worked examples. Both states have minimum wage areas: each employee's work area is picked on the employee form.
+
+### Oregon
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | Annual formula from 150-206-436: standard deduction $2,910 single / $5,820 married, federal tax subtraction up to $8,750 phasing out from $125,000 single / $250,000 married, $263 credit per allowance (none above $100,000 / $200,000), 8% without an OR-W-4 | for Greg's review |
+| Oregon withholding and statewide transit tax deposits | On your federal deposit dates | for Greg's review |
+| Oregon statewide transit tax (OR_STT, employee, DOR) | 0.1%, no wage base | for Greg's review |
+| Paid Leave Oregon (employee) (OR_PFML_EE, employee, OED) | 0.6%, on the first $184,500 | for Greg's review |
+| Workers' Benefit Fund (employee) (OR_WBF_EE, employee, DCBS) | 0.90 cents per hour worked, no wage base | for Greg's review |
+| Oregon UI (OR_UI, employer, OED) | 2.4% default; employer enters its own rate, on the first $56,700 | for Greg's review |
+| Workers' Benefit Fund (employer) (OR_WBF_ER, employer, DCBS) | 0.90 cents per hour worked, no wage base | for Greg's review |
+| Paid Leave Oregon (employer) (OR_PFML_ER, employer, OED) | 0% default; employer enters its own rate, on the first $184,500 | for Greg's review |
+| TriMet or Lane transit tax (OR_TRANSIT, employer, DOR) | 0% default; employer enters its own rate, no wage base | for Greg's review |
+| Quarterly report | Oregon Quarterly Tax Report (Form OQ), filed and paid quarterly | for Greg's review |
+| Quarterly report | Paid Leave Oregon Quarterly Contribution Report, filed and paid quarterly | for Greg's review |
+| Minimum wage | $15.05, then $15.55 from 2026-07-01 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Minimum wage, Portland metro | $16.30, then $16.80 from 2026-07-01 | for Greg's review |
+| Minimum wage, Nonurban counties | $14.05, then $14.55 from 2026-07-01 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | 1 hour per 30 worked, up to 80 hours | for Greg's review |
+| New-hire report | Within 20 days to Oregon Department of Justice, Division of Child Support (New Hire Reporting) | for Greg's review |
+
+- ⚠️ Withholding uses the annual formula divided by the pay periods, exactly as the publication describes; amounts aren't rounded to whole dollars (allowed, not required).
+- ⚠️ An employee with no OR-W-4 on file is withheld at a flat 8% (HB 2119), with a warning on the paycheck.
+- ⚠️ Single with 3 or more allowances uses the married table and deduction but the single phase-out and $100,000 allowance limit, per the publication's FAQ 7.
+- ⚠️ Oregon withholding and the statewide transit tax are deposited on your federal deposit dates; UI and the Workers' Benefit Fund are paid with the quarterly Form OQ.
+- ⚠️ The Workers' Benefit Fund is charged on hours worked; salaried employees count as 40 hours a week.
+- ⚠️ TriMet and Lane Transit District payroll taxes apply only to work inside those districts; enter your rate (TriMet 0.8237%, Lane 0.80% in 2026 per payroll publishers) in payroll settings if they apply.
+- ⚠️ Paid Leave Oregon's employer share is only for employers with 25 or more employees; enter 0.4% in payroll settings if that's you.
+- ⚠️ Minimum wage depends on where the employee works: Portland metro (inside the urban growth boundary), standard, or nonurban counties. Choose the area on each employee.
+- ⚠️ Sick time: up to 40 hours may be used a year, and balances may be capped at 80 hours (ORS 653.606); TrailBook caps accrual at 80.
+- ⚠️ Employers with fewer than 10 employees (6 in Portland) must give sick time but needn't pay it; TrailBook tracks it the same way.
+- ⚠️ Sales tax: Oregon has none. Corporate Activity Tax isn't payroll and isn't calculated.
+
+Sources: Oregon DOR, Withholding Tax Formulas, 150-206-436 (Rev. 12-31-25), effective January 1, 2026 (brackets, $2,910/$5,820 standard deductions, $263 exemption credit, $8,750 federal tax subtraction and its phase-out, allowance limits, 8% without a certificate, deposits on the federal schedule); Oregon Employment Department, 2026 tax rates (press release 2025-11-18) ($56,700 UI wage base; tax schedule 3; 2.4% new-employer rate); Oregon DOR, Statewide Transit Tax page (Measure 120 failed May 19, 2026) (0.1% employee statewide transit tax); Paid Leave Oregon, 2026 contribution rate (1% up to $184,500: employees 0.6%, employers with 25+ employees 0.4%); DCBS, Workers' Benefit Fund page (1.8 cents per hour worked in 2026, half from the employee); BOLI, 2026 minimum wage announcement (April 23, 2026) ($15.05 / $16.30 / $14.05 to June 30, 2026; $15.55 / $16.80 / $14.55 from July 1, 2026); ORS 653.601 to 653.661 (sick time) (1 hour per 30 worked, up to 40 hours a year; paid for employers with 10+ employees (6+ with a Portland location)).
+
+### New York
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | Method II exact calculation tables II-A to II-D for each pay frequency, Method III top rates (10.45%, 11.1%, 11.7%) from $1,077,550 single / $2,155,350 married net; no IT-2104 means single, 0 allowances | for Greg's review |
+| Withholding deposits | Within 3 business days once $700 or more is owed; otherwise with the NY-45 | for Greg's review |
+| NY disability (DBL) (NY_SDI, employee, Carrier) | 0.5%, no wage base, at most $0.60 a week (goes to your insurance carrier) | for Greg's review |
+| NY Paid Family Leave (NY_PFL, employee, Carrier) | 0.432%, on the first $95,349.54 (goes to your insurance carrier) | for Greg's review |
+| New York UI (NY_UI, employer, DOL) | 4.1% default; employer enters its own rate, on the first $17,600 | for Greg's review |
+| Quarterly report | Quarterly Combined Withholding, Wage Reporting, and Unemployment Insurance Return (NY-45), filed and paid quarterly | for Greg's review |
+| Minimum wage | $16.00 | for Greg's review |
+| Exempt salary floor (a year) | $62,353.20 | for Greg's review |
+| Minimum wage, New York City, Long Island and Westchester | $17.00; exempt salary $66,300 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | 1 hour per 30 worked, up to 56 hours; 40 hours for under 100 employees | for Greg's review |
+| New-hire report | Within 20 days to New York State Department of Taxation and Finance (New Hire Notification) | for Greg's review |
+
+- ⚠️ No IT-2104 on file: withheld as single with no allowances. Married withholding at the higher single rate, and head of household, use the single tables.
+- ⚠️ Withholding over $700 not yet paid is due within 3 business days of the payday; the rest is paid with the NY-45. Check whether your business must use the 5-business-day rule instead.
+- ⚠️ New York City and Yonkers resident withholding isn't calculated yet. This is the main gap before releasing New York for employees who live there.
+- ⚠️ Disability (DBL) and Paid Family Leave contributions are withheld from employees and go toward your insurance carrier's premium; TrailBook holds them in a liability account and doesn't schedule a state payment.
+- ⚠️ Paid Family Leave is capped by its annual maximum ($411.91), shown as a wage base of $95,349.54.
+- ⚠️ The Metropolitan Commuter Transportation Mobility Tax (employers in the MCTD with more than $312,500 of payroll a quarter) isn't calculated.
+- ⚠️ Minimum wage and the executive/administrative exempt salary depend on where the employee works: choose New York City, Long Island and Westchester on the employee, or leave the rest of the state.
+- ⚠️ Prenatal leave (20 hours a year) and the spread-of-hours and call-in pay rules aren't tracked.
+- ⚠️ Sales tax: TrailBook doesn't work out New York sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: NYS-50-T-NYS (1/26), New York State Withholding Tax Tables and Methods, pages 14 to 22 (tables A to C (deduction and exemption allowances), Method II tables II-A to II-D, Method III top rates); NYS-50 (Employer's Guide); Tax Law 674 (withholding paid within 3 business days once $700 or more is withheld; otherwise with the NY-45; no IT-2104 means single with no allowances); NYS DOL, Current 2026 Employer Contribution Rate ($17,600 UI wage base; new employers 4.1% (4.025% UI plus 0.075% Re-employment Service Fund)); DFS, 2026 Paid Family Leave rate decision; paidfamilyleave.ny.gov/2026 (0.432% of wages, at most $411.91 a year); Workers' Compensation Law 209 (disability (DBL) employee contribution 0.5% of wages, at most $0.60 a week); Labor Law 652; 12 NYCRR 142 (Proskauer and Seyfarth summaries) ($17.00 minimum wage in NYC, Long Island and Westchester, $16.00 elsewhere; exempt salary $1,275 / $1,199.10 a week); Labor Law 196-b (paid sick leave) (1 hour per 30 worked; 56 hours for 100+ employees, 40 for fewer).
 
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
@@ -379,4 +449,4 @@ Each state is one file in `src/rules` with a `StateRulePack`, added to the regis
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the draft state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the draft state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

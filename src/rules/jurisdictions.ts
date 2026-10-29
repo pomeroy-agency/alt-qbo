@@ -43,7 +43,7 @@ const CANADA_REGIONS: [string, string][] = [
 ];
 
 /** Regions launched so far, by country. */
-const LIVE: Record<string, string[]> = { US: ["CA", "TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA", "AZ"] };
+const LIVE: Record<string, string[]> = { US: ["CA", "TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA", "AZ", "OR", "NY"] };
 
 export const COUNTRIES: readonly Country[] = ([
   { code: "US", name: "United States", currency: "USD", regionLabel: "State", status: "live", regions: planned(US_REGIONS) },

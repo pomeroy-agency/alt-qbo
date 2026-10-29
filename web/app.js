@@ -1659,6 +1659,17 @@ function stateCertificateFields(e, v, sel) {
       <label>${esc(it.certificate)} extra each paycheck ($)<input name="swExtra" value="${v(sw.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
       ${it.zeroAllowed ? `<label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Elected zero withholding for this year</label>` : ""}`;
   }
+  if (it.method === "or_formula" || it.method === "ny_exact") {
+    const sw = e?.stateWithholding ?? {};
+    const statuses = [["single", "Single"], ["married", "Married"], ["married_single_rate", "Married, but withhold at the higher single rate"]];
+    // Oregon withholds a flat rate without an OR-W-4; New York treats a missing IT-2104 as single with no allowances.
+    const opts = it.method === "or_formula" ? [["", `Not filed (flat ${pct100(it.noCertificateRate)}%)`], ...statuses] : statuses;
+    const status = e?.stateWithholding ? (sw.filingStatus ?? "single") : (it.method === "or_formula" && e ? "" : "single");
+    return `<label>${esc(it.certificate)} status${sel("swStatus", opts, status)}</label>
+      <label>${esc(it.certificate)} allowances<input name="swAllowances" value="${v(sw.allowances ?? 0)}" inputmode="numeric"></label>
+      <label>${esc(it.certificate)} extra each paycheck ($)<input name="swExtra" value="${v(sw.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
+      <label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Claimed exempt for this year</label>`;
+  }
   return `<p class="hash">${esc(pay.state?.name ?? "This state")} has no income tax on wages, so there's no state withholding form.</p>`;
 }
 
@@ -1684,7 +1695,8 @@ function employeeForm(e = null) {
       <label>Pay type${sel("payType", [["salary", "Salary"], ["hourly", "Hourly"]], e?.payType ?? "salary")}</label>
       <label><span data-pay-label>${hourly ? "Hourly rate ($)" : "Annual salary ($)"}</span><input name="payRate" value="${v(e?.payRate)}" inputmode="decimal" required placeholder="${hourly ? "25.00" : "65000"}"></label>
       <label>How often they're paid${sel("payFrequency", Object.entries(FREQ_LABEL), e?.payFrequency ?? "biweekly")}</label>
-      ${pay.workCities.length || e?.workCity ? `<label>City where they work<input name="workCity" value="${v(e?.workCity)}" list="work-cities" placeholder="e.g. San Jose"><span class="hash">Some cities have a higher minimum wage than the state.</span></label>` : ""}
+      ${pay.state?.wageAreas?.length ? `<label>Where they work${sel("workCity", pay.state.wageAreas.map((a, i) => [i === 0 ? "" : a, a]), e?.workCity ?? "")}<span class="hash">The minimum wage depends on the area.</span></label>`
+        : pay.workCities.length || e?.workCity ? `<label>City where they work<input name="workCity" value="${v(e?.workCity)}" list="work-cities" placeholder="e.g. San Jose"><span class="hash">Some cities have a higher minimum wage than the state.</span></label>` : ""}
       <label data-only="hourly" ${hourly ? "" : "hidden"}>Usual hours each pay period<input name="usualHours" value="${v(e?.usualHours)}" inputmode="decimal" placeholder="80"></label>
       <label class="check" data-only="salary" ${hourly ? "hidden" : ""}><input type="checkbox" name="overtimeExempt" ${e ? (e.overtimeExempt ? "checked" : "") : "checked"}> Exempt from overtime</label>
       <label>Social Security number<input name="ssn" autocomplete="off" inputmode="numeric" placeholder="${e?.ssnLast4 ? `On file, ends ${e.ssnLast4}` : "123-45-6789"}"></label>
@@ -1742,10 +1754,13 @@ function employeeBody(f) {
   const body = {
     name: d.name, email: d.email, hireDate: d.hireDate, payType: d.payType, payRate: d.payRate.replace(/[$,\s]/g, ""), payFrequency: d.payFrequency,
     usualHours: d.payType === "hourly" ? d.usualHours : "", overtimeExempt: d.payType === "salary" && f.querySelector("[name=overtimeExempt]").checked,
-    address: addressOf(d), workCity: d.workCity.trim(),
+    address: addressOf(d), ...(d.workCity !== undefined ? { workCity: d.workCity.trim() } : {}),
     w4: { filingStatus: d.w4Status, step2Checked: f.querySelector("[name=w4Step2]").checked, step3Credits: d.w4Step3, step4aOtherIncome: d.w4Step4a, step4bDeductions: d.w4Step4b, step4cExtraWithholding: d.w4Step4c },
     ...(d.de4Status ? { de4: { filingStatus: d.de4Status, regularAllowances: d.de4Allowances, additionalWithholding: d.de4Extra } } : {}),
     ...(d.swRate !== undefined ? { stateWithholding: { rate: d.swRate, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked) } } : {}),
+    ...(d.swStatus !== undefined ? { stateWithholding: d.swStatus
+      ? { filingStatus: d.swStatus, allowances: d.swAllowances, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked) }
+      : null } : {}),
     deductions: [{ kind: "traditional401k", amount: d.k401 }, { kind: "section125", amount: d.section125 }, { kind: "post_tax", amount: d.postTax }],
     openingYtd: d.ytdWages ? { year: d.ytdYear, wages: d.ytdWages, federalIncomeTax: d.ytdFit, socialSecurityTax: d.ytdSs, medicareTax: d.ytdMed, caIncomeTax: d.ytdPit, caSdi: d.ytdSdi } : null,
   };
@@ -2055,8 +2070,8 @@ const fmtLine = (l) => l.value === null ? `<span class="muted">${l.kind === "mon
 function columnLabel(k) {
   if (k === "ssn") return "SSN";
   if (k === "name") return "Employee";
-  const m = k.match(/^([A-Z]{2}_[A-Z]+)TaxableMinor$/);
-  if (m) return `${m[1].replace("_", " ")} taxable wages`;
+  const m = k.match(/^([A-Z]{2}_[A-Z0-9_]+)(Taxable|Withheld)Minor$/);
+  if (m) return `${m[1].replace(/_/g, " ")} ${m[2] === "Taxable" ? "taxable wages" : "withheld"}`;
   return { wagesMinor: "Wages", withheldMinor: "Withheld" }[k] ?? k;
 }
 
