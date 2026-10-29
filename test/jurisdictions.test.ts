@@ -17,13 +17,13 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
     expect(isLive("US", "CA")).toBe(true);
     expect(isLive("CA", "ON")).toBe(false);
-    expect(isSupportedPlace({ country: "US", region: "ME" })).toBe(false);
+    expect(isSupportedPlace({ country: "US", region: "PR" })).toBe(false);
     expect(() => resolveRules({ country: "CA", region: "BC" }, "2026-06-01")).toThrow(/not launched/);
   });
 
@@ -773,5 +773,29 @@ describe("Hawaii and Nebraska", () => {
     const p = calculatePaycheck({ employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "50.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } },
       { federal, state: pack("HI"), provenance: [] }, {}, "2026-09-04");
     expect(p.taxes.find((t) => t.code === "HI_TDI")?.amountMinor).toBe(750n);
+  });
+});
+
+describe("Maine and the District of Columbia", () => {
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number) =>
+    stateWithholding(pack(region).payroll.incomeTax, { state }, new D(wages), periods).toFixed(2);
+
+  it("matches the Maine booklet's three percentage-method examples", () => {
+    expect(w("ME", { filingStatus: "single", allowances: 2 }, 300, 52)).toBe("0.00");
+    expect(w("ME", { filingStatus: "single", allowances: 2 }, 1000, 52)).toBe("32.00");
+    // The married standard deduction shrinks to $22,944.68 at $234,000 a year.
+    expect(w("ME", { filingStatus: "married", allowances: 2 }, 4500, 52)).toBe("256.00");
+    expect(w("ME", null, 1000, 52)).toBe(w("ME", { filingStatus: "single" }, 1000, 52));
+  });
+
+  it("adds Maine's 2% surcharge over $1,000,000", () => {
+    // $4,117 + 7.15% of $1,935,150 + 2% of $1,000,000, rounded to the dollar.
+    expect(w("ME", { filingStatus: "single" }, 2000000, 1)).toBe("162480.00");
+  });
+
+  it("uses OTR's rate schedule less $4,150 a D-4 allowance", () => {
+    expect(w("DC", { filingStatus: "single", allowances: 1 }, 50000, 1)).toBe("2580.25");
+    expect(w("DC", { filingStatus: "head_of_household" }, 1000000, 1)).toBe("91525.00");
   });
 });
