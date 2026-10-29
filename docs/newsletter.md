@@ -35,10 +35,17 @@ In Netlify, Site configuration, Environment variables:
 | `NEWSLETTER_POSTAL_ADDRESS` | The postal address shown in every footer (a PO box is fine). |
 | `NEWSLETTER_REVIEWER_EMAIL` | Who hears a draft is ready. Defaults to `OPS_EMAIL`. |
 | `NEWSLETTER_REPLY_TO` | Optional: where replies go, if not the sender. |
+| `NEWSLETTER_OPTIN_TEMPLATE_ID` | The Brevo double opt-in email (a transactional template tagged `optin` with a `{{ doubleoptin }}` link). Turns on sign-up. |
 
 The worker is started with a secret derived from `PII_KEY`, which is already set, so nobody else can start it.
 
 Claude's cost is small: about a dozen short write-ups a day and one draft a week.
+
+## Signing up
+
+- `/subscribe.html` on the app has the sign-up form, linked from the pricing page footer. Any other site (such as pomeroyagency.com) can use the same form: a plain HTML form posting `email` (and an empty hidden `website` field, which catches bots) to `https://app.pomeroyagency.com/api/newsletter/subscribe`. The visitor lands on `/subscribe-check.html`.
+- The TrailBook sign-up form has an unticked "Send me TrailBook News" box.
+- Either way Brevo emails a confirmation link (double opt-in), and adds the person to the list only when they click it; they then land on `/subscribe-done.html`. An address gets at most one confirmation email an hour, and only a hash of it is kept in TrailBook.
 
 ## Subscribers and the law
 

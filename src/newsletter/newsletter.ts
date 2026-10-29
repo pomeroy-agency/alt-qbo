@@ -4,7 +4,8 @@ import { appendAudit } from "../core/audit.js";
 import { addDays, pacificToday, weekday } from "../payroll/business-days.js";
 import type { Mailer } from "../app/mail.js";
 import { Draft, SECTION_KINDS, type DraftInput, type Facts, type NewsletterAI } from "./ai.js";
-import type { Campaigns } from "./brevo.js";
+import { createHash } from "node:crypto";
+import type { Campaigns, DoubleOptIn } from "./brevo.js";
 import { parseFeed, plainText, titleKey } from "./feeds.js";
 import { renderHtml, renderText, wordCount, type IssueContent } from "./render.js";
 import { scoreEntry } from "./score.js";
@@ -30,6 +31,8 @@ export interface NewsletterConfig {
   mailer?: Mailer;
   appUrl?: string;
   fetcher?: typeof fetch;
+  /** Starts Brevo's double opt-in for someone who asked to subscribe. Without it, sign-up is off. */
+  doubleOptIn?: DoubleOptIn;
 }
 
 export class NewsletterError extends Error {
@@ -512,4 +515,26 @@ export async function addNote(pool: pg.Pool, input: { kind: string; title: strin
 
 export async function removeNote(pool: pg.Pool, id: string) {
   await withSystem(pool, (tx) => tx.query("UPDATE newsletter_notes SET removed_at = now() WHERE id = $1 AND removed_at IS NULL", [id]));
+}
+
+// ------------------------------------------------------------------ sign-up
+
+/**
+ * Someone asked for TrailBook News: Brevo emails them a confirmation link and
+ * adds them to the list only when they click it. An address gets at most one
+ * confirmation an hour, so the form can't be used to flood an inbox; the
+ * answer is the same either way, so it doesn't reveal who has asked before.
+ */
+export async function requestSubscription(pool: pg.Pool, cfg: NewsletterConfig, rawEmail: unknown, source: "website" | "app_signup"): Promise<void> {
+  if (!cfg.doubleOptIn) throw new NewsletterError("newsletter sign-up isn't open yet", 503);
+  const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+  if (!EMAIL.test(email) || email.length > 254) throw new NewsletterError("enter a valid email address", 400);
+  const hash = createHash("sha256").update(email).digest("hex");
+  const fresh = await withSystem(pool, async (tx) => {
+    const recent = await tx.query("SELECT 1 FROM newsletter_signups WHERE email_hash = $1 AND requested_at > now() - interval '1 hour'", [hash]);
+    if (recent.rows[0]) return false;
+    await tx.query("INSERT INTO newsletter_signups (email_hash, source) VALUES ($1, $2)", [hash, source]);
+    return true;
+  });
+  if (fresh) await cfg.doubleOptIn(email);
 }
