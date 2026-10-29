@@ -21,4 +21,4 @@ ALTER TABLE employees ADD COLUMN state_withholding jsonb CHECK (state_withholdin
 -- <state>_<what>, like ca_pit_sdi or tx_ui.
 ALTER TABLE tax_deposit_payments DROP CONSTRAINT IF EXISTS tax_deposit_payments_kind_check;
 ALTER TABLE tax_deposit_payments ADD CONSTRAINT tax_deposit_payments_kind_check
-  CHECK (kind IN ('federal_941', 'federal_940') OR kind ~ '^[a-z]{2}_[a-z0-9_]{2,20}$');
+  CHECK (kind IN ('federal_941', 'federal_940') OR kind ~ '^[a-z]{2}_[a-z_]{2,20}$');
