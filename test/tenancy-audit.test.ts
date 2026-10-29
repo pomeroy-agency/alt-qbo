@@ -38,8 +38,8 @@ describe("entity setup from principal place of business", () => {
     await expect(
       withTenant(pool, org.id, (tx) =>
         createEntity(tx, {
-          orgId: org.id, legalName: "Gem State LLC", entityType: "llc_single",
-          place: { country: "US", region: "ME" }, firstFiscalYear: 2026, actor: owner,
+          orgId: org.id, legalName: "Coastal BC Ltd", entityType: "llc_single",
+          place: { country: "CA", region: "BC" }, firstFiscalYear: 2026, actor: owner,
         }),
       ),
     ).rejects.toBeInstanceOf(JurisdictionError);
