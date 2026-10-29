@@ -4,6 +4,7 @@ import { withSystem, withTenant, type Tx } from "../db/pool.js";
 import { createContact, recordPayment, updateContact, type ContactAddress } from "../core/documents.js";
 import { issueInvoice, type RateLookup } from "../core/sales-tax.js";
 import type { Mailer } from "../app/mail.js";
+import { recordFirstPayment, type AdEventsConfig } from "../app/ad-events.js";
 import type { PaymentGateway, SavedCard } from "./gateway.js";
 import {
   CURRENT_PRICES, FOUNDING_LOCK_MONTHS, FOUNDING_SEATS, GRACE_DAYS, PLAN_NAMES, RETRY_DAYS, TRIAL_DAYS,
@@ -29,6 +30,8 @@ export interface BillingConfig {
   taxRates?: RateLookup;
   mailer?: Mailer;
   appUrl?: string;
+  /** Reports an organisation's first payment to Google and Meta, if its sign-up was recorded. */
+  adEvents?: AdEventsConfig;
 }
 
 const SYSTEM = { id: "system:billing", role: "system" as const };
@@ -510,6 +513,9 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
       if (!stillUnpaid) await tx.query("UPDATE subscriptions SET status = 'active', past_due_since = NULL, updated_at = now() WHERE org_id = $1 AND status = 'past_due'", [sub.org_id]);
     }
   });
+  if (invoice.dueMinor > 0n) {
+    await recordFirstPayment(pool, cfg.adEvents, { orgId: sub.org_id, valueMinor: invoice.totalMinor - invoice.taxMinor, plan: c.plan, invoice: invoice.number });
+  }
   await notifyOwners(pool, cfg, sub.org_id, (name) => ({
     subject: `TrailBook receipt ${invoice.number}`,
     text: `Thanks. We charged $${money(invoice.dueMinor)} to the card ending ${sub.card_last4} for ${name}'s TrailBook subscription, ${c.period_start} to ${c.period_end}.\n\n`

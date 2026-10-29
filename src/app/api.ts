@@ -19,6 +19,7 @@ import {
   runBilling, saveBillingDetails, saveCard, type BillingConfig,
 } from "../billing/billing.js";
 import { GatewayError } from "../billing/gateway.js";
+import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
@@ -46,6 +47,9 @@ import { handleOAuth, handlePublicApi } from "./public-api.js";
 import {
   checkKey, cleanApiKey, getKeyLink, listContacts as listMilePostContacts, needsRecheck, recordCheck, removeKey, saveKey, type MilePostOptions,
 } from "./milepost.js";
+import { NewsletterError, addNote, approveIssue, cancelIssue, discardIssue, getIssue, newsletterOverview, removeNote, retryItem, saveIssue, sendTest, setItemStatus, type NewsletterConfig } from "../newsletter/newsletter.js";
+import { BrevoError } from "../newsletter/brevo.js";
+import type { NewsletterTask } from "../newsletter/config.js";
 import {
   AuthError, SESSION_COOKIE, checkSignInAllowed, createSession, recordSignIn, endSession, hashPassword, membershipRole, normaliseEmail,
   sessionUser, verifyPassword, type SessionUser,
@@ -64,10 +68,16 @@ export interface ApiOptions {
   backups?: { store: BackupStore; key: Buffer };
   /** TrailBook's own subscriptions: card processor, seller's books, and whether unpaid organisations become read-only. */
   billing?: BillingConfig;
+  /** Reports sign-ups and first payments to Google and Meta (ad-events.ts). */
+  adEvents?: AdEventsConfig;
   /** Apps that may connect to a business with OAuth (MilePost). */
   oauthClients?: OAuthClient[];
   /** Where MilePost's REST API lives, for the MilePost tab. */
   milepost?: MilePostOptions;
+  /** TrailBook News, shown only in the operator's own organisation. */
+  newsletter?: NewsletterConfig;
+  /** Starts the newsletter's background worker. */
+  startNewsletterJob?: (task: NewsletterTask) => Promise<void>;
 }
 
 /** Where emailed and copied links point. */
@@ -167,6 +177,81 @@ async function ensureEntity(tx: Tx, entityId: string) {
   if (!rows[0]) throw new HttpError(404, "entity not found");
 }
 
+// ------------------------------------------------------------ newsletter
+
+/** The newsletter's settings, for owners and admins of the operator's own organisation; everyone else gets a 404. */
+function newsletterFor(ctx: Ctx, required = true): NewsletterConfig | undefined {
+  const cfg = ctx.opts.newsletter;
+  const ok = cfg && cfg.orgId === ctx.orgId && ["owner", "admin"].includes(ctx.role);
+  if (!ok && required) throw new HttpError(404, "not found");
+  return ok ? cfg : undefined;
+}
+
+route("GET", "/api/orgs/:org/newsletter", async (_req, _p, ctx) => json(await newsletterOverview(ctx.pool, newsletterFor(ctx)!)));
+
+route("POST", "/api/orgs/:org/newsletter/run", async (req, _p, ctx) => {
+  newsletterFor(ctx);
+  const task = (await body(req)).task;
+  if (!["watch", "draft", "redraft"].includes(task)) throw new HttpError(400, "task must be watch, draft or redraft");
+  if (!ctx.opts.startNewsletterJob) throw new HttpError(409, "the newsletter job can't be started here");
+  await ctx.opts.startNewsletterJob(task);
+  return json({ started: task }, 202);
+});
+
+route("GET", "/api/orgs/:org/newsletter/issues/:issue", async (_req, p, ctx) => json(await getIssue(ctx.pool, newsletterFor(ctx)!, p.issue!)));
+
+route("POST", "/api/orgs/:org/newsletter/issues/:issue", async (req, p, ctx) => {
+  newsletterFor(ctx);
+  await saveIssue(ctx.pool, p.issue!, await body(req), ctx.actor.id);
+  return json({ saved: true });
+});
+
+route("POST", "/api/orgs/:org/newsletter/issues/:issue/test", async (req, p, ctx) => {
+  const cfg = newsletterFor(ctx)!;
+  const b = await body(req);
+  const to = Array.isArray(b.to) ? b.to.map(String) : [ctx.user.email];
+  await sendTest(ctx.pool, cfg, p.issue!, to, ctx.actor.id);
+  return json({ sentTo: to });
+});
+
+route("POST", "/api/orgs/:org/newsletter/issues/:issue/approve", async (_req, p, ctx) =>
+  json(await approveIssue(ctx.pool, newsletterFor(ctx)!, p.issue!, ctx.actor.id)));
+
+route("POST", "/api/orgs/:org/newsletter/issues/:issue/cancel", async (_req, p, ctx) => {
+  await cancelIssue(ctx.pool, newsletterFor(ctx)!, p.issue!, ctx.actor.id);
+  return json({ cancelled: true });
+});
+
+route("POST", "/api/orgs/:org/newsletter/issues/:issue/discard", async (_req, p, ctx) => {
+  newsletterFor(ctx);
+  await discardIssue(ctx.pool, p.issue!, ctx.actor.id);
+  return json({ discarded: true });
+});
+
+for (const [action, run] of [
+  ["dismiss", (pool: pg.Pool, id: string) => setItemStatus(pool, id, "dismissed")],
+  ["restore", (pool: pg.Pool, id: string) => setItemStatus(pool, id, "new")],
+  ["retry", retryItem],
+] as const) {
+  route("POST", `/api/orgs/:org/newsletter/items/:item/${action}`, async (_req, p, ctx) => {
+    newsletterFor(ctx);
+    await run(ctx.pool, p.item!);
+    return json({ ok: true });
+  });
+}
+
+route("POST", "/api/orgs/:org/newsletter/notes", async (req, _p, ctx) => {
+  newsletterFor(ctx);
+  const b = await body(req);
+  return json({ id: await addNote(ctx.pool, { kind: String(b.kind ?? ""), title: String(b.title ?? ""), body: String(b.body ?? ""), link: b.link ? String(b.link) : null }, ctx.actor.id) }, 201);
+});
+
+route("POST", "/api/orgs/:org/newsletter/notes/:note/remove", async (_req, p, ctx) => {
+  newsletterFor(ctx);
+  await removeNote(ctx.pool, p.note!);
+  return json({ removed: true });
+});
+
 // ------------------------------------------------------------ organisation
 
 route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
@@ -179,7 +264,7 @@ route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
          FROM entities ORDER BY created_at`,
     )).rows;
     // Countries and their states or provinces, for the place-of-business picker.
-    return json({ org, role: ctx.role, entities, access, countries: COUNTRIES });
+    return json({ org, role: ctx.role, entities, access, countries: COUNTRIES, newsletter: Boolean(newsletterFor(ctx, false)) });
   });
 });
 
@@ -1950,6 +2035,7 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     const orgName = inviteToken ? null : str(b.orgName, "business name");
     const passwordHash = await hashPassword(str(b.password, "password", 200));
     let joined: string | undefined;
+    let created: string | undefined;
     const userId = await withSystem(pool, async (tx) => {
       if ((await tx.query("SELECT 1 FROM users WHERE email = $1", [email])).rows[0]) {
         throw new AuthError("an account with that email already exists; sign in instead", 409);
@@ -1963,9 +2049,13 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
         const org = await createOrganization(tx, { name: orgName!, actor: { id: `user:${email}`, role: "owner" } });
         await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [uid, org.id]);
         await acceptTerms(tx, org.id, uid);
+        created = org.id;
       }
       return uid;
     });
+    if (created) {
+      await recordSignup(pool, opts.adEvents, { ...attributionFromRequest(req, b.attribution, b.adOptOut, opts.adEvents?.ga4MeasurementId), userId, orgId: created });
+    }
     if (opts.mailer) await sendEmailLink(req, pool, opts, email, "verify");
     const s = await createSession(pool, userId);
     return json({ ok: true, joined }, 201, { "set-cookie": sessionCookie(s.token, s.maxAge) });
@@ -2093,6 +2183,8 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
     if (err instanceof GatewayError) return json({ error: err.message }, 502);
     if (err instanceof JurisdictionError) return json({ error: err.message, code: "JURISDICTION" }, 422);
     if (err instanceof OAuthError) return json({ error: err.message, code: err.code }, err.status);
+    if (err instanceof NewsletterError) return json({ error: err.message }, err.status);
+    if (err instanceof BrevoError) return json({ error: err.message }, 502);
     console.error(err);
     return json({ error: "something went wrong on our side" }, 500);
   }

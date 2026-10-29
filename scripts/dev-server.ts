@@ -12,6 +12,8 @@ import { cdtfaRateLookup, sampleRateLookup } from "../src/app/cdtfa.js";
 import { billingFromEnv } from "../src/app/billing-config.js";
 import { memoryStore } from "../src/core/nightly-backups.js";
 import { randomBytes } from "node:crypto";
+import { newsletterFromEnv, type NewsletterTask } from "../src/newsletter/config.js";
+import { draftWeeklyIssue, runNewsWatch } from "../src/newsletter/newsletter.js";
 
 const pool = createPool();
 await migrate(pool);
@@ -28,6 +30,13 @@ process.env.PII_KEY ??= Buffer.alloc(32, 1).toString("base64");
 // Billing settings come from the same variables as production (see docs/launch-setup.md); restore points stay in memory.
 const billing = billingFromEnv();
 const backups = { store: memoryStore(), key: randomBytes(32) };
+// TrailBook News, when NEWSLETTER_ORG_ID is set. The page's jobs run in this process instead of a background function.
+const newsletter = newsletterFromEnv(process.env, mailer, `http://localhost:${port}`);
+const startNewsletterJob = async (task: NewsletterTask) => {
+  if (!newsletter) return;
+  const job = task === "watch" ? runNewsWatch(pool, newsletter) : draftWeeklyIssue(pool, newsletter, undefined, { replace: task === "redraft" });
+  job.then((r) => console.log(`newsletter ${task}:`, r), (err) => console.error(`newsletter ${task} failed:`, err));
+};
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
@@ -39,7 +48,7 @@ createServer(async (req, res) => {
       headers: req.headers as Record<string, string>,
       body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
     });
-    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups, oauthClients: oauthClientsFromEnv(), milepost: { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" } });
+    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups, oauthClients: oauthClientsFromEnv(), milepost: { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" }, newsletter, startNewsletterJob });
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
     return;
