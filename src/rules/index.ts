@@ -37,6 +37,8 @@ import { usNewMexico2026 } from "./us-nm-2026.js";
 import { usRhodeIsland2026 } from "./us-ri-2026.js";
 import { usVermont2026 } from "./us-vt-2026.js";
 import { usWestVirginia2026 } from "./us-wv-2026.js";
+import { usHawaii2026 } from "./us-hi-2026.js";
+import { usNebraska2026 } from "./us-ne-2026.js";
 import { usMinnesota2026 } from "./us-mn-2026.js";
 import { usSouthCarolina2026 } from "./us-sc-2026.js";
 import { usPennsylvania2026 } from "./us-pa-2026.js";
@@ -60,7 +62,7 @@ const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia202
   usIndiana2026, usMaryland2026, usMissouri2026, usWisconsin2026, usMinnesota2026, usSouthCarolina2026,
   usAlabama2026, usLouisiana2026, usKentucky2026, usOklahoma2026, usConnecticut2026, usIowa2026,
   usArkansas2026, usDelaware2026, usKansas2026, usMississippi2026, usNorthDakota2026,
-  usMontana2026, usNewMexico2026, usRhodeIsland2026, usVermont2026, usWestVirginia2026]);
+  usMontana2026, usNewMexico2026, usRhodeIsland2026, usVermont2026, usWestVirginia2026, usHawaii2026, usNebraska2026]);
 
 
 export class JurisdictionError extends Error {
