@@ -38,11 +38,23 @@ describe("entity setup from principal place of business", () => {
     await expect(
       withTenant(pool, org.id, (tx) =>
         createEntity(tx, {
-          orgId: org.id, legalName: "Coastal BC Ltd", entityType: "llc_single",
-          place: { country: "CA", region: "BC" }, firstFiscalYear: 2026, actor: owner,
+          orgId: org.id, legalName: "Coastal Mexico SA", entityType: "llc_single",
+          place: { country: "MX", region: "JA" }, firstFiscalYear: 2026, actor: owner,
         }),
       ),
     ).rejects.toBeInstanceOf(JurisdictionError);
+  });
+
+  it("refuses a US entity type in Canada", async () => {
+    const { org } = await setupCaliforniaBusiness();
+    await expect(
+      withTenant(pool, org.id, (tx) =>
+        createEntity(tx, {
+          orgId: org.id, legalName: "Coastal BC LLC", entityType: "llc_single",
+          place: { country: "CA", region: "BC" }, firstFiscalYear: 2026, actor: owner,
+        }),
+      ),
+    ).rejects.toThrow(/can't be set up in CA/);
   });
 });
 

@@ -173,9 +173,18 @@ export function resolveSetupRules(place: Place, onDate: string): ResolvedRules {
   try {
     return resolveRules(place, onDate);
   } catch (err) {
-    const latest = REGISTRY.map((p) => p.effectiveTo).filter((d) => d < onDate).sort().at(-1);
-    if (!isSupportedPlace(place) || !latest) throw err;
-    return resolveRules(place, latest);
+    if (!isSupportedPlace(place)) throw err;
+    // The latest packs before the date, or else the first after it (Canada's start mid-2026).
+    const before = [...new Set(REGISTRY.map((p) => p.effectiveTo).filter((d) => d < onDate))].sort().reverse();
+    const after = [...new Set(REGISTRY.map((p) => p.effectiveFrom).filter((d) => d > onDate))].sort();
+    for (const d of [...before, ...after]) {
+      try {
+        return resolveRules(place, d);
+      } catch {
+        // try the next date
+      }
+    }
+    throw err;
   }
 }
 

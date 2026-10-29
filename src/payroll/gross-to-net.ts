@@ -255,7 +255,7 @@ export function calculatePaycheck(
   if (canada) {
     // Canada: income tax, CPP or QPP, EI and QPIP together (src/payroll/canada.ts).
     taxes.push(...canada.filter((t) => t.paidBy === "employee"));
-    if (!input.td1 && st.incomeTax.method === "canada") warnings.push(`no ${st.incomeTax.certificate} on file: tax worked out on the basic personal amounts`);
+    if (!input.td1 && st.incomeTax.method === "canada") warnings.push(`no TD1 or ${st.incomeTax.certificate} on file: tax worked out on the basic personal amounts`);
   } else {
     const fed = usFederal(rules).payroll;
     // Federal

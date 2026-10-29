@@ -8,7 +8,14 @@ import type { Actor } from "./ledger.js";
 export type OrgKind = "business" | "accounting_firm" | "hr_firm";
 
 export type EntityType =
-  | "sole_prop" | "llc_single" | "llc_partnership" | "llc_s_corp" | "s_corp" | "c_corp" | "partnership";
+  | "sole_prop" | "llc_single" | "llc_partnership" | "llc_s_corp" | "s_corp" | "c_corp" | "partnership"
+  | "ca_sole_prop" | "ca_partnership" | "ca_corporation";
+
+/** The entity types a business in each country can be. */
+export const ENTITY_TYPES_BY_COUNTRY: Record<string, readonly EntityType[]> = {
+  US: ["sole_prop", "llc_single", "llc_partnership", "llc_s_corp", "s_corp", "c_corp", "partnership"],
+  CA: ["ca_sole_prop", "ca_partnership", "ca_corporation"],
+};
 
 export interface Organization {
   id: string;
@@ -82,11 +89,14 @@ export async function createEntity(tx: Tx, input: CreateEntityInput): Promise<En
   const fyStart = input.fiscalYearStartMonth ?? 1;
   const firstDay = `${input.firstFiscalYear}-${String(fyStart).padStart(2, "0")}-01`;
   const rules = resolveSetupRules(input.place, firstDay);
+  if (!(ENTITY_TYPES_BY_COUNTRY[input.place.country] ?? []).includes(input.entityType)) {
+    throw new LedgerError("INVALID", `a ${input.entityType.replace(/_/g, " ")} can't be set up in ${input.place.country}`);
+  }
   const defaults = rules.federal.entityDefaults;
   const base = COA_TEMPLATES[defaults.coaTemplate];
   if (!base) throw new LedgerError("INVALID", `no chart-of-accounts template ${defaults.coaTemplate}`);
   // The state's own payroll tax liabilities (California PIT, SDI, UI, ETT; Texas UI...) come from its rule pack.
-  const template = [...base, ...stateTaxAccounts(rules.state.payroll.accounts)].sort((a, b) => a.code.localeCompare(b.code));
+  const template = [...base, ...stateTaxAccounts(rules.state.payroll.accounts, input.place.country)].sort((a, b) => a.code.localeCompare(b.code));
   const returnType = returnTypeFor(input.entityType);
 
   const { rows } = await tx.query(

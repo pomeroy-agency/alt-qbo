@@ -566,6 +566,8 @@ function stateFormDue(spec: StateQuarterlyForm, quarterEndDate: string, calendar
 /** The forms due for a business, newest period first, so the page can list them. */
 export function formsFor(year: number, today: string, state: StateRulePack) {
   const out: { form: string; slug: string; period: string; year: number; quarter?: number; dueDate: string }[] = [];
+  // Canada's T4, RL-1 and ROE come in a later release.
+  if (state.place.country !== "US") return out;
   for (const q of [4, 3, 2, 1]) {
     const end = quarterEnd(year, q);
     if (addDays(end, -92) > today) continue;

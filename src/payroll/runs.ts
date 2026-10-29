@@ -99,7 +99,7 @@ function payInput(
   };
   const base: EmployeePayInput = {
     employeeId: e.id, name: e.name, payFrequency: e.payFrequency,
-    w4: e.w4, de4: e.de4, stateWithholding: e.stateWithholding, deductions: e.deductions,
+    w4: e.w4, de4: e.de4, stateWithholding: e.stateWithholding, td1: e.td1, deductions: e.deductions,
     bonus: l.bonus, bonusDiscretionary: l.bonusDiscretionary, commission: l.commission, reimbursement: l.reimbursement,
   };
   if (e.payType === "salary") {
@@ -203,13 +203,25 @@ export async function yearToDate(
     for (const t of state.payroll.taxes) y.stateWages![t.code] = (y.stateWages![t.code] ?? 0n) + o.wagesMinor;
     y.grossMinor += o.wagesMinor;
     const add = (code: string | undefined, v: bigint) => { if (code && v) y.byTax[code] = (y.byTax[code] ?? 0n) + v; };
+    y.netPayMinor += o.wagesMinor - o.federalIncomeTaxMinor - o.socialSecurityTaxMinor - o.medicareTaxMinor - o.caIncomeTaxMinor - o.caSdiMinor;
+    if (ent.country === "CA") {
+      // Canada: CPP or QPP (with QPIP in Quebec) and EI, on wages paid earlier this year.
+      const quebec = ent.region === "QC";
+      const plan = quebec ? "QPP" : "CPP";
+      for (const code of [`${plan}_EE`, "EI_EE", ...(quebec ? ["QPIP_EE"] : [])]) y.stateWages![code] = (y.stateWages![code] ?? 0n) + o.wagesMinor;
+      add("CA_FIT", o.federalIncomeTaxMinor);
+      add(quebec ? "QC_PIT" : "CA_PIT", o.caIncomeTaxMinor);
+      add(`${plan}_EE`, o.socialSecurityTaxMinor);
+      add("EI_EE", o.medicareTaxMinor);
+      add("QPIP_EE", quebec ? o.caSdiMinor : 0n);
+      continue;
+    }
     add("FIT", o.federalIncomeTaxMinor);
     add("SS_EE", o.socialSecurityTaxMinor);
     add("MEDICARE_EE", o.medicareTaxMinor);
     // The opening figures' "caIncomeTax" and "caSdi" are the state's income tax and employee tax (SDI) wherever the business is.
     add(state.payroll.incomeTaxAgency?.code, o.caIncomeTaxMinor);
     add(state.payroll.taxes.find((t) => t.paidBy === "employee")?.code, o.caSdiMinor);
-    y.netPayMinor += o.wagesMinor - o.federalIncomeTaxMinor - o.socialSecurityTaxMinor - o.medicareTaxMinor - o.caIncomeTaxMinor - o.caSdiMinor;
   }
   return out;
 }
@@ -222,7 +234,7 @@ export async function calculateSavedRun(tx: Tx, entityId: string, input: PayRunI
     ...input, live: true,
     employees: input.employees.map((e) => {
       const y = ytd.get(e.employeeId);
-      return y ? { ...e, ytd: { socialSecurityWages: y.socialSecurityWages, medicareWages: y.medicareWages, futaWages: y.futaWages, stateWages: y.stateWages } } : e;
+      return y ? { ...e, ytd: { socialSecurityWages: y.socialSecurityWages, medicareWages: y.medicareWages, futaWages: y.futaWages, stateWages: y.stateWages, taxesPaid: y.byTax } } : e;
     }),
   });
 }
