@@ -1,5 +1,5 @@
 import { D, toMinor } from "../core/money.js";
-import { resolveRules, type Place, type StateRulePack } from "../rules/index.js";
+import { resolveRules, usFederal, type Place, type StateRulePack } from "../rules/index.js";
 import {
   addDays, businessDaysAfter, endOfNextMonth, fifteenthOfNextMonth, onOrNextBusinessDay, onOrPreviousBusinessDay, quarterEnd, quarterOf, weekday,
 } from "./business-days.js";
@@ -137,6 +137,8 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
   const sorted = [...runs].sort((a, b) => a.payDate.localeCompare(b.payDate));
   const out: Deposit[] = [];
   const push = (d: Deposit | null) => { if (d) out.push(d); };
+  // Canadian remittances (CRA and Revenu Québec) aren't scheduled yet.
+  if (place.country !== "US") return out;
   let schedule = federalSchedule;
 
   // Form 941 taxes.
@@ -158,7 +160,7 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
       periodKey = "";
     };
     for (const run of sorted) {
-      const rules = resolveRules(place, run.payDate).federal.payroll.deposits;
+      const rules = usFederal(resolveRules(place, run.payDate)).payroll.deposits;
       const key = schedule === "monthly" ? run.payDate.slice(0, 7) : `${semiweeklyPeriodEnd(run.payDate)}:${qKey(run.payDate)}`;
       if (key !== periodKey || schedule !== periodSchedule) {
         close();
@@ -182,7 +184,7 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
     for (const d of out) byQuarter.set(qKey(d.payDates[0]!), (byQuarter.get(qKey(d.payDates[0]!)) ?? 0n) + d.amountMinor);
     for (const d of out) {
       const q = qKey(d.payDates[0]!);
-      const limit = minor(resolveRules(place, d.payDates[0]!).federal.payroll.deposits.payWithReturnUnder);
+      const limit = minor(usFederal(resolveRules(place, d.payDates[0]!)).payroll.deposits.payWithReturnUnder);
       if (byQuarter.get(q)! < limit && !d.key.includes(":nd:")) {
         const end = quarterEnd(Number(q.slice(0, 4)), Number(q.slice(-1)));
         const returnDue = onOrNextBusinessDay(endOfNextMonth(end), "federal");
@@ -201,7 +203,7 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
       if (q > lastQuarter) break;
       for (const run of sorted.filter((r) => qKey(r.payDate) === q)) bucket.add(run, FEDERAL.federal_940!.codes);
       const end = quarterEnd(Number(q.slice(0, 4)), Number(q.slice(-1)));
-      const limit = minor(resolveRules(place, end).federal.payroll.deposits.futaDepositOver);
+      const limit = minor(usFederal(resolveRules(place, end)).payroll.deposits.futaDepositOver);
       if (bucket.total > limit || (q.endsWith("Q4") && bucket.total > 0n)) {
         push(bucket.take("federal_940", `federal_940:${q}`, `${q.slice(-2)} ${q.slice(0, 4)}`, onOrNextBusinessDay(endOfNextMonth(end), "federal"),
           q.endsWith("Q4") ? "Whatever FUTA is left for the year is due by January 31" : "FUTA over $500 is deposited by the end of the month after the quarter"));

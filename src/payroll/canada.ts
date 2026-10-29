@@ -1,4 +1,5 @@
 import { D, type Dec } from "../core/money.js";
+import type { TaxLine } from "./gross-to-net.js";
 import type { CanadaFederalRulePack, PensionPlanRules, PremiumRow, ProvinceRulePack, QuebecIncomeTax, RateRow, T4127ProvincialTax } from "../rules/canada/types.js";
 
 // Canadian source deductions for one pay period, by CRA's T4127 Payroll
@@ -267,3 +268,99 @@ function quebecAnnualTax(tax: QuebecIncomeTax, input: CanadaPayInput, gross: Dec
   const labourFunds = new D(input.labourFundShares ?? 0).mul(p).mul(tax.labourFundCreditRate);
   return clamp0(bracketTax(tax.brackets, i).sub(input.otherProvincialCredits ?? 0).sub(e.mul(tax.creditRate)).sub(labourFunds));
 }
+
+/** What an employee's TD1 forms (TP-1015.3 in Quebec) say, kept on the employee. */
+export interface CanadaTd1 {
+  /** Total claim on the federal TD1; absent means the basic personal amount (no TD1 filed). */
+  federalClaim?: string | null;
+  /** Total claim on the provincial TD1 or TP-1015.3; absent means the province's basic amount. */
+  provincialClaim?: string | null;
+  /** Extra tax asked for each pay on the TD1 (federal) and, in Quebec, on the TP-1015.3. */
+  extraFederalTax?: string;
+  extraProvincialTax?: string;
+  /** Claim code E: no income tax deducted (estimated income below the claim). */
+  taxExempt?: boolean;
+  /** Ontario tax reduction: dependants under 19 and dependants with a disability (TD1ON). */
+  ontarioDependants?: number;
+  /** Annual northern residents deduction from the TD1. */
+  northernDeduction?: string;
+  /** Not required to contribute: CPP or QPP (under 18, over 70, or CPT30 on file), EI (e.g. related to a controlling shareholder), QPIP. */
+  cppExempt?: boolean;
+  eiExempt?: boolean;
+  qpipExempt?: boolean;
+}
+
+/** One paycheque's Canadian source deductions as tax lines, from gross pay and the year so far (minor units). */
+export function canadaTaxLines(
+  federal: CanadaFederalRulePack,
+  province: ProvinceRulePack,
+  td1: CanadaTd1,
+  pay: {
+    grossMinor: bigint;
+    /** RPP and RRSP contributions taken at source (F). */
+    retirementMinor: bigint;
+    periodsPerYear: number;
+    /** Each code's amount so far this year, and its taxable wages (pensionable earnings for CPP_EE/QPP_EE, QPIP earnings for QPIP_EE). */
+    ytdTaxes: Record<string, bigint>;
+    ytdWages: Record<string, bigint>;
+  },
+): TaxLine[] {
+  const quebec = province.incomeTax.method === "quebec";
+  const major = (m: bigint | undefined) => (m ? (Number(m) / 100).toFixed(2) : "0");
+  const plan = quebec ? "QPP" : "CPP";
+  const gross = major(pay.grossMinor);
+  const d = canadaDeductions(federal, province, {
+    periodsPerYear: pay.periodsPerYear,
+    gross,
+    retirementContributions: major(pay.retirementMinor),
+    federalClaim: td1.federalClaim ?? null,
+    provincialClaim: td1.provincialClaim ?? null,
+    ontarioDependants: td1.ontarioDependants,
+    northernDeduction: td1.northernDeduction,
+    extraFederalTax: td1.extraFederalTax,
+    extraProvincialTax: td1.extraProvincialTax,
+    cppExempt: td1.cppExempt,
+    eiExempt: td1.eiExempt,
+    ytd: {
+      pension: major(pay.ytdTaxes[`${plan}_EE`]),
+      pension2: major(pay.ytdTaxes[`${plan}2_EE`]),
+      pensionableEarnings: major(pay.ytdWages[`${plan}_EE`]),
+      ei: major(pay.ytdTaxes.EI_EE),
+      qpip: major(pay.ytdTaxes.QPIP_EE),
+      qpipEarnings: major(pay.ytdWages.QPIP_EE),
+    },
+  });
+  const minor = (v: Dec) => BigInt(v.mul(100).toFixed(0));
+  const taxable = pay.grossMinor - pay.retirementMinor;
+  const rq = "Revenu Québec";
+  const lines: TaxLine[] = [];
+  const add = (code: string, agency: string, paidBy: TaxLine["paidBy"], wages: bigint, amount: Dec) => {
+    lines.push({ code, agency, paidBy, taxableWagesMinor: wages, amountMinor: minor(amount) });
+  };
+  const exempt = td1.taxExempt;
+  add("CA_FIT", "CRA", "employee", taxable, exempt ? zero : d.federalTax);
+  add(quebec ? "QC_PIT" : "CA_PIT", quebec ? rq : "CRA", "employee", taxable, exempt ? zero : d.provincialTax);
+  if (!td1.cppExempt) {
+    add(`${plan}_EE`, quebec ? rq : "CRA", "employee", pay.grossMinor, d.pension);
+    add(`${plan}2_EE`, quebec ? rq : "CRA", "employee", pay.grossMinor, d.pension2);
+  }
+  if (!td1.eiExempt) add("EI_EE", "CRA", "employee", pay.grossMinor, d.ei);
+  const qpip = quebec && !td1.qpipExempt;
+  if (qpip) add("QPIP_EE", rq, "employee", pay.grossMinor, d.qpip);
+  if (!td1.cppExempt) {
+    add(`${plan}_ER`, quebec ? rq : "CRA", "employer", pay.grossMinor, d.employer.pension);
+    add(`${plan}2_ER`, quebec ? rq : "CRA", "employer", pay.grossMinor, d.employer.pension2);
+  }
+  if (!td1.eiExempt) add("EI_ER", "CRA", "employer", pay.grossMinor, d.employer.ei);
+  if (qpip) add("QPIP_ER", rq, "employer", pay.grossMinor, d.employer.qpip);
+  return lines;
+}
+
+/** The liability account each Canadian source deduction is credited to. */
+export const CANADA_TAX_ACCOUNT: Record<string, string> = {
+  CA_FIT: "cra_payroll_payable", CA_PIT: "cra_payroll_payable",
+  CPP_EE: "cra_payroll_payable", CPP2_EE: "cra_payroll_payable", EI_EE: "cra_payroll_payable",
+  CPP_ER: "cra_payroll_payable", CPP2_ER: "cra_payroll_payable", EI_ER: "cra_payroll_payable",
+  QC_PIT: "rq_payroll_payable", QPP_EE: "rq_payroll_payable", QPP2_EE: "rq_payroll_payable", QPIP_EE: "rq_payroll_payable",
+  QPP_ER: "rq_payroll_payable", QPP2_ER: "rq_payroll_payable", QPIP_ER: "rq_payroll_payable",
+};

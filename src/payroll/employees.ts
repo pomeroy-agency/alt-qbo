@@ -109,7 +109,7 @@ function trimZeros(v: string): string {
 }
 
 const FREQUENCIES = Object.keys(PERIODS_PER_YEAR);
-const DEDUCTION_KINDS: DeductionKind[] = ["section125", "traditional401k", "post_tax"];
+const DEDUCTION_KINDS: DeductionKind[] = ["section125", "traditional401k", "post_tax", "registered_retirement"];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function invalid(message: string): never {
@@ -230,7 +230,7 @@ function cleanDeductions(list: EmployeeFields["deductions"]): Deduction[] {
     if (!amt || new D(amt).isZero()) return [];
     if (!DEDUCTION_KINDS.includes(d.kind as DeductionKind)) invalid("pick what kind of deduction it is");
     const description = typeof d.description === "string" && d.description.trim() ? d.description.trim().slice(0, 60)
-      : { section125: "Health premium (pre-tax)", traditional401k: "401(k)", post_tax: "After-tax deduction" }[d.kind as DeductionKind];
+      : { section125: "Health premium (pre-tax)", traditional401k: "401(k)", post_tax: "After-tax deduction", registered_retirement: "RRSP or pension plan" }[d.kind as DeductionKind];
     return [{ kind: d.kind as DeductionKind, amount: amt, description }];
   });
 }

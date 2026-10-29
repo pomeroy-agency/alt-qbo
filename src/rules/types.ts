@@ -97,6 +97,12 @@ export interface CaliforniaPitTables {
 export type StateIncomeTaxRules =
   /** No wage income tax (Texas, Florida, Washington, Nevada...). */
   | { method: "none" }
+  /**
+   * A Canadian province or territory: income tax, CPP or QPP, EI and QPIP are
+   * worked out together by src/payroll/canada.ts from the Canada packs
+   * (src/rules/canada), using the employee's TD1 forms.
+   */
+  | { method: "canada"; certificate: string }
   /** California's EDD Method B, from the employee's DE 4. */
   | { method: "ca_method_b"; certificate: "DE 4"; tables: CaliforniaPitTables }
   /**

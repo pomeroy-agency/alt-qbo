@@ -45,6 +45,9 @@ import { usMinnesota2026 } from "./us-mn-2026.js";
 import { usSouthCarolina2026 } from "./us-sc-2026.js";
 import { usPennsylvania2026 } from "./us-pa-2026.js";
 import { isLive } from "./jurisdictions.js";
+import { CANADA_PAYROLL_PACKS_2026 } from "./canada/provinces-payroll-2026.js";
+import { resolveCanadaRules } from "./canada/index.js";
+import type { CanadaFederalRulePack, ProvinceRulePack } from "./canada/types.js";
 import type { FederalRulePack, Place, RulePack, StateRulePack } from "./types.js";
 
 export * from "./types.js";
@@ -65,7 +68,7 @@ const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia202
   usAlabama2026, usLouisiana2026, usKentucky2026, usOklahoma2026, usConnecticut2026, usIowa2026,
   usArkansas2026, usDelaware2026, usKansas2026, usMississippi2026, usNorthDakota2026,
   usMontana2026, usNewMexico2026, usRhodeIsland2026, usVermont2026, usWestVirginia2026, usHawaii2026, usNebraska2026,
-  usMaine2026, usDistrictOfColumbia2026]);
+  usMaine2026, usDistrictOfColumbia2026, ...CANADA_PAYROLL_PACKS_2026]);
 
 
 export class JurisdictionError extends Error {
@@ -91,8 +94,11 @@ export interface ResolveOptions {
 }
 
 export interface ResolvedRules {
-  federal: FederalRulePack;
+  /** The US federal pack, or in Canada the federal CPP, EI and income tax pack. */
+  federal: FederalRulePack | CanadaFederalRulePack;
   state: StateRulePack;
+  /** Canada: the province or territory's income tax pack, used with `federal` by src/payroll/canada.ts. */
+  province?: ProvinceRulePack;
   /** "id@version#hash" for each pack used. */
   provenance: string[];
 }
@@ -105,6 +111,7 @@ export function resolveRules(place: Place, onDate: string, opts: ResolveOptions 
     );
   }
   const inForce = (p: RulePack) => p.effectiveFrom <= onDate && onDate <= p.effectiveTo;
+  if (place.country === "CA") return resolveCanada(place, onDate, inForce, opts);
   const federal = REGISTRY.find(
     (p): p is FederalRulePack => p.kind === "us-federal" && p.place.country === place.country && inForce(p),
   );
@@ -127,6 +134,33 @@ export function resolveRules(place: Place, onDate: string, opts: ResolveOptions 
     state,
     provenance: [federal, state].map((p) => `${p.id}@${p.version}#${rulePackHash(p).slice(0, 12)}`),
   };
+}
+
+function resolveCanada(place: Place, onDate: string, inForce: (p: RulePack) => boolean, opts: ResolveOptions): ResolvedRules {
+  const state = REGISTRY.find((p): p is StateRulePack => p.kind === "state" && p.place.country === "CA" && p.place.region === place.region && inForce(p));
+  let canada;
+  try {
+    canada = resolveCanadaRules(place.region ?? "", onDate);
+  } catch {
+    canada = null;
+  }
+  if (!state || !canada) throw new JurisdictionError(`no rule pack in force for CA-${place.region} on ${onDate}`);
+  const packs = [canada.federal, canada.province, state];
+  if (opts.requireReleased) {
+    for (const p of packs) {
+      if (p.status !== "released") throw new JurisdictionError(`rule pack ${p.id}@${p.version} is ${p.status}; it must be released for live use`);
+    }
+  }
+  return {
+    federal: canada.federal, state, province: canada.province,
+    provenance: [...canada.provenance, `${state.id}@${state.version}#${rulePackHash(state).slice(0, 12)}`],
+  };
+}
+
+/** The US federal pack of resolved rules; US-only paths (Form 941, FUTA, FICA) use this. */
+export function usFederal(rules: ResolvedRules): FederalRulePack {
+  if (rules.federal.kind !== "us-federal") throw new JurisdictionError("this is a US payroll figure; the business is outside the US");
+  return rules.federal;
 }
 
 /**
