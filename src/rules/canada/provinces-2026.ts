@@ -5,7 +5,7 @@ import type { ProvinceRulePack, QuebecIncomeTax, RateRow, Source, T4127Provincia
 // Québec's TP-1015.F-V. The July edition changed British Columbia,
 // Newfoundland and Labrador and Prince Edward Island mid-year: their figures
 // here are the prorated ones CRA uses for the rest of 2026, so the year's
-// withholding comes out right. All drafts until Greg's review.
+// withholding comes out right. Released 2026-10-29 after Greg's review.
 
 const rows = (list: [over: number, rate: number, constant: number][]): RateRow[] =>
   list.map(([over, rate, constant]) => ({ over: String(over), rate: String(rate), constant: String(constant) }));
@@ -23,7 +23,7 @@ function pack(region: string, name: string, incomeTax: T4127ProvincialTax | Queb
     place: { country: "CA", region },
     effectiveFrom: "2026-07-01",
     effectiveTo: "2026-12-31",
-    status: "draft",
+    status: "released",
     sources,
     reviewNotes,
     incomeTax,

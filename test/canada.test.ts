@@ -10,16 +10,16 @@ const pay = (region: string, input: Partial<CanadaPayInput> & { gross: string })
 };
 
 describe("Canada rule packs", () => {
-  it("has a draft pack for every province and territory in the country picker", () => {
+  it("has a released pack for every province and territory in the country picker", () => {
     const regions = COUNTRIES.find((c) => c.code === "CA")!.regions.map((r) => r.code).sort();
     const packs = allCanadaRulePacks().filter((p) => p.kind === "ca-province");
     expect(packs.map((p) => p.place.region).sort()).toEqual(regions);
-    expect(allCanadaRulePacks().every((p) => p.status === "draft")).toBe(true);
+    expect(allCanadaRulePacks().every((p) => p.status === "released")).toBe(true);
     for (const p of allCanadaRulePacks()) expect(p.sources.length).toBeGreaterThan(0);
   });
 
-  it("refuses drafts for live pay runs and dates without a pack", () => {
-    expect(() => resolveCanadaRules("BC", "2026-11-13", { requireReleased: true })).toThrow(/draft/);
+  it("resolves released packs for live pay runs and refuses dates without a pack", () => {
+    expect(resolveCanadaRules("BC", "2026-11-13", { requireReleased: true }).province.id).toBe("ca-bc");
     expect(() => resolveCanadaRules("BC", "2027-01-15")).toThrow(/no Canadian rule pack/);
     expect(resolveCanadaRules("BC", "2026-11-13").provenance[1]).toMatch(/^ca-bc@2026\.2#[0-9a-f]{12}$/);
   });
