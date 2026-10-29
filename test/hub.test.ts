@@ -154,13 +154,13 @@ describe("account hub", () => {
   it("makes TrailBook complimentary until a date, charging nothing, then bills as usual", async () => {
     const c = await customer();
     const until = addDays(pacificToday(), 365);
-    const set = await fromHub.post("/api/hub/comp", { trailbook_org_id: c.orgId, comp_until: until, reason: "The Install", plan_key: "trailbook_books_payroll" });
+    const set = await fromHub.post("/api/hub/comp", { trailbook_org_id: c.orgId, comped: true, comp_until: until, reason: "The Install", plan_key: "trailbook_books_payroll" });
     expect(set.status).toBe(200);
-    expect(set.data.org).toMatchObject({ comp_until: until, comp_reason: "The Install", plan_key: "trailbook_books_payroll", access: "full" });
+    expect(set.data.org).toMatchObject({ comped: true, comp_until: until, comp_reason: "The Install", plan_key: "trailbook_books_payroll", access: "full" });
     expect(lastFor(c.orgId)!.body.comp_until).toBe(until);
 
     const b = await call(c.o("/billing"), { cookie: c.cookie });
-    expect(b.data).toMatchObject({ compUntil: until, compReason: "The Install", plan: "books_payroll", access: { level: "full" } });
+    expect(b.data).toMatchObject({ comped: true, compUntil: until, compReason: "The Install", plan: "books_payroll", access: { level: "full" } });
     // Payroll is open, and the billing run charges nothing during the comp.
     const before = charges.length;
     await runBilling(pool, cfg(), addDays(pacificToday(), 200), c.orgId);
@@ -178,26 +178,48 @@ describe("account hub", () => {
   it("goes read-only after a comp ends with no card, and can end a comp early", async () => {
     const c = await customer(false);
     const until = addDays(pacificToday(), 30);
-    expect((await fromHub.post("/api/hub/comp", { trailbook_org_id: c.orgId, comp_until: until, reason: "Agency client", plan_key: "trailbook_books" })).status).toBe(200);
+    expect((await fromHub.post("/api/hub/comp", { trailbook_org_id: c.orgId, comped: true, comp_until: until, reason: "Agency client", plan_key: "trailbook_books" })).status).toBe(200);
     await pool.query("UPDATE subscriptions SET trial_ends_on = $2, comp_until = $2 WHERE org_id = $1", [c.orgId, addDays(pacificToday(), -1)]);
     const blocked = await call(c.o("/entities"), { cookie: c.cookie, body: { legalName: "New LLC", entityType: "llc_single" } });
     expect(blocked.status).toBe(402);
     expect(blocked.data.error).toMatch(/complimentary period has ended/);
 
     const d = await customer(false);
-    await fromHub.post("/api/hub/comp", { trailbook_org_id: d.orgId, comp_until: until, reason: "Agency client", plan_key: "trailbook_books" });
-    const cleared = await fromHub.post("/api/hub/comp", { trailbook_org_id: d.orgId, comp_until: null });
+    await fromHub.post("/api/hub/comp", { trailbook_org_id: d.orgId, comped: true, comp_until: until, reason: "Agency client", plan_key: "trailbook_books" });
+    const cleared = await fromHub.post("/api/hub/comp", { trailbook_org_id: d.orgId, comped: false });
     expect(cleared.status).toBe(200);
-    expect(cleared.data.org).toMatchObject({ comp_until: null, trial_ends_on: pacificToday(), access: "full" });
+    expect(cleared.data.org).toMatchObject({ comped: true, comp_until: pacificToday(), trial_ends_on: pacificToday(), access: "full" });
+    // From tomorrow it no longer covers anything.
+    const tomorrow = (await pool.query("SELECT * FROM subscriptions WHERE org_id = $1", [d.orgId])).rows[0];
+    expect(tomorrow.trial_ends_on).toBe(pacificToday());
+  });
+
+  it("keeps an open-ended comp for an agency plan until the hub ends it", async () => {
+    const c = await customer(false);
+    const set = await fromHub.post("/api/hub/comp", { trailbook_org_id: c.orgId, comped: true, comp_until: null, reason: "Full Engine plan", plan_key: "trailbook_books_payroll" });
+    expect(set.status).toBe(200);
+    expect(set.data.org).toMatchObject({ comped: true, comp_until: null, trial_ends_on: null, access: "full", plan_key: "trailbook_books_payroll" });
+    const b = await call(c.o("/billing"), { cookie: c.cookie });
+    expect(b.data).toMatchObject({ comped: true, compUntil: null, compReason: "Full Engine plan", trialEndsOn: null, next: null });
+    // Years later, still free and open, with nothing charged.
+    const before = charges.length;
+    await runBilling(pool, cfg(), addDays(pacificToday(), 800), c.orgId);
+    expect(charges.length).toBe(before);
+    expect((await fromHub.get(`/api/hub/status?org=${c.orgId}`)).data.org).toMatchObject({ comped: true, access: "full" });
+    // The agency plan ends: the hub ends the comp, and the trial rules take over from tomorrow.
+    const end = await fromHub.post("/api/hub/comp", { trailbook_org_id: c.orgId, comped: false });
+    expect(end.data.org).toMatchObject({ comp_until: pacificToday(), trial_ends_on: pacificToday() });
+    expect(lastFor(c.orgId)!.body.comp_until).toBe(pacificToday());
   });
 
   it("refuses a comp with an unsigned request, a bad date, or a charge still open", async () => {
     const c = await customer(false);
-    const body = { trailbook_org_id: c.orgId, comp_until: addDays(pacificToday(), 30), reason: "x", plan_key: "trailbook_books" };
+    const body = { trailbook_org_id: c.orgId, comped: true, comp_until: addDays(pacificToday(), 30), reason: "x", plan_key: "trailbook_books" };
     expect((await call("/api/hub/comp", { body })).status).toBe(401);
     expect((await fromHub.post("/api/hub/comp", { ...body, comp_until: pacificToday() })).status).toBe(400);
     expect((await fromHub.post("/api/hub/comp", { ...body, comp_until: addDays(pacificToday(), 2000) })).status).toBe(400);
-    expect((await fromHub.post("/api/hub/comp", { ...body, plan_key: "milepost_pro" })).status).toBe(400);
+    expect((await fromHub.post("/api/hub/comp", { ...body, plan_key: "crm_pro" })).status).toBe(400);
+    expect((await fromHub.post("/api/hub/comp", { ...body, comped: undefined })).status).toBe(400);
     expect((await fromHub.post("/api/hub/comp", { ...body, trailbook_org_id: billing.seller!.orgId })).status).toBe(409);
     await pool.query(
       `INSERT INTO billing_charges (org_id, kind, period_start, period_end, plan, interval, lines, subtotal_minor, status)

@@ -32,6 +32,7 @@ Sent when an owner or admin changes the plan, cancels, restarts or saves a card,
   "access": "full",
   "trial_ends_on": "2026-11-28",
   "period_end": null,
+  "comped": false,
   "comp_until": null,
   "comp_reason": null,
   "people": 0,
@@ -49,7 +50,8 @@ Sent when an owner or admin changes the plan, cancels, restarts or saves a card,
 | `businesses` | Includes the first business, so the extra-business add-on quantity is `businesses - 1` |
 | `people` | Different people paid in posted pay runs so far this calendar month |
 | `country`, `region_code` | Where the first business is based |
-| `comp_until`, `comp_reason` | Set while a complimentary period lasts |
+| `comped` | Whether a complimentary period covers today |
+| `comp_until`, `comp_reason` | Set while comped. `comp_until` is the last day it covers, or null for an open-ended one (the agency plans) |
 
 Practice organisations are never sent. The status never includes email addresses, employees, pay, bank or card details.
 
@@ -62,16 +64,30 @@ For the hub's nightly check. Signed as above.
 
 ## Hub → TrailBook: `POST /api/hub/comp`
 
-Sets or ends a complimentary period, for example when The Install includes TrailBook. Signed as above.
+Sets or ends a complimentary period. Signed as above.
 
 ```json
-{ "trailbook_org_id": "uuid", "comp_until": "2027-10-31", "reason": "The Install", "plan_key": "trailbook_books_payroll" }
+{ "trailbook_org_id": "uuid", "comped": true, "comp_until": "2027-10-31", "reason": "The Install", "plan_key": "trailbook_books_payroll" }
 ```
 
-`comp_until: null` ends a complimentary period today. The answer is `{ "org": <status> }`, and the new status is also pushed.
+- **Dated** (The Install, 12 months): `comp_until` is the last day it covers, at most 3 years away.
+- **Open-ended** (the agency plans): `comp_until: null`. It lasts until the hub ends it, when the agency plan ends.
+- **End now:** `{ "trailbook_org_id": "uuid", "comped": false }`. Today is its last day.
+
+The answer is `{ "org": <status> }`, and the new status is also pushed.
+
+Approved Oct 29, 2026: Keep It Running includes Books (`trailbook_books`); Systems + Marketing, Full Engine and The Install include Books + Payroll (`trailbook_books_payroll`). The $4-per-person charge is comped in every case, since nothing is charged during a complimentary period.
 
 While it lasts, everything on the plan is open and nothing is charged, people paid included. It replaces any trial still running. The day after it ends, the card on file is charged as for a trial that ended; with no card, the books go read-only until one is added. The Billing page shows "Complimentary" with the end date and reason.
 
-Refused (409) while the organisation has a charge that isn't settled, so a comp never hides money owed; settle or waive that charge first. Also refused for TrailBook's own books. The end date must be after today and at most 3 years away. Each change is in the organisation's audit chain as `billing.comp_set` or `billing.comp_ended`, by `app:account-hub`.
+Refused (409) while the organisation has a charge that isn't settled, so a comp never hides money owed; settle or waive that charge first. Also refused for TrailBook's own books. A dated end must be after today and at most 3 years away. Each change is in the organisation's audit chain as `billing.comp_set` or `billing.comp_ended`, by `app:account-hub`.
 
 Not done here: a $0 invoice for a comp. A free subscription has no sales price, so none is issued; revisit if that changes.
+
+## Linking a MilePost workspace to a TrailBook organisation
+
+The `company_id` MilePost stores from the OAuth callback and token response is a TrailBook **business** (entity) id, not the organisation id. One TrailBook organisation can hold several businesses. `GET /api/v1/company` now also returns `org_id`, the organisation that holds that business and pays for TrailBook. That is the id to seed the hub's `app_links.trailbook_org_id` with, and it matches `trailbook_org_id` in the status push.
+
+## For whoever builds the hub
+
+The hub is built from the pa-crm repository, where the lowercase product name is a Netlify secret value and fails the build. Nothing in this contract needs it: every field and plan key above starts with `trailbook` or is generic. Keep the hub's endpoint path (`/api/trailbook/status`) and table names (`trailbook_status`) as they are.

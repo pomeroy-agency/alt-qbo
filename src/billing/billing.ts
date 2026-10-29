@@ -79,7 +79,7 @@ export interface Access { level: "full" | "read_only"; reason?: string; warning?
 export function accessFor(sub: Sub, today: string): Access {
   if (sub.status === "trialing") {
     if (today <= sub.trial_ends_on) return { level: "full" };
-    if (sub.comp_until) return { level: "read_only", reason: "your complimentary period has ended; add a card under Billing to keep making changes (your books stay readable and downloadable)" };
+    if (sub.comp_reason) return { level: "read_only", reason: "your complimentary period has ended; add a card under Billing to keep making changes (your books stay readable and downloadable)" };
     return { level: "read_only", reason: "your free trial has ended; add a card under Billing to keep making changes (your books stay readable and downloadable)" };
   }
   if (sub.status === "canceled" || (sub.cancel_at_period_end && sub.period_end && today > sub.period_end)) {
@@ -123,7 +123,8 @@ export async function subscriptionStatus(pool: pg.Pool, orgId: string, cfg: Bill
     if (await isFree(tx, orgId, cfg)) return { active: true, status: "free", plan: null, renews_at: null };
     const sub = await ensureSubscription(tx, orgId, today);
     const active = accessFor(sub, today).level === "full";
-    const renews = sub.status === "trialing" ? sub.trial_ends_on : sub.cancel_at_period_end ? null : sub.period_end;
+    const openComp = compActive(sub, today) && !sub.comp_until;
+    const renews = openComp ? null : sub.status === "trialing" ? sub.trial_ends_on : sub.cancel_at_period_end ? null : sub.period_end;
     return { active, status: sub.status, plan: sub.plan, renews_at: active ? renews : null };
   });
 }
@@ -298,22 +299,33 @@ export async function saveCard(tx: Tx, orgId: string, card: SavedCard, today: st
 
 // ------------------------------------------------------- complimentary
 
-/** The longest complimentary period the hub may set in one go. */
+/** The longest dated complimentary period the hub may set in one go. */
 export const MAX_COMP_DAYS = 3 * 366;
+/** The trial end kept for an open-ended complimentary period, until the hub ends it. Never shown or reported. */
+const OPEN_ENDED = "9999-12-31";
+
+/** Whether a complimentary period covers today. */
+export function compActive(sub: { comp_reason: string | null; status: string; trial_ends_on: string }, today: string): boolean {
+  return Boolean(sub.comp_reason) && sub.status === "trialing" && today <= sub.trial_ends_on;
+}
 
 /**
- * Makes TrailBook free for this organisation through `until`, on `plan`.
- * Nothing is charged meanwhile, people paid included. It works like a trial
- * that ends on `until`: the day after, the card on file is charged, or the
- * books become read-only until one is added. It replaces any trial still
- * running. Refused while a charge is still open, so a comp
- * never hides money owed; settle or waive that first.
+ * Makes TrailBook free for this organisation on `plan`, through `until`, or
+ * with `until` null until the hub ends it (the agency plans). Nothing is
+ * charged meanwhile, people paid included. It works like a trial: the day
+ * after it ends, the card on file is charged, or the books become read-only
+ * until one is added. It replaces any trial still running. Refused while a
+ * charge is still open, so a comp never hides money owed; settle or waive
+ * that first.
  */
 export async function setComp(tx: Tx, orgId: string, today: string, input: { until: unknown; reason: unknown; plan: unknown }): Promise<void> {
-  const until = typeof input.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.until) && !Number.isNaN(Date.parse(input.until)) ? input.until : null;
-  if (!until) throw new BillingError("the complimentary end date looks like 2027-10-31");
-  if (until <= today) throw new BillingError("the complimentary end date must be after today");
-  if (daysBetween(today, until) > MAX_COMP_DAYS) throw new BillingError("a complimentary period can be at most 3 years at a time");
+  let until: string | null = null;
+  if (input.until !== null) {
+    until = typeof input.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.until) && !Number.isNaN(Date.parse(input.until)) ? input.until : null;
+    if (!until) throw new BillingError("the complimentary end date looks like 2027-10-31, or is empty for no end date");
+    if (until <= today) throw new BillingError("the complimentary end date must be after today");
+    if (daysBetween(today, until) > MAX_COMP_DAYS) throw new BillingError("a dated complimentary period can be at most 3 years at a time");
+  }
   if (input.plan !== "books" && input.plan !== "books_payroll") throw new BillingError("pick the plan the complimentary period covers");
   const reason = typeof input.reason === "string" ? input.reason.trim() : "";
   if (!reason || reason.length > 200) throw new BillingError("give a reason for the complimentary period (up to 200 characters)");
@@ -327,21 +339,19 @@ export async function setComp(tx: Tx, orgId: string, today: string, input: { unt
        period_start = NULL, period_end = NULL, past_due_since = NULL, cancel_at_period_end = false, canceled_at = NULL,
        comp_until = $4, comp_reason = $5, comp_set_at = now(), updated_at = now()
      WHERE org_id = $1`,
-    [orgId, until, input.plan, until, reason],
+    [orgId, until ?? OPEN_ENDED, input.plan, until, reason],
   );
 }
 
-/** Ends a complimentary period today: from tomorrow's billing run the card is charged, or the books are read-only. */
+/**
+ * Ends a complimentary period today: from tomorrow's billing run the card
+ * is charged, or the books are read-only. The reason stays on record, with
+ * today as the end date.
+ */
 export async function clearComp(tx: Tx, orgId: string, today: string): Promise<void> {
   const sub = await ensureSubscription(tx, orgId, today);
-  if (!sub.comp_until) return;
-  const stillComped = sub.status === "trialing" && today <= sub.trial_ends_on;
-  await tx.query(
-    `UPDATE subscriptions SET comp_until = NULL, comp_reason = NULL, comp_set_at = now(),
-       trial_ends_on = CASE WHEN $2 THEN $3::date ELSE trial_ends_on END, updated_at = now()
-     WHERE org_id = $1`,
-    [orgId, stillComped, today],
-  );
+  if (!compActive(sub, today)) return;
+  await tx.query("UPDATE subscriptions SET trial_ends_on = $2, comp_until = $2, comp_set_at = now(), updated_at = now() WHERE org_id = $1", [orgId, today]);
 }
 
 // --------------------------------------------------------------- summary
@@ -358,14 +368,14 @@ export async function billingSummary(tx: Tx, orgId: string, today: string, cfg: 
   return {
     free: false as const,
     plan: sub.plan, interval: sub.interval, nextPlan: sub.next_plan, nextInterval: sub.next_interval, status: sub.status,
-    trialEndsOn: sub.trial_ends_on, periodStart: sub.period_start, periodEnd: sub.period_end, cancelAtPeriodEnd: sub.cancel_at_period_end,
-    compUntil: sub.comp_until && today <= sub.comp_until ? sub.comp_until : null, compReason: sub.comp_until && today <= sub.comp_until ? sub.comp_reason : null,
+    trialEndsOn: compActive(sub, today) && !sub.comp_until ? null : sub.trial_ends_on, periodStart: sub.period_start, periodEnd: sub.period_end, cancelAtPeriodEnd: sub.cancel_at_period_end,
+    comped: compActive(sub, today), compUntil: compActive(sub, today) ? sub.comp_until : null, compReason: compActive(sub, today) ? sub.comp_reason : null,
     founding: sub.founding, priceLockedUntil: sub.price_locked_until, foundingSeatsLeft: foundingLeft, partnerDiscountPct: sub.partner_discount_pct,
     prices: sub.prices,
     billing: { name: sub.billing_name, email: sub.billing_email, address: sub.address_line1 ? { line1: sub.address_line1, city: sub.address_city, state: sub.address_state, zip: sub.address_zip } : null },
     card: sub.card_last4 ? { brand: sub.card_brand, last4: sub.card_last4, exp: sub.card_exp } : null,
     access: accessFor(sub, today),
-    next: sub.status === "canceled" || sub.cancel_at_period_end ? null : await estimateRenewal(tx, sub, today),
+    next: sub.status === "canceled" || sub.cancel_at_period_end || (compActive(sub, today) && !sub.comp_until) ? null : await estimateRenewal(tx, sub, today),
     businesses: await businessCount(tx, orgId),
     charges,
     cardPayments: Boolean(cfg.gateway && cfg.seller),

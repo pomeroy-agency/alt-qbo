@@ -3,7 +3,7 @@ import type pg from "pg";
 import { withSystem, type Tx } from "../db/pool.js";
 import { appendAudit } from "../core/audit.js";
 import { pacificToday } from "../payroll/business-days.js";
-import { BillingError, accessFor, clearComp, peoplePaid, setComp, type BillingConfig } from "../billing/billing.js";
+import { BillingError, accessFor, clearComp, compActive, peoplePaid, setComp, type BillingConfig } from "../billing/billing.js";
 import { addDays, type Plan } from "../billing/plans.js";
 
 // The Pomeroy account hub (account.pomeroyagency.com) keeps one list of what
@@ -15,7 +15,8 @@ import { addDays, type Plan } from "../billing/plans.js";
 //   also catches changes that happen by date (a trial or grace period ending);
 // - a signed GET /api/hub/status here, which the hub's nightly check reads;
 // - a signed POST /api/hub/comp here, which sets or ends a complimentary
-//   period (for example when The Install includes TrailBook).
+//   period: dated (The Install, 12 months) or open-ended (the agency plans,
+//   until the hub ends it).
 //
 // Every request either way carries `x-pomeroy-signature: t=<unix seconds>,v1=<hex>`,
 // an HMAC-SHA256 with the shared ACCOUNT_HUB_SECRET over "<t>.<payload>",
@@ -90,6 +91,9 @@ export interface TrailBookStatus {
   access: HubAccess;
   trial_ends_on: string | null;
   period_end: string | null;
+  /** Whether a complimentary period covers today. */
+  comped: boolean;
+  /** Its last day while comped; null while comped means open-ended (until the hub ends it). */
   comp_until: string | null;
   comp_reason: string | null;
   /** Different people paid in posted pay runs so far this calendar month. */
@@ -125,10 +129,10 @@ export async function orgStatus(tx: Tx, orgId: string, cfg: BillingConfig, today
     country: (ents[0]?.country as string | undefined)?.trim() ?? null, region_code: (ents[0]?.region as string | null | undefined) ?? null,
   };
   if (cfg.seller?.orgId === orgId) {
-    return { ...base, plan_key: "trailbook_books_payroll", status: "free", access: "full", trial_ends_on: null, period_end: null, comp_until: null, comp_reason: null };
+    return { ...base, plan_key: "trailbook_books_payroll", status: "free", access: "full", trial_ends_on: null, period_end: null, comped: false, comp_until: null, comp_reason: null };
   }
   if (!sub) {
-    return { ...base, plan_key: "trailbook_books", status: "not_started", access: "full", trial_ends_on: null, period_end: null, comp_until: null, comp_reason: null };
+    return { ...base, plan_key: "trailbook_books", status: "not_started", access: "full", trial_ends_on: null, period_end: null, comped: false, comp_until: null, comp_reason: null };
   }
   const a = accessFor(sub, today);
   let access: HubAccess = a.level === "read_only" ? "read_only" : a.warning ? "grace" : "full";
@@ -137,11 +141,12 @@ export async function orgStatus(tx: Tx, orgId: string, cfg: BillingConfig, today
     const ended = sub.status === "canceled" ? (sub.period_end ?? (sub.canceled_at ? new Date(sub.canceled_at).toISOString().slice(0, 10) : null)) : null;
     if (ended && addDays(ended, READ_ONLY_YEARS * 365 + 2) < today) access = "ended";
   }
-  const comped = sub.comp_until && today <= sub.comp_until;
+  const comped = compActive(sub, today);
   return {
     ...base, plan_key: PLAN_KEYS[sub.plan as Plan], status: sub.status, access,
-    trial_ends_on: sub.status === "trialing" ? sub.trial_ends_on : null, period_end: sub.period_end,
-    comp_until: comped ? sub.comp_until : null, comp_reason: comped ? sub.comp_reason : null,
+    // An open-ended comp's internal trial end is never shown.
+    trial_ends_on: sub.status === "trialing" && !(comped && !sub.comp_until) ? sub.trial_ends_on : null, period_end: sub.period_end,
+    comped, comp_until: comped ? sub.comp_until : null, comp_reason: comped ? sub.comp_reason : null,
   };
 }
 
@@ -271,19 +276,20 @@ export async function handleHub(req: Request, path: string, pool: pg.Pool, opts:
         const before = await orgStatus(tx, orgId, cfg, today);
         if (!before) throw new BillingError("no such TrailBook organisation", 404);
         if (before.status === "free") throw new BillingError("TrailBook's own books are always free", 409);
-        if (b.comp_until === null) {
+        if (typeof b.comped !== "boolean") throw new BillingError("comped is true (set) or false (end today)");
+        if (!b.comped) {
           await clearComp(tx, orgId, today);
         } else {
           const plan = planFromKey(b.plan_key);
           if (!plan) throw new BillingError("plan_key is trailbook_books or trailbook_books_payroll");
-          await setComp(tx, orgId, today, { until: b.comp_until, reason: b.reason, plan });
+          await setComp(tx, orgId, today, { until: b.comp_until ?? null, reason: b.reason, plan });
         }
         const after = await orgStatus(tx, orgId, cfg, today);
         await appendAudit(tx, {
-          orgId, actor: "app:account-hub", action: b.comp_until === null ? "billing.comp_ended" : "billing.comp_set",
+          orgId, actor: "app:account-hub", action: b.comped ? "billing.comp_set" : "billing.comp_ended",
           objectType: "organization", objectId: orgId,
-          before: { comp_until: before.comp_until, comp_reason: before.comp_reason, plan_key: before.plan_key },
-          after: { comp_until: after!.comp_until, comp_reason: after!.comp_reason, plan_key: after!.plan_key },
+          before: { comped: before.comped, comp_until: before.comp_until, comp_reason: before.comp_reason, plan_key: before.plan_key },
+          after: { comped: after!.comped, comp_until: after!.comp_until, comp_reason: after!.comp_reason, plan_key: after!.plan_key },
         });
         return after!;
       });
