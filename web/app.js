@@ -238,8 +238,8 @@ async function authView(mode, error = "", notice = "") {
           ${signup ? `
             <label>Business or firm name<input name="orgName" required></label>
             <label>Invite code <span class="muted">(optional, only if someone gave you one)</span><input name="inviteCode" autocomplete="off"></label>
-            <label class="check"><input type="checkbox" name="acceptTerms" required> I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</label>
-            <label class="check"><input type="checkbox" name="adOptOut"> Don't share my sign-up with Google or Meta for ad measurement.</label>` : ""}
+            <label class="check wrap"><input type="checkbox" name="acceptTerms" required><span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+            <label class="check wrap"><input type="checkbox" name="adOptOut"><span>Don't share my sign-up with Google or Meta for ad measurement.</span></label>` : ""}
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>
         ${!signup && email ? `<p style="margin-top:12px"><a href="#/magic">Email me a sign-in link instead</a> · <a href="#/forgot">Forgot your password?</a></p>` : ""}
