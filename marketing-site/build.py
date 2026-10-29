@@ -26,7 +26,7 @@ def build(src: pathlib.Path) -> str:
         "%%HEADER%%": part("header.html"),
         "%%TAIL%%": part("tail.html") + CURRENCY,
         "%%PAGE_CSS%%": css,
-        "%%BODY%%": body,
+        "%%BODY%%": body.replace("%%NEWS%%", part("news.html")),
     }.items():
         out = out.replace(k, v)
     out = (out.replace("%%TITLE%%", meta["TITLE"]).replace("%%DESC%%", meta["DESC"])
