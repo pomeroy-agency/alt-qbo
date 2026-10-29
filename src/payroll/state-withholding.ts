@@ -99,14 +99,24 @@ export function localWithholding(
 
 function annualFormulaWithholding(
   rules: Extract<StateIncomeTaxRules, { method: "annual_formula" }>, c: StateWithholding | null | undefined, w4Status: FederalFilingStatus | undefined,
-  wages: Dec, periods: number,
+  wages: Dec, periods: number, fica: EmployeeFica | undefined,
 ): Dec {
   const fromW4 = rules.statusFromW4 && w4Status ? rules.statusFromW4[w4Status] : undefined;
   const status = rules.statuses.find((s) => s.id === c?.filingStatus) ?? rules.statuses.find((s) => s.id === (fromW4 ?? rules.noCertificateStatus)) ?? rules.statuses[0]!;
-  const annual = wages.mul(periods);
-  let deduction = new D(rules.dollarAllowance && c?.allowanceAmount !== undefined ? c.allowanceAmount : status.standardDeduction);
   const counts = [c?.allowances ?? 0, c?.allowances2 ?? 0];
-  rules.allowances.forEach((a, i) => { deduction = deduction.add(new D(a.amount).mul(counts[i] ?? 0)); });
+  if (rules.noTaxBelowAnnualWages && counts[0]! > 0 && wages.mul(periods).lt(rules.noTaxBelowAnnualWages)) return new D(0);
+  // Massachusetts: this paycheck's Social Security and Medicare, until the year's total reaches the cap.
+  let ficaOff = new D(0);
+  if (rules.ficaDeductionCap && fica) ficaOff = D.min(fica.thisPeriod, D.max(new D(rules.ficaDeductionCap).sub(fica.yearToDate), 0));
+  const annual = wages.sub(ficaOff).mul(periods);
+  let deduction = new D(rules.dollarAllowance && c?.allowanceAmount !== undefined ? c.allowanceAmount : status.standardDeduction);
+  if (rules.exemptionBase && counts[0]! > 0) deduction = deduction.add(rules.exemptionBase);
+  let credits = new D(0);
+  rules.allowances.forEach((a, i) => {
+    const amount = new D(a.amount).mul(counts[i] ?? 0);
+    if (a.credit) credits = credits.add(amount);
+    else deduction = deduction.add(amount);
+  });
   const taxable = D.max(annual.sub(deduction), 0);
   let tax = new D(0);
   const rows = rules.tables[status.table]!;
@@ -116,11 +126,18 @@ function annualFormulaWithholding(
     if (slice.gt(0)) tax = tax.add(slice.mul(r.rate));
   });
   if (status.credit) {
-    const credit = D.max(new D(status.credit.base).sub(D.max(annual.sub(status.credit.phaseOutFrom), 0).mul(status.credit.phaseOutRate)), 0);
-    tax = D.max(tax.sub(credit), 0);
+    credits = credits.add(D.max(new D(status.credit.base).sub(D.max(annual.sub(status.credit.phaseOutFrom), 0).mul(status.credit.phaseOutRate)), 0));
   }
+  tax = D.max(tax.sub(credits), 0);
+  if (rules.round === "annual_dollar") tax = tax.toDecimalPlaces(0, D.ROUND_HALF_UP);
   const perPeriod = tax.div(periods);
   return rules.round === "dollar" ? perPeriod.toDecimalPlaces(0, D.ROUND_HALF_UP) : perPeriod;
+}
+
+/** The employee's Social Security and Medicare, for states that let them come off wages first (Massachusetts). */
+export interface EmployeeFica {
+  thisPeriod: Dec;
+  yearToDate: Dec;
 }
 
 /** State income tax withheld from one paycheck, by the state's method. */
@@ -131,6 +148,7 @@ export function stateWithholding(
   periodsPerYear: number,
   /** Federal income tax withheld from the same paycheck (Oregon subtracts it). */
   federalWithheld: Dec = new D(0),
+  fica?: EmployeeFica,
 ): Dec {
   switch (rules.method) {
     case "none":
@@ -158,7 +176,7 @@ export function stateWithholding(
     }
     case "annual_formula": {
       if (cert.state?.exempt) return new D(0);
-      return annualFormulaWithholding(rules, cert.state, cert.w4Status, wagesThisPeriod, periodsPerYear)
+      return annualFormulaWithholding(rules, cert.state, cert.w4Status, wagesThisPeriod, periodsPerYear, fica)
         .add(cert.state?.additionalWithholding ?? 0).toDecimalPlaces(2);
     }
   }

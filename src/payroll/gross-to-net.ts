@@ -241,7 +241,13 @@ export function calculatePaycheck(
 
   // State income tax, then the state's other wage taxes (SDI, UI, ETT...), all on wages less section 125.
   if (st.incomeTaxAgency) {
-    const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding, w4Status: input.w4.filingStatus }, toMajor(incomeTaxWages), periods, fit);
+    // Massachusetts takes the employee's Social Security and Medicare off first, up to $2,000 a year.
+    const ficaThisPeriod = taxes.filter((t) => t.paidBy === "employee" && t.code !== "FIT").reduce((sum, t) => sum + t.amountMinor, 0n);
+    const fica = {
+      thisPeriod: toMajor(ficaThisPeriod),
+      yearToDate: toMajor(ytd.socialSecurityWages).mul(fed.socialSecurity.employeeRate).add(toMajor(ytd.medicareWages).mul(fed.medicare.employeeRate)),
+    };
+    const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding, w4Status: input.w4.filingStatus }, toMajor(incomeTaxWages), periods, fit, fica);
     if (st.incomeTax.method === "or_formula" && !input.stateWithholding) {
       warnings.push(`no ${st.incomeTax.certificate} on file: ${stateName} income tax withheld at the flat ${new D(st.incomeTax.noCertificateRate).mul(100)}%`);
     }

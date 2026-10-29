@@ -6,6 +6,7 @@ import { calculatePaycheck, type EmployeePayInput } from "../src/payroll/gross-t
 import { splitWorkweek } from "../src/payroll/hours.js";
 import { depositAccounts, depositSchedule, type RunTaxes } from "../src/payroll/deposits.js";
 import { localWithholding, stateWithholding } from "../src/payroll/state-withholding.js";
+import { formsFor } from "../src/payroll/forms.js";
 import { D } from "../src/core/money.js";
 
 describe("jurisdictions", () => {
@@ -16,7 +17,7 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "CO", "FL", "GA", "ID", "IL", "NC", "NH", "NV", "NY", "OR", "SD", "TN", "TX", "UT", "WA", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "CO", "FL", "GA", "ID", "IL", "MA", "MI", "NC", "NH", "NJ", "NV", "NY", "OR", "SD", "TN", "TX", "UT", "VA", "WA", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
@@ -382,5 +383,77 @@ describe("annual-formula states (Illinois, Colorado, North Carolina, Georgia, Ut
     expect(due("IL", "IL_WH", 20000)).toEqual([["2026-07-15", 30000n], ["2026-07-29", 30000n]]);
     // Colorado over $50,000: the third business day after the payday's Friday.
     expect(due("CO", "CO_WH", 60000)).toEqual([["2026-07-15", 30000n], ["2026-07-29", 30000n]]);
+  });
+});
+
+describe("annual-formula states, third round (Michigan, Virginia, Massachusetts, New Jersey)", () => {
+  const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number, fica?: { thisPeriod: number; yearToDate: number }) =>
+    stateWithholding(pack(region).payroll.incomeTax, { state }, new D(wages), periods, new D(0),
+      fica && { thisPeriod: new D(fica.thisPeriod), yearToDate: new D(fica.yearToDate) }).toFixed(2);
+
+  it("matches Virginia's own example, rounding the year's tax to the dollar", () => {
+    // $2,649 semimonthly, 5 exemptions: $2,628 / 24.
+    expect(w("VA", { allowances: 5 }, 2649, 24)).toBe("109.50");
+    // No VA-4: $8,750 only. Age 65 or blind exemptions take $800 more.
+    expect(w("VA", null, 1000, 52)).toBe("42.87");
+    expect(w("VA", { allowances2: 1 }, 1000, 52)).toBe(new D(720 + (52000 - 9550 - 17000) * 0.0575).toDecimalPlaces(0).div(52).toFixed(2));
+  });
+
+  it("takes $5,900 a Michigan exemption off before 4.25%", () => {
+    expect(w("MI", { allowances: 2 }, 2000, 26)).toBe("65.71");
+    expect(w("MI", null, 1000, 52)).toBe("42.50");
+  });
+
+  it("uses New Jersey's rate table for the NJ-W4 status or the one chosen on line 3", () => {
+    expect(w("NJ", { filingStatus: "rate_a", allowances: 2 }, 1000, 52)).toBe("27.02");
+    expect(w("NJ", { filingStatus: "rate_b", allowances: 2 }, 1000, 52)).toBe("17.31");
+    // No NJ-W4: Rate A, no allowances.
+    expect(w("NJ", null, 1000, 52)).toBe("29.37");
+    // Rate E on $150,000: 4,370 + 6.5% over 100,000.
+    expect(w("NJ", { filingStatus: "rate_e" }, 150000, 1)).toBe("7620.00");
+  });
+
+  it("follows Circular M: FICA off up to $2,000, the exemption factor, then the credits", () => {
+    const fica = { thisPeriod: 76.5, yearToDate: 0 };
+    expect(w("MA", { allowances: 1 }, 1000, 52, fica)).toBe("41.94");
+    // Once $2,000 of FICA has come off this year, nothing more does.
+    expect(w("MA", { allowances: 1 }, 1000, 52, { thisPeriod: 76.5, yearToDate: 2000 })).toBe("45.77");
+    // Head of household $120 a year; blindness $110 a person.
+    expect(w("MA", { filingStatus: "hoh", allowances: 1 }, 1000, 52, fica)).toBe("39.64");
+    expect(w("MA", { allowances: 1, allowances2: 1 }, 1000, 52, fica)).toBe("39.83");
+    // Under $8,000 a year with an exemption: nothing; with none, 5%.
+    expect(w("MA", { allowances: 1 }, 150, 52, { thisPeriod: 0, yearToDate: 2000 })).toBe("0.00");
+    expect(w("MA", null, 150, 52, { thisPeriod: 0, yearToDate: 2000 })).toBe("7.50");
+  });
+
+  it("charges Massachusetts PFML and New Jersey's employee contributions on a paycheck", () => {
+    const weekly: EmployeePayInput = { employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "25.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } };
+    const ma = calculatePaycheck(weekly, { federal, state: pack("MA"), provenance: [] }, {}, "2026-09-04");
+    const amount = (p: typeof ma, code: string) => p.taxes.find((t) => t.code === code)?.amountMinor;
+    expect(amount(ma, "MA_PFML_EE")).toBe(460n);
+    // No M-4: no exemptions; this paycheck's $76.50 of FICA comes off first.
+    expect(amount(ma, "MA_WH")).toBe(4618n);
+    const nj = calculatePaycheck(weekly, { federal, state: pack("NJ"), provenance: [] }, {}, "2026-09-04");
+    expect([amount(nj, "NJ_UIWF_EE"), amount(nj, "NJ_DI_EE"), amount(nj, "NJ_FLI_EE")]).toEqual([425n, 190n, 230n]);
+  });
+
+  it("dates deposits and New Jersey's quarterly return without a weekend extension", () => {
+    const run = (id: string, payDate: string, code: string, amount: number): RunTaxes => ({ payRunId: id, payDate, byTax: { [code]: BigInt(amount * 100), FIT: 10000n } });
+    const due = (region: string, code: string, payDates: string[], kind = `${region.toLowerCase()}_wh`, prior?: number) =>
+      depositSchedule(payDates.map((d, i) => run(`r${i}`, d, code, 300)), "semiweekly", { country: "US", region },
+        prior === undefined ? {} : { priorQuarterlyAverageMinor: BigInt(prior * 100) / 4n })
+        .filter((d) => d.kind === kind).map((d) => [d.dueDate, d.amountMinor]);
+    const july = ["2026-07-08", "2026-07-22"];
+    expect(due("VA", "VA_WH", july)).toEqual([["2026-08-25", 60000n]]);
+    expect(due("MI", "MI_WH", july)).toEqual([["2026-08-20", 60000n]]);
+    expect(due("MA", "MA_WH", july)).toEqual([["2026-08-17", 60000n]]);
+    expect(due("NJ", "NJ_WH", july)).toEqual([["2026-08-17", 60000n]]);
+    expect(due("VA", "VA_WH", july, "va_wh", 20000)).toEqual([["2026-07-15", 30000n], ["2026-07-29", 30000n]]);
+    // NJ-927: the 30th after the quarter; January 30, 2027 is a Saturday, so the Friday before.
+    expect(due("NJ", "NJ_UI_ER", ["2026-08-14"], "nj_ui")).toEqual([["2026-10-30", 30000n]]);
+    expect(due("NJ", "NJ_UI_ER", ["2026-12-15"], "nj_ui")).toEqual([["2027-01-29", 30000n]]);
+    expect(formsFor(2026, "2026-12-31", pack("NJ")).find((f) => f.slug === "nj927" && f.quarter === 4)?.dueDate).toBe("2027-01-29");
   });
 });

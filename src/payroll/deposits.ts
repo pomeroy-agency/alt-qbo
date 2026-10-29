@@ -1,7 +1,7 @@
 import { D, toMinor } from "../core/money.js";
 import { resolveRules, type Place, type StateRulePack } from "../rules/index.js";
 import {
-  addDays, businessDaysAfter, endOfNextMonth, fifteenthOfNextMonth, onOrNextBusinessDay, quarterEnd, quarterOf, weekday,
+  addDays, businessDaysAfter, endOfNextMonth, fifteenthOfNextMonth, onOrNextBusinessDay, onOrPreviousBusinessDay, quarterEnd, quarterOf, weekday,
 } from "./business-days.js";
 
 // When each payroll tax is due. Liabilities arise on the pay date (cash
@@ -216,8 +216,9 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
       const stateTaxes = (run: RunTaxes) => resolveRules(place, run.payDate).state;
       const quarterly = (run: RunTaxes, why: string) => {
         const end = quarterEnd(Number(run.payDate.slice(0, 4)), quarterOf(run.payDate));
-        push(bucket.take(rule.kind, `${rule.kind}:${rule.schedule === "ca_edd" ? "q:" : ""}${qKey(run.payDate)}`, qLabel(run.payDate),
-          onOrNextBusinessDay(endOfNextMonth(end), cal), why));
+        const day = rule.schedule === "quarterly" && rule.dueDay ? `${endOfNextMonth(end).slice(0, 8)}${String(rule.dueDay).padStart(2, "0")}` : endOfNextMonth(end);
+        const due = rule.schedule === "quarterly" && rule.noWeekendExtension ? onOrPreviousBusinessDay(day, cal) : onOrNextBusinessDay(day, cal);
+        push(bucket.take(rule.kind, `${rule.kind}:${rule.schedule === "ca_edd" ? "q:" : ""}${qKey(run.payDate)}`, qLabel(run.payDate), due, why));
       };
       if (rule.schedule === "quarterly") {
         for (let i = 0; i < sorted.length; i++) {
