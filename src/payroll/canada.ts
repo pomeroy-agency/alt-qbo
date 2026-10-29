@@ -29,6 +29,10 @@ export interface CanadaPayInput {
   federalClaim?: string | null;
   /** TCP: total claim on the provincial TD1 (TP-1015.3 in Quebec); null when none is filed. */
   provincialClaim?: string | null;
+  /** K1 (Quebec): other non-refundable credits Revenu Québec authorized for the year (TP-1016). */
+  otherProvincialCredits?: string;
+  /** Q + Q1 (Quebec): withheld this period for Fonds de solidarité FTQ or Fondaction shares. */
+  labourFundShares?: string;
   /** Ontario tax reduction: dependants under 19 and dependants with a disability claimed on the TD1ON. */
   ontarioDependants?: number;
   /** L: extra tax asked for on the TD1 (federal) or TP-1015.3 (Quebec), per period. */
@@ -73,8 +77,17 @@ const zero = new D(0);
 const clamp0 = (v: Dec) => D.max(v, 0);
 const cents = (v: Dec) => v.toDecimalPlaces(2);
 
-/** Tax on annual income through rate thresholds. */
+/**
+ * Tax on annual income through rate thresholds: R × A − K with the agency's
+ * published constant when the rows carry one (T4127 Table 8.1, TP-1015.F-V),
+ * so results match CRA and Revenu Québec to the cent; otherwise bracket by bracket.
+ */
 export function bracketTax(rows: readonly RateRow[], income: Dec): Dec {
+  if (rows.every((r) => r.constant !== undefined)) {
+    let row = rows[0]!;
+    for (const r of rows) if (income.gt(r.over)) row = r;
+    return income.mul(row.rate).sub(row.constant!);
+  }
   let tax = zero;
   rows.forEach((row, i) => {
     const next = rows[i + 1];
@@ -110,7 +123,8 @@ function pensionContributions(plan: PensionPlanRules, input: CanadaPayInput, pen
   const maxSecond = new D(plan.yampe).sub(plan.ympe).mul(plan.secondRate);
   const first = input.cppExempt ? zero : clamp0(D.min(
     maxFirst.sub(input.ytd?.pension ?? 0),
-    pensionable.sub(new D(plan.basicExemption).div(p)).mul(plan.rate),
+    // The exemption for the period keeps two decimals without rounding ($3,500 ÷ 26 = $134.61).
+    pensionable.sub(new D(plan.basicExemption).div(p).toDecimalPlaces(2, D.ROUND_DOWN)).mul(plan.rate),
   ));
   // C2: on pensionable earnings for the year above the YMPE, up to the YAMPE.
   const ytdEarnings = new D(input.ytd?.pensionableEarnings ?? 0);
@@ -202,7 +216,8 @@ function provincialAnnualTax(tax: T4127ProvincialTax, federal: CanadaFederalRule
     : tax.bpaPhaseOut
       ? cents(phased(new D(tax.basicPersonalAmount), new D(tax.bpaPhaseOut.min), tax.bpaPhaseOut.from, tax.bpaPhaseOut.to, a))
       : new D(tax.basicPersonalAmount);
-  const tcp = input.provincialClaim != null ? new D(input.provincialClaim) : bpa;
+  let tcp = input.provincialClaim != null ? new D(input.provincialClaim) : bpa;
+  if (tax.claimReplaced && tcp.eq(tax.claimReplaced.old)) tcp = new D(tax.claimReplaced.now);
   const k1p = tcp.mul(rate);
   const k2p = contributionCredits.mul(rate);
   const k4p = tax.canadaEmploymentAmount ? D.min(a, federal.incomeTax.canadaEmploymentAmount).mul(rate) : zero;
@@ -220,7 +235,7 @@ function provincialAnnualTax(tax: T4127ProvincialTax, federal: CanadaFederalRule
   let s = zero;
   const r = tax.taxReduction;
   if (r?.kind === "bc") {
-    s = D.min(t4, clamp0(new D(r.amount).sub(clamp0(a.sub(r.over)).mul(r.rate))));
+    s = a.gt(r.zeroAbove) ? zero : D.min(t4, clamp0(new D(r.amount).sub(clamp0(a.sub(r.over)).mul(r.rate))));
   } else if (r?.kind === "on") {
     const basic = new D(r.basic).add(new D(r.perDependant).mul(input.ontarioDependants ?? 0));
     s = D.min(t4.add(v1), clamp0(basic.mul(2).sub(t4.add(v1))));
@@ -229,17 +244,19 @@ function provincialAnnualTax(tax: T4127ProvincialTax, federal: CanadaFederalRule
 }
 
 /**
- * Quebec income tax for the year by TP-1015.F-V: earnings less the
- * deduction for employment income and the enhanced QPP contributions,
- * through Quebec's rates, less personal credits at the lowest rate.
+ * Quebec income tax for the year by TP-1015.F-V section 2.1.1: I = P × (G −
+ * F − H − CSA) − J − J1, then Y = T × I − K − K1 − 14% × E − 15% × P × (Q +
+ * Q1). Union dues aren't deducted at source in Quebec.
  */
 function quebecAnnualTax(tax: QuebecIncomeTax, input: CanadaPayInput, gross: Dec, pension: { first: Dec; second: Dec }, plan: PensionPlanRules): Dec {
   const p = new D(input.periodsPerYear);
-  const annualGross = gross.mul(p);
-  const enhanced = pension.first.mul(new D(plan.rate).sub(plan.baseRate)).div(plan.rate).add(pension.second).mul(p);
-  const j = D.min(annualGross.mul(tax.employmentDeduction.rate), tax.employmentDeduction.max);
-  const i = clamp0(gross.sub(input.retirementContributions ?? 0).sub(input.unionDues ?? 0).mul(p)
-    .sub(enhanced).sub(j).sub(input.annualDeductions ?? 0));
-  const claim = input.provincialClaim != null ? new D(input.provincialClaim) : new D(tax.basicPersonalAmount);
-  return clamp0(bracketTax(tax.brackets, i).sub(claim.mul(tax.creditRate)));
+  // H: deduction for workers, 6% of the period's pay up to the year's maximum spread over the periods.
+  const h = cents(D.min(gross.mul(tax.employmentDeduction.rate), new D(tax.employmentDeduction.max).div(p)));
+  // CSA: the additional QPP contributions (first additional share of C, and C2).
+  const csa = cents(pension.first.mul(new D(plan.rate).sub(plan.baseRate)).div(plan.rate)).add(pension.second);
+  const i = clamp0(gross.sub(input.retirementContributions ?? 0).sub(h).sub(csa).mul(p).sub(input.annualDeductions ?? 0));
+  // E: the TP-1015.3 amount rounded to the dollar.
+  const e = (input.provincialClaim != null ? new D(input.provincialClaim) : new D(tax.basicPersonalAmount)).toDecimalPlaces(0);
+  const labourFunds = new D(input.labourFundShares ?? 0).mul(p).mul(tax.labourFundCreditRate);
+  return clamp0(bracketTax(tax.brackets, i).sub(input.otherProvincialCredits ?? 0).sub(e.mul(tax.creditRate)).sub(labourFunds));
 }

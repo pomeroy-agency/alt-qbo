@@ -1,14 +1,18 @@
 import type { ProvinceRulePack, QuebecIncomeTax, RateRow, Source, T4127ProvincialTax } from "./types.js";
 
-// Provinces and territories, July to December 2026 (T4127 123rd edition and
-// Revenu Québec's TP-1015.F-V). The July edition changed British Columbia,
+// Provinces and territories, July to December 2026, from CRA's T4127 123rd
+// edition (Table 8.1 rates and constants, Table 8.2 amounts) and Revenu
+// Québec's TP-1015.F-V. The July edition changed British Columbia,
 // Newfoundland and Labrador and Prince Edward Island mid-year: their figures
 // here are the prorated ones CRA uses for the rest of 2026, so the year's
 // withholding comes out right. All drafts until Greg's review.
 
-const rows = (list: [over: number, rate: number][]): RateRow[] => list.map(([over, rate]) => ({ over: String(over), rate: String(rate) }));
+const rows = (list: [over: number, rate: number, constant: number][]): RateRow[] =>
+  list.map(([over, rate, constant]) => ({ over: String(over), rate: String(rate), constant: String(constant) }));
 
-const SECONDARY = "⚠️ secondary: figures from search results and tax publishers because canada.ca refuses automated downloads; replaced from T4127 (123rd edition) once Greg uploads it.";
+const T4127_JULY = "CRA T4127 Payroll Deductions Formulas, 123rd edition (effective July 1, 2026), uploaded by Greg 2026-10-29";
+const table81 = (covers: string): Source => ({ ref: `${T4127_JULY}, Tables 8.1 and 8.2`, covers, basis: "published" });
+const JANUARY = "⚠️ check against T4127 122nd edition (January 2026), which the July edition refers back to for unchanged formulas; asked Greg to upload it.";
 
 function pack(region: string, name: string, incomeTax: T4127ProvincialTax | QuebecIncomeTax, sources: Source[], reviewNotes: string[]): ProvinceRulePack {
   return {
@@ -31,43 +35,50 @@ const t4127 = (td1: string, brackets: RateRow[], basicPersonalAmount: string, ex
 });
 
 export const caAlberta2026 = pack("AB", "Alberta",
-  t4127("TD1AB", rows([[0, 0.08], [61200, 0.10], [154259, 0.12], [185111, 0.13], [246813, 0.14], [370220, 0.15]]), "22769",
+  t4127("TD1AB", rows([[0, 0.08, 0], [61200, 0.10, 1224], [154259, 0.12, 4309], [185111, 0.13, 6160], [246813, 0.14, 8628], [370220, 0.15, 12331]]), "22769",
     { supplementalCredit: { over: "60000", rate: "0.02" } }),
-  [{ ref: "CRA T4032AB January 2026 general information, as quoted in search results; Alberta 2025 thresholds indexed 2%", covers: "8% to $61,200 up to 15% over $370,220; basic personal amount $22,769", basis: "working-knowledge" }],
-  [SECONDARY, "⚠️ check: middle thresholds ($154,259, $185,111, $246,813) are the 2025 ones indexed by 2%.", "⚠️ check: the supplemental credit (2% of non-refundable credits above $60,000) is how TrailBook reads Alberta's new credit; it only matters for very large TD1AB claims."]);
+  [table81("8% to $61,200 up to 15% over $370,220 with constants; basic personal amount $22,769")],
+  [`${JANUARY} The supplemental credit (K5P): TrailBook gives 2% of non-refundable credits above $60,000, which only matters for very large TD1AB claims.`]);
 
 export const caBritishColumbia2026 = pack("BC", "British Columbia",
-  t4127("TD1BC", rows([[0, 0.0614], [50363, 0.077], [100728, 0.105], [115648, 0.1229], [140430, 0.147], [190405, 0.168], [265545, 0.205]]), "13216",
-    { taxReduction: { kind: "bc", amount: "805", over: "25570", rate: "0.0356" } }),
+  t4127("TD1BC", rows([[0, 0.0614, 0], [50363, 0.077, 786], [100728, 0.105, 3606], [115648, 0.1229, 5676], [140430, 0.147, 9061], [190405, 0.168, 13059], [265545, 0.205, 22884]]), "13216",
+    { taxReduction: { kind: "bc", amount: "805", over: "25570", rate: "0.0356", zeroAbove: "44952" } }),
   [
-    { ref: "Province of British Columbia, personal income tax rates (2026), as quoted in search results", covers: "5.60% to $50,363, 7.70%, 10.50%, 12.29%, 14.70%, 16.80%, 20.50% over $265,545", basis: "working-knowledge" },
-    { ref: "Payroll publishers on T4127 123rd edition (July 2026)", covers: "prorated 6.14% lowest rate and $805 tax reduction for July to December; basic personal amount $13,216", basis: "working-knowledge" },
+    table81("prorated 6.14% lowest rate, 7.70% to 20.50% over $265,545 with constants; basic personal amount $13,216"),
+    { ref: `${T4127_JULY}, What's new and chapter 4 step 5 (British Columbia)`, covers: "lowest rate 5.06% to 5.60% for 2026 (Budget, February 17, 2026), prorated 6.14% July to December; basic reduction $805 prorated ($690 for the year), less 3.56% of income over $25,570, none over $44,952", basis: "published" },
   ],
-  [SECONDARY, "The lowest rate rose from 5.06% to 5.60% for 2026; payroll used 5.06% to June, so July to December uses 6.14% (2 × 5.60 − 5.06) for the bracket and credits.", "⚠️ check: tax reduction $805 for July to December (full year $690); the $25,570 threshold and 3.56% reduction rate are 2025's $25,020 indexed 2.2% and 2025's rate."]);
+  ["Payroll used 5.06% and a $575 reduction to June, so July to December uses CRA's prorated 6.14% and $805 to make the year come out right. From January 2027 BC brackets and credits stay at 2026 levels (indexation paused 2027 to 2030)."]);
 
 export const caManitoba2026 = pack("MB", "Manitoba",
-  t4127("TD1MB", rows([[0, 0.108], [47000, 0.1275], [100000, 0.174]]), "15780", { bpaPhaseOut: { from: "200000", to: "400000", min: "0" } }),
-  [{ ref: "EY, Manitoba Budget 2026 tax alert; tax publishers", covers: "10.8% to $47,000, 12.75% to $100,000, 17.4% above (not indexed); basic personal amount $15,780, phased out between $200,000 and $400,000 of net income", basis: "working-knowledge" }],
-  [SECONDARY, "⚠️ check: TrailBook phases the basic personal amount out on annual taxable income from pay, as T4127 does with A."]);
+  t4127("TD1MB", rows([[0, 0.108, 0], [47000, 0.1275, 917], [100000, 0.174, 5567]]), "15780", { bpaPhaseOut: { from: "200000", to: "400000", min: "0" } }),
+  [
+    table81("10.8% to $47,000, 12.75% to $100,000, 17.4% above, with constants; basic personal amount by the BPAMB formula"),
+    { ref: "EY, Manitoba Budget 2026 tax alert; tax publishers", covers: "basic personal amount $15,780, phased out between $200,000 and $400,000 of net income", basis: "working-knowledge" },
+  ],
+  [`${JANUARY} BPAMB: TrailBook uses $15,780 phased out evenly on annual taxable income between $200,000 and $400,000.`]);
 
 export const caNewBrunswick2026 = pack("NB", "New Brunswick",
-  t4127("TD1NB", rows([[0, 0.094], [50957, 0.14], [101914, 0.16], [188765, 0.195]]), "13664"),
-  [{ ref: "CI Financial, 2026 New Brunswick budget highlights; 2025 figures indexed 2%", covers: "9.4%, 14%, 16%, 19.5%; basic personal amount $13,664", basis: "working-knowledge" }],
-  [SECONDARY, "⚠️ check: sources disagree on the first threshold ($50,957 from indexing 2025's $49,958, or $52,333)."]);
+  t4127("TD1NB", rows([[0, 0.094, 0], [52333, 0.14, 2407], [104666, 0.16, 4501], [193861, 0.195, 11286]]), "13664"),
+  [table81("9.4% to $52,333, 14%, 16%, 19.5% over $193,861 with constants; basic personal amount $13,664")],
+  []);
 
 export const caNewfoundland2026 = pack("NL", "Newfoundland and Labrador",
-  t4127("TD1NL", rows([[0, 0.087], [44678, 0.145], [89354, 0.158], [159528, 0.178], [223340, 0.198], [285319, 0.208], [570638, 0.213], [1141275, 0.218]]), "15000"),
-  [{ ref: "Wealthsimple and CI Financial (2026 NL budget, indexing 1.1%); payroll publishers on T4127 123rd edition", covers: "8.7% to $44,678 up to 21.8% over $1,141,275; basic personal amount $13,094 for 2026, $15,000 prorated for July to December", basis: "working-knowledge" }],
-  [SECONDARY, "The 2026 budget raised the basic personal amount; payroll used $11,188 to June, so July to December uses $15,000."]);
+  t4127("TD1NL", rows([[0, 0.087, 0], [44678, 0.145, 2591], [89354, 0.158, 3753], [159528, 0.178, 6943], [223340, 0.198, 11410], [285319, 0.208, 14263], [570638, 0.213, 17117], [1141275, 0.218, 22823]]), "15000",
+    { claimReplaced: { old: "11188", now: "15000" } }),
+  [
+    table81("8.7% to $44,678 up to 21.8% over $1,141,275 with constants; basic personal amount $15,000 (prorated)"),
+    { ref: `${T4127_JULY}, What's new (Newfoundland and Labrador)`, covers: "basic personal amount $11,188 to $13,094 for 2026 (announced April 29, 2026), prorated $15,000 from July; a TD1NL filed before July needs no replacement", basis: "published" },
+  ],
+  ["A TD1NL claiming only the basic amount is read as $15,000 from July; TrailBook applies that when the claim equals the old $11,188."]);
 
 export const caNovaScotia2026 = pack("NS", "Nova Scotia",
-  t4127("TD1NS", rows([[0, 0.0879], [30995, 0.1495], [61991, 0.1667], [97417, 0.175], [157124, 0.21]]), "11932"),
-  [{ ref: "Government of Nova Scotia, Personal income tax rates and indexation (2026, indexed 1.6%), as quoted in search results", covers: "8.79% to $30,995 up to 21% over $157,124; basic personal amount $11,932", basis: "working-knowledge" }],
-  [SECONDARY]);
+  t4127("TD1NS", rows([[0, 0.0879, 0], [30995, 0.1495, 1909], [61991, 0.1667, 2976], [97417, 0.175, 3784], [157124, 0.21, 9283]]), "11932"),
+  [table81("8.79% to $30,995 up to 21% over $157,124 with constants; basic personal amount $11,932")],
+  [`${JANUARY} The glossary still lists a BPANS formula; TrailBook uses the flat $11,932 from Table 8.2.`]);
 
 export const caOntario2026 = pack("ON", "Ontario",
-  t4127("TD1ON", rows([[0, 0.0505], [53891, 0.0915], [107785, 0.1116], [150000, 0.1216], [220000, 0.1316]]), "12989", {
-    surtax: rows([[5818, 0.20], [7446, 0.36]]),
+  t4127("TD1ON", rows([[0, 0.0505, 0], [53891, 0.0915, 2210], [107785, 0.1116, 4376], [150000, 0.1216, 5876], [220000, 0.1316, 8076]]), "12989", {
+    surtax: [{ over: "5818", rate: "0.20" }, { over: "7446", rate: "0.36" }],
     healthPremium: [
       { over: "20000", base: "0", rate: "0.06", cap: "300" },
       { over: "36000", base: "300", rate: "0.06", cap: "450" },
@@ -77,41 +88,54 @@ export const caOntario2026 = pack("ON", "Ontario",
     ],
     taxReduction: { kind: "on", basic: "300", perDependant: "554" },
   }),
-  [{ ref: "CRA T4032ON January 2026 and tax publishers", covers: "5.05% to $53,891 up to 13.16% over $220,000; basic personal amount $12,989; surtax 20% over $5,818 and 36% over $7,446; tax reduction $300; Ontario Health Premium schedule (not indexed)", basis: "working-knowledge" }],
-  [SECONDARY, "⚠️ check: $554 per dependant for the Ontario tax reduction is 2025's amount indexed 1.9%."]);
+  [
+    table81("5.05% to $53,891 up to 13.16% over $220,000 with constants; basic personal amount $12,989; surtax 20% over $5,818 and 36% over $7,446; tax reduction basic amount (S2) $300"),
+    { ref: "Ontario Health Premium schedule (Taxation Act, 2007, s. 33.1), not indexed", covers: "$0 to $20,000 nil, then 6% and 25% steps to $300, $450, $600, $750 and $900", basis: "working-knowledge" },
+  ],
+  [`${JANUARY} Health premium schedule and the $554 per-dependant amount (Y) for the Ontario tax reduction (2025's amount indexed 1.9%).`]);
 
 export const caPrinceEdwardIsland2026 = pack("PE", "Prince Edward Island",
-  t4127("TD1PE", rows([[0, 0.095], [33928, 0.1347], [65820, 0.166], [106890, 0.1762], [142520, 0.19]]), "15000"),
-  [{ ref: "PEI 2026 budget summary (ACGCA), as quoted in search results", covers: "9.5% to $33,928 up to 19% over $142,520; basic personal amount $15,000", basis: "working-knowledge" }],
-  [SECONDARY, "⚠️ check: payroll publishers say the July edition adds a prorated 21% rate over $200,000, but PEI's budget says the 20% bracket starts January 1, 2027. Not included until T4127 settles it."]);
+  t4127("TD1PE", rows([[0, 0.095, 0], [33928, 0.1347, 1347], [65820, 0.166, 3407], [106890, 0.1762, 4497], [142520, 0.19, 6464], [200000, 0.21, 10464]]), "15000"),
+  [
+    table81("9.5% to $33,928 up to 19% to $200,000, prorated 21% above, with constants; basic personal amount $15,000"),
+    { ref: `${T4127_JULY}, What's new (Prince Edward Island)`, covers: "new 20% bracket over $200,000 for 2026 (introduced April 14, 2026), prorated 21% from July", basis: "published" },
+  ],
+  ["The new top bracket starts in 2026 (CRA prorates it to 21% for July to December); some publishers say 2027."]);
 
 export const caSaskatchewan2026 = pack("SK", "Saskatchewan",
-  t4127("TD1SK", rows([[0, 0.105], [54532, 0.125], [155805, 0.145]]), "20381"),
-  [{ ref: "Tax publishers (2026)", covers: "10.5% to $54,532, 12.5% to $155,805, 14.5% above; basic personal amount $20,381", basis: "working-knowledge" }],
-  [SECONDARY]);
+  t4127("TD1SK", rows([[0, 0.105, 0], [54532, 0.125, 1091], [155805, 0.145, 4207]]), "20381"),
+  [table81("10.5% to $54,532, 12.5% to $155,805, 14.5% above, with constants; basic personal amount $20,381")],
+  []);
 
 export const caNorthwestTerritories2026 = pack("NT", "Northwest Territories",
-  t4127("TD1NT", rows([[0, 0.059], [53003, 0.086], [106009, 0.122], [172346, 0.1405]]), "18198"),
-  [{ ref: "CRA current-year tax rates (2026), as quoted in search results", covers: "5.9% to $53,003 up to 14.05% over $172,346; basic personal amount $18,198", basis: "working-knowledge" }],
-  [SECONDARY, "Northern residents deduction (HD) is taken from the employee's TD1 when they live in a prescribed zone."]);
+  t4127("TD1NT", rows([[0, 0.059, 0], [53003, 0.086, 1431], [106009, 0.122, 5247], [172346, 0.1405, 8436]]), "18198"),
+  [table81("5.9% to $53,003 up to 14.05% over $172,346 with constants; basic personal amount $18,198")],
+  ["The northern residents deduction (HD) comes from the employee's TD1 when they live in a prescribed zone."]);
 
 export const caNunavut2026 = pack("NU", "Nunavut",
-  t4127("TD1NU", rows([[0, 0.04], [55801, 0.07], [111602, 0.09], [181439, 0.115]]), "19659"),
-  [{ ref: "CRA current-year tax rates (2026), as quoted in search results", covers: "4% to $55,801 up to 11.5% over $181,439; basic personal amount $19,659", basis: "working-knowledge" }],
-  [SECONDARY]);
+  t4127("TD1NU", rows([[0, 0.04, 0], [55801, 0.07, 1674], [111602, 0.09, 3906], [181439, 0.115, 8442]]), "19659"),
+  [table81("4% to $55,801 up to 11.5% over $181,439 with constants; basic personal amount $19,659")],
+  ["The northern residents deduction (HD) comes from the employee's TD1."]);
 
 export const caYukon2026 = pack("YT", "Yukon",
-  t4127("TD1YT", rows([[0, 0.064], [58523, 0.09], [117045, 0.109], [181440, 0.128], [500000, 0.15]]), "federal", { canadaEmploymentAmount: true }),
-  [{ ref: "CRA current-year tax rates (2026), as quoted in search results", covers: "6.4% to $58,523 up to 15% over $500,000; basic personal amount follows the federal amount; Canada employment amount credit", basis: "working-knowledge" }],
-  [SECONDARY]);
+  t4127("TD1YT", rows([[0, 0.064, 0], [58523, 0.09, 1522], [117045, 0.109, 3745], [181440, 0.128, 7193], [500000, 0.15, 18193]]), "federal", { canadaEmploymentAmount: true }),
+  [table81("6.4% to $58,523 up to 15% over $500,000 with constants; basic personal amount by BPAYT; Canada employment amount $1,501 (K4P)")],
+  [`${JANUARY} BPAYT: TrailBook follows the federal basic personal amount and its phase-out.`]);
 
 export const caQuebec2026 = pack("QC", "Quebec",
-  { method: "quebec", td1: "TP-1015.3", brackets: rows([[0, 0.14], [54345, 0.19], [108680, 0.24], [132245, 0.2575]]), creditRate: "0.14", basicPersonalAmount: "18952", employmentDeduction: { rate: "0.06", max: "1450" } },
-  [{ ref: "Ministère des Finances du Québec, Parameters of the Personal Income Tax System for 2026 (November 2025), Table 3", covers: "brackets to $54,345, $108,680, $132,245; basic personal amount $18,952; deduction for workers up to $1,450 (indexed 2.05%)", basis: "published" }],
+  {
+    method: "quebec", td1: "TP-1015.3",
+    brackets: rows([[0, 0.14, 0], [54345, 0.19, 2717], [108680, 0.24, 8151], [132245, 0.2575, 10465]]),
+    creditRate: "0.14", basicPersonalAmount: "18952", employmentDeduction: { rate: "0.06", max: "1450" }, labourFundCreditRate: "0.15",
+  },
   [
-    "Rates 14%, 19%, 24% and 25.75% and the 6% deduction for employment income are Quebec's 2026 rules (rates are not in the parameters document).",
-    "⚠️ check: the TP-1015.F-V formula itself (deductions taken before tax, credits at 14%) is written from working knowledge until Greg uploads the guide; Revenu Québec refuses automated downloads.",
+    { ref: "Revenu Québec, TP-1015.F-V (2026-01), Formulas to Calculate Source Deductions and Contributions, uploaded by Greg 2026-10-29", covers: "section 2.1.1 formula; rates 14%, 19%, 24%, 25.75% with constants $0, $2,717, $8,151, $10,465 over $54,345, $108,680, $132,245; basic personal amount $18,952; deduction for workers 6% up to $1,450; QPP 6.30% (5.30% base), QPP2 4%; QPIP 0.430% / 0.602% to $103,000; Appendices 1 and 3", basis: "published" },
+    { ref: "Ministère des Finances du Québec, Parameters of the Personal Income Tax System for 2026 (November 2025)", covers: "same thresholds and amounts, indexed 2.05%", basis: "published" },
+  ],
+  [
     "Quebec employees file the TP-1015.3 for Quebec tax and the federal TD1; federal tax is reduced by the 16.5% abatement.",
+    "The guide includes no change announced after November 25, 2025; the rule watch checks Revenu Québec for mid-year changes.",
+    "Health services fund (employer, 1.65% to 4.26% by total payroll) is a payroll-run item for the next pull request.",
   ]);
 
 export const CANADA_PROVINCES_2026: readonly ProvinceRulePack[] = [

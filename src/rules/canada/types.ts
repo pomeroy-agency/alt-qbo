@@ -13,6 +13,8 @@ export type { Source } from "../types.js";
 export interface RateRow {
   over: string;
   rate: string;
+  /** The published constant (K, KP): tax = rate × income − constant. */
+  constant?: string;
 }
 
 /** CPP or QPP for the year: first and second (CPP2/QPP2) contributions. */
@@ -78,6 +80,8 @@ export interface T4127ProvincialTax {
   creditRate: string;
   /** Basic personal amount, the claim when no TD1 is on file; "federal" follows the federal amount (Yukon). */
   basicPersonalAmount: string | "federal";
+  /** A TD1 claim of exactly `old` is read as `now` (Newfoundland and Labrador's mid-year basic personal amount; no new TD1NL needed). */
+  claimReplaced?: { old: string; now: string };
   /** The basic personal amount shrinks to `min` between these annual incomes (Manitoba: to nothing from $200,000 to $400,000). */
   bpaPhaseOut?: { from: string; to: string; min: string };
   /** Surtax on basic provincial tax (V1), each row a rate on the tax above `over` (Ontario 20% and 36%). */
@@ -87,7 +91,7 @@ export interface T4127ProvincialTax {
   /** Low-income reduction (S). */
   taxReduction?:
     /** BC: `amount` less `rate` of income above `over`, up to the tax. */
-    | { kind: "bc"; amount: string; over: string; rate: string }
+    | { kind: "bc"; amount: string; over: string; rate: string; zeroAbove: string }
     /** Ontario: twice the basic amount (plus per-dependant amounts) less the tax, up to the tax. */
     | { kind: "on"; basic: string; perDependant: string };
   /** Yukon: the Canada employment amount is a provincial credit too (K4P). */
@@ -107,6 +111,8 @@ export interface QuebecIncomeTax {
   basicPersonalAmount: string;
   /** Deduction for employment income (J): this rate of earnings, up to `max` a year. */
   employmentDeduction: { rate: string; max: string };
+  /** Credit on Fonds de solidarité FTQ and Fondaction shares bought through payroll (15%). */
+  labourFundCreditRate: string;
 }
 
 /** One province or territory's payroll rules for one span of time. */

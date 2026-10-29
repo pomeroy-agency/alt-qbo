@@ -154,3 +154,65 @@ describe("provincial income tax", () => {
     }
   });
 });
+
+describe("Revenu Québec's worked examples (TP-1015.F-V 2026)", () => {
+  // Appendix 1: $4,000 every two weeks, $200 RPP, TP-1015.3 line 10 $21,830, $2,000 FTQ and $3,000 Fondaction shares over 20 pays.
+  const appendix1 = (ytd: CanadaPayInput["ytd"], shares: string) => pay("QC", {
+    gross: "4000", retirementContributions: "200", provincialClaim: "21830", labourFundShares: shares, ytd,
+  });
+
+  it("withholds $444.51 for the first 18 pays", () => {
+    const d = appendix1({}, "250");
+    expect(d.pension.toFixed(2)).toBe("243.52");
+    expect(d.provincialTax.toFixed(2)).toBe("444.51");
+  });
+
+  it("withholds $421.46 once only QPP2 is taken ($160 a pay)", () => {
+    const d = appendix1({ pension: "4479.30", pension2: "56", pensionableEarnings: "76000" }, "250");
+    expect(d.pension2.toFixed(2)).toBe("160.00");
+    expect(d.provincialTax.toFixed(2)).toBe("421.46");
+  });
+
+  it("withholds $481.76 on the 22nd pay and $489.36 after QPP2 is done", () => {
+    expect(appendix1({ pension: "4479.30", pension2: "376", pensionableEarnings: "84000" }, "0").provincialTax.toFixed(2)).toBe("481.76");
+    expect(appendix1({ pension: "4479.30", pension2: "416", pensionableEarnings: "88000" }, "0").provincialTax.toFixed(2)).toBe("489.36");
+  });
+
+  it("works out Appendix 3's QPP contributions for the 19th to 22nd pays", () => {
+    const p19 = pay("QC", { gross: "4000", ytd: { pension: "4383.36", pensionableEarnings: "72000" } });
+    expect([p19.pension.toFixed(2), p19.pension2.toFixed(2)]).toEqual(["95.94", "56.00"]);
+    const p20 = pay("QC", { gross: "4000", ytd: { pension: "4479.30", pension2: "56", pensionableEarnings: "76000" } });
+    expect([p20.pension.toFixed(2), p20.pension2.toFixed(2)]).toEqual(["0.00", "160.00"]);
+    const p22 = pay("QC", { gross: "4000", ytd: { pension: "4479.30", pension2: "376", pensionableEarnings: "84000" } });
+    expect(p22.pension2.toFixed(2)).toBe("40.00");
+  });
+});
+
+describe("T4127 July 2026 changes", () => {
+  it("uses CRA's constants: federal tax on $60,000 is 20.5% × A − $3,804", () => {
+    const { federal } = resolveCanadaRules("ON", "2026-11-13");
+    expect(bracketTax(federal.incomeTax.brackets, new D(60000)).toFixed(2)).toBe("8496.00");
+  });
+
+  it("gives no BC tax reduction above $44,952", () => {
+    const { federal, province } = resolveCanadaRules("BC", "2026-11-13");
+    const at = (gross: string) => canadaDeductions(federal, province, { periodsPerYear: 26, gross, cppExempt: true, eiExempt: true, provincialClaim: "0" });
+    const t4 = (a: number) => a * 0.0614 - (a > 50363 ? 786 : 0);
+    // $1,700 × 26 = $44,200: reduction $805 − 3.56% × $18,630 = $141.77
+    expect(at("1700").provincialTax.toFixed(2)).toBe(new D(t4(44200)).sub(805 - (44200 - 25570) * 0.0356).div(26).toFixed(2));
+    // $1,750 × 26 = $45,500: none
+    expect(at("1750").provincialTax.toFixed(2)).toBe(new D(t4(45500)).div(26).toFixed(2));
+  });
+
+  it("reads a TD1NL for the old $11,188 basic amount as the prorated $15,000", () => {
+    const old = pay("NL", { gross: "2000", provincialClaim: "11188" });
+    const none = pay("NL", { gross: "2000" });
+    expect(old.provincialTax.toFixed(2)).toBe(none.provincialTax.toFixed(2));
+  });
+
+  it("applies PEI's prorated 21% over $200,000", () => {
+    const { province } = resolveCanadaRules("PE", "2026-11-13");
+    if (province.incomeTax.method !== "t4127") throw new Error("PE pack shape");
+    expect(bracketTax(province.incomeTax.brackets, new D(250000)).toFixed(2)).toBe("42036.00"); // 21% × 250,000 − 10,464
+  });
+});
