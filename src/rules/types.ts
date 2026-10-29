@@ -172,13 +172,19 @@ export type StateIncomeTaxRules =
        * deduction from the year's wages, or with `credit` an amount off the
        * year's tax (Massachusetts blindness).
        */
-      allowances: { label: string; amount: string; credit?: boolean }[];
+      allowances: {
+        label: string; amount: string; credit?: boolean;
+        /** The amount by the year's wages instead (Alabama dependents: $1,000, $500 over $50,000, $300 over $100,000). */
+        byWages?: WageRow[];
+      }[];
       /** Added to the deduction once the employee claims at least one of the first kind of allowance (Massachusetts: $3,400). */
       exemptionBase?: string;
       /** The employee's Social Security and Medicare come off wages first, up to this much a year (Massachusetts: $2,000). */
       ficaDeductionCap?: string;
       /** Added to the deduction once at least one of the first kind of allowance is claimed: this share of the year's wages, up to `max` (South Carolina: 10%, up to $7,500). */
       percentDeduction?: { rate: string; max: string };
+      /** The federal income tax withheld from the same paycheck, for the year, comes off wages too (Alabama). */
+      subtractFederalWithholding?: boolean;
       /** Nothing is withheld when at least one allowance is claimed and the year's wages are below this (Massachusetts: $8,000). */
       noTaxBelowAnnualWages?: string;
       /** The employee may enter a dollar allowance that replaces the standard deduction (Colorado DR 0004 line 2). */
@@ -193,12 +199,28 @@ export type StateIncomeTaxRules =
       round: "cent" | "dollar" | "annual_dollar";
     };
 
+/** A figure that depends on the year's wages: the row with the highest `over` below the wages applies (the first row at or below its own `over`). */
+export interface WageRow {
+  over: string;
+  amount: string;
+}
+
 /** One filing status on a state certificate. */
 export interface AnnualFormulaStatus {
   id: string;
   label: string;
   standardDeduction: string;
+  /** The standard deduction (or exemption) by the year's wages instead of `standardDeduction` (Alabama's schedule, Connecticut Table A). */
+  deductionByWages?: WageRow[];
+  /** A personal exemption added to the deduction (Alabama: $1,500 or $3,000). */
+  exemption?: string;
   table: string;
+  /** Amounts by the year's wages added to the tax from the table (Connecticut Tables C and D). */
+  taxAdditions?: WageRow[][];
+  /** A share of the tax taken off, by the year's wages (Connecticut Table E personal tax credits); `amount` is the share, like "0.15". */
+  creditShare?: WageRow[];
+  /** A flat rate on all wages in place of the formula (Connecticut without a CT-W4: 6.99%). */
+  flatRate?: string;
   /** The standard deduction shrinks by `rate` of the year's wages above `from`, to nothing (Wisconsin). */
   phaseOut?: { from: string; rate: string };
   /** Utah's base allowance: a credit that shrinks by `phaseOutRate` of wages above `phaseOutFrom`. */

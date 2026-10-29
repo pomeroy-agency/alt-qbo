@@ -955,6 +955,170 @@ Sources: Minnesota Department of Revenue, 2026 Minnesota Income Tax Withholding 
 
 Sources: SCDOR WH-1603F, Formula for Computing South Carolina 2026 Withholding Tax (Rev. 11/4/25) ($5,000 per allowance; standard deduction of 10% of wages up to $7,500 with one or more allowances, none with zero; 0% to $3,640, 3% to $18,230, 6% above; the $750 weekly example ($10.58)); SCDOR withholding page and Information Letter #26-20 (Act 110) (deposits with the same frequency as federal payments; quarterly WH-1605 and WH-1606 due the last day of the month after the quarter; Act 110 rate changes with withholding tables still to be adjusted); SC DEW glossary and 2026 rate announcement ($14,000 wage base; 1.0% new-employer rate); SC Code 41-10 (no state minimum wage); SC Code 63-17-2310 (new hire reporting) (federal $7.25 minimum wage; no state paid sick leave law; report new hires within 20 days).
 
+## Sixth round of states: us-al, us-la, us-ky, us-ok, us-ct, us-ia 2026.1, drafts for Greg's review
+
+The next six. All use the `annual_formula` method, which gained what they need: a deduction or exemption looked up by the year's wages (Alabama's standard deduction schedule, Connecticut Table A), a personal exemption by status, allowance amounts by wages (Alabama dependents), subtracting the year's federal withholding (Alabama), tax added by wages and a credit taken as a share of the tax (Connecticut Tables C, D and E), and a flat rate for a status (Connecticut's 6.99% with no CT-W4). Local taxes: Alabama and Kentucky occupational taxes are rates the employer enters for each employee. Connecticut Paid Leave (0.5%, employee) is added. The packs are `draft`: businesses can be set up in these states, and pay runs wait until Greg releases them.
+
+Tested against each publication's own examples: Alabama's M-2 $850 weekly ($29.59, with $35.19 federal withheld), Louisiana's two R-1306 examples ($13.98, $111.54), Kentucky's two formula examples ($104.65 and $47.98; the PDF prints $47), Oklahoma's $1,825 semi-monthly example ($37), Iowa's three formula examples ($59.26, $38.72, $45.15), and Connecticut's 2026 weekly tables for every code (A, B, C, D and F) at four wage levels, which match to the cent.
+
+Read from the agencies' own documents on 2026-10-29: Alabama's 2026 withholding booklet, Louisiana's R-1306 and withholding page, Kentucky's 2026 withholding formula (the copy Greg supplied), Oklahoma's OW-2 and OESC 2026 figures, Connecticut's TPG-211, 2026 withholding tables, IP 2026(1) and DOL 2026 UI rates, and Iowa's 2026 withholding formula, withholding page and filing frequencies. From payroll publishers: Alabama, Louisiana and Iowa UI rates, Kentucky's deposit thresholds, and Connecticut Paid Leave's rate and base.
+
+### Alabama (us-al 2026.1, `src/rules/us-al-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less the standard deduction from Alabama's schedule ($3,000 single or 0, $4,250 MS, $8,500 M, $5,200 H, shrinking from $26,000 of wages to $2,500 / $2,500 / $5,000 / $2,500 at $35,500), the year's federal income tax withheld, the A-4 personal exemption ($1,500 S or MS, $3,000 M or H) and $1,000 a dependent ($500 over $50,000, $300 over $100,000); 2% / 4% / 5% from $500 and $3,000 ($1,000 and $6,000 for M); divided by the pay periods; no A-4 means "0" | ⚠️ check |
+| City or county occupational tax (AL_OCC, City or county) | Rate entered for each employee (up to 2%) on wages | ⚠️ check |
+| Alabama withholding deposits | Monthly by the 15th of the next month; A-6 / A-1 | ⚠️ check |
+| Alabama occupational tax deposits | Quarterly with the occupational tax return | ⚠️ check |
+| Alabama UI deposits | Quarterly with the UC-CR4 | ⚠️ check |
+| Alabama UI (AL_UI, employer, ADOW) | 2.7% default; employer enters its own rate, on the first $8,000 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Return of Income Tax Withheld (A-1) | ⚠️ check |
+| Quarterly report | Employer's Quarterly Contribution and Wage Report (UC-CR4) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 7 days to Alabama New Hire Reporting | ⚠️ check |
+
+- ⚠️ A-4 status: 0 (no personal exemption), S (single, $1,500), MS (married filing separately, $1,500), M (married, $3,000) or H (head of family, $3,000). M uses the married brackets; the others use the single ones. Dependents (other than a spouse) go in the dependents box. No A-4 on file: "0", as the booklet says.
+- ⚠️ Alabama subtracts the federal income tax withheld from the same paycheck (annualized). TrailBook takes it from the federal amount it works out for that paycheck, including any extra W-4 withholding.
+- ⚠️ The booklet says the formula result may be rounded to the dollar; TrailBook keeps cents.
+- ⚠️ Occupational tax: tick it and enter the city or county rate (Birmingham 1%, Bessemer 1%, Gadsden 2% and others) and the place. Each city or county collects its own; TrailBook shows one quarterly payment for all of them. ⚠️ check: some cities want monthly returns, and some also tax employers.
+- ⚠️ Deposits: TrailBook shows Alabama withholding monthly (Form A-6), due the 15th of the next month. Employers who withhold $1,000 or less in a month can wait until the quarterly A-1 (the last day of the month after the quarter), so TrailBook may show a date earlier than needed.
+- ⚠️ UI rates are per employer: enter yours from the Alabama Department of Workforce rate notice. New employers pay 2.7%. ⚠️ check: the $8,000 wage base and 2.7% are from payroll publishers; adol.alabama.gov isn't reachable from here.
+- ⚠️ Sales tax: TrailBook doesn't work out Alabama sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Alabama Department of Revenue, Withholding Tax Tables and Instructions (whbooklet_0126), Formula For Computing Alabama Withholding Tax and Schedule of Standard Deduction Amounts (standard deduction by status and wages; federal withholding subtracted; personal exemption $1,500 (S, MS) or $3,000 (M, H); dependents $1,000 / $500 over $50,000 / $300 over $100,000; 2% / 4% / 5% with brackets at $500 and $3,000 ($1,000 and $6,000 for M); zero exemptions without an A-4; the M-2 $850 weekly example ($29.59)); Same booklet, Withholding Tax Returns (monthly A-6 by the 15th once more than $1,000 is withheld in the first or second month of a quarter; quarterly A-1 by the last day of the month after the quarter; A-3 by January 31; occupational and UI taxes not administered by the Department); Alabama Department of Workforce 2026 rates, as reported by payroll publishers (adol.alabama.gov isn't reachable from here) ($8,000 wage base; 2.7% new-employer rate); Alabama has no state minimum wage or paid sick leave law; Ala. Code 25-11-5 (new hire reporting within 7 days) (federal $7.25 minimum wage; report new hires within 7 days).
+
+### Louisiana (us-la 2026.1, `src/rules/us-la-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 3.09% of wages less the L-4 standard deduction spread over the pay periods: none for "0", $12,875 for "1" (single or married separately), $25,750 for "2" (married joint, surviving spouse or head of household); no L-4 means "0" | ⚠️ check |
+| Louisiana withholding deposits | Monthly by the last day of the next month; on the federal semiweekly dates when last year's withholding was over $60,000; L-1 | ⚠️ check |
+| Louisiana UI deposits | Quarterly with the LWC-UI-4 | ⚠️ check |
+| Louisiana UI (LA_UI, employer, LWC) | 1% default; employer enters its own rate, on the first $7,000 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Return of Louisiana Withholding Tax (L-1) | ⚠️ check |
+| Quarterly report | Employer's Quarterly Report of Wages Paid (LWC-UI-4) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Louisiana New Hire Registry | ⚠️ check |
+
+- ⚠️ L-4 standard deduction: "0" (none), "1" (single or married filing separately, $12,875) or "2" (married filing jointly, qualifying surviving spouse or head of household, $25,750). The L-4 no longer has dependents. ⚠️ check: with no L-4 on file TrailBook uses "0" (no deduction), the cautious choice; R-1306 doesn't say.
+- ⚠️ Deposits: TrailBook shows Louisiana withholding monthly, due the last day of the next month, and for employers who withheld more than $60,000 last year ($5,000 a month) on the federal deposit dates. ⚠️ check: Louisiana's semi-monthly and monthly due dates are on LDR's filing calendar, which TrailBook doesn't have yet; quarterly payers (under $500 a month) can pay later than shown.
+- ⚠️ UI rates are per employer and there is no single new-employer rate: Louisiana assigns new employers their industry's average. Pay runs wait until you enter yours from the Louisiana Workforce Commission rate notice.
+- ⚠️ Sales tax: TrailBook doesn't work out Louisiana sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Louisiana Department of Revenue, R-1306 (1/26), Louisiana Withholding Tables and Formulas (3.09% rate; standard deduction $12,875 (L-4 "1") or $25,750 (L-4 "2"), none for "0"; the $700 weekly example ($13.98) and $4,600 biweekly example ($111.54)); Louisiana Department of Revenue, Withholding page (updated June 30, 2026) (quarterly L-1 return; payments quarterly under $500 a month on average, monthly $500 to $5,000, semi-monthly $5,000 or more; L-3 annual reconciliation); Louisiana Workforce Commission 2026 rates, as reported by Bloomberg Tax and payroll publishers ($7,000 wage base; new employers pay their industry's average rate (at least 1%, at most 6.2%)); Louisiana has no state minimum wage or paid sick leave law; La. R.S. 23:1291.1 (new hire reporting) (federal $7.25 minimum wage; report new hires within 20 days).
+
+### Kentucky (us-ky 2026.1, `src/rules/us-ky-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 3.5% of the year's wages less the $3,360 standard deduction, divided by the pay periods | ⚠️ check |
+| City, county or school district occupational tax (KY_OCC, City or county) | Rate entered for each employee (up to 4%) on wages | ⚠️ check |
+| Kentucky withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $50,000; K-1 | ⚠️ check |
+| Kentucky occupational license tax deposits | Quarterly with the OL-3 or the local return | ⚠️ check |
+| Kentucky UI deposits | Quarterly with the UI-3 | ⚠️ check |
+| Kentucky UI (KY_UI, employer, OUI) | 2.7% default; employer enters its own rate, on the first $12,000 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Unemployment Wage and Tax Report (UI-3) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Kentucky New Hire Reporting Program | ⚠️ check |
+
+- ⚠️ Kentucky's formula has one standard deduction ($3,360) and no allowances; the K-4 only says whether the employee is exempt. No K-4 on file: withhold with the standard deduction.
+- ⚠️ The formula's second example has a typo: $1,247.40 ÷ 26 is $47.98, which TrailBook withholds; the PDF prints $47.
+- ⚠️ Occupational license taxes: tick the box and enter the combined rate the employee owes where they work (for example Louisville Metro or Lexington-Fayette, plus any county or school district tax) and the place. TrailBook withholds it from all wages and shows one quarterly payment. ⚠️ check: some places cap wages, exclude 401(k) deferrals, or want monthly returns, and each needs its own return (OL-3 and the like).
+- ⚠️ Deposits: TrailBook shows Kentucky withholding monthly, due the 15th of the next month, and for employers with more than $50,000 last year on the federal deposit dates. Kentucky's twice-monthly filers actually pay by the 25th (1st to 15th) and the 10th of the next month (16th to the end), so that date can be off by a few days. Quarterly and annual filers can pay later than shown. ⚠️ check: the thresholds come from 103 KAR 18:150 as summarized by payroll publishers.
+- ⚠️ Overtime: Kentucky also requires time and a half for hours on the seventh day when an employee works all seven days of a workweek (KRS 337.050). TrailBook only applies the 40-hour weekly rule; enter seventh-day hours as overtime by hand.
+- ⚠️ UI rates are per employer: enter yours from the Kentucky Office of Unemployment Insurance rate notice. New employers pay 2.7% (new contract construction employers 9%).
+- ⚠️ Sales tax: TrailBook doesn't work out Kentucky sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Kentucky Department of Revenue, 2026 Kentucky Withholding Tax Formula, 42A003(TCF)(10-2025) ($3,360 standard deduction; 3.5% flat rate on the rest; the $3,270 monthly example ($104.65)); 103 KAR 18:150 and Kentucky withholding instructions, as summarized by payroll publishers (revenue.ky.gov isn't readable from here) (monthly K-1 by the 15th of the next month ($2,000 to $50,000 last year); twice-monthly over $50,000; quarterly or annual below; K-3 and K-5 by January 31); Kentucky Office of Unemployment Insurance, 2026 Employer Guide ($12,000 wage base; 2.7% new-employer rate (9% for new contract construction employers); no Service Capacity Upgrade Fund in 2026); KRS 337.275 (minimum wage follows federal); KRS 341.190 (new hire reporting); no state paid sick leave law ($7.25 minimum wage; report new hires within 20 days).
+
+### Oklahoma (us-ok 2026.1, `src/rules/us-ok-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $1,000 an OK-W-4 allowance; single 0% to $10,100, 2.5% to $11,250, 3.5% to $13,550, 4.5% above; married 0% to $20,200, then $22,500 and $27,100; divided by the pay periods and rounded to the dollar; no OK-W-4 means single | ⚠️ check |
+| Oklahoma withholding deposits | Monthly by the 20th of the next month; on the federal semiweekly dates when last year's withholding was over $120,000; WTH 10001 | ⚠️ check |
+| Oklahoma UI deposits | Quarterly with the OES-3 | ⚠️ check |
+| Oklahoma UI (OK_UI, employer, OESC) | 1.5% default; employer enters its own rate, on the first $25,000 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Contribution Report (OES-3) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Oklahoma New Hire Reporting Center | ⚠️ check |
+
+- ⚠️ OK-W-4 status: single, married, or married withholding at the higher single rate. Allowances are $1,000 each. ⚠️ check: with no OK-W-4 on file TrailBook uses single with no allowances; the OW-2 doesn't say.
+- ⚠️ TrailBook works out the year's tax from the annual table and divides it by the paychecks; the OW-2's per-period tables round their brackets, so results can differ by a few cents before rounding to the dollar.
+- ⚠️ Deposits: TrailBook shows Oklahoma withholding monthly, due the 20th of the next month, and for employers averaging $10,000 a month last year on the federal deposit dates. Employers withholding $500 or less a quarter can pay quarterly, later than shown.
+- ⚠️ UI rates are per employer: enter yours from the OESC rate notice. New employers pay 1.5%. The 2026 wage base fell to $25,000.
+- ⚠️ Sales tax: TrailBook doesn't work out Oklahoma sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Oklahoma Tax Commission, OW-2, 2026 Oklahoma Income Tax Withholding Tables (Table 7, annual payroll period) ($1,000 per allowance; single 0% to $10,100, 2.5% to $11,250, 3.5% to $13,550, 4.5% above; married 0% to $20,200, then $22,500 and $27,100; married at the higher single rate uses the single table; round to the whole dollar; the $1,825 semi-monthly example ($37)); Same publication, General Information (quarterly by the 20th after the quarter up to $500 a quarter; monthly by the 20th of the next month; federal semi-weekly dates from an average of $10,000 a month last fiscal year); Oklahoma Employment Security Commission, Important Numbers for 2026 ($25,000 wage base; 1.5% new-employer rate; rates 0.2% to 5.8%); 40 O.S. 197.2 (minimum wage follows federal); 40 O.S. 4-101.1 (new hire reporting); no state paid sick leave law ($7.25 minimum wage; report new hires within 20 days).
+
+### Connecticut (us-ct 2026.1, `src/rules/us-ct-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | TPG-211 by CT-W4 code (A, B, C, D, F): the year's wages less the Table A exemption, Table B tax (2% to 6.99%), plus the Table C add-back and Table D recapture, less the Table E credit share, divided by the pay periods; no CT-W4 means 6.99% of wages | ⚠️ check |
+| Connecticut withholding deposits | Monthly by the 15th of the next month; weekly (by the third business day after the week's Friday) when last year's withholding was over $10,000; CT-941 | ⚠️ check |
+| Connecticut UI deposits | Quarterly with the UC-2 | ⚠️ check |
+| Connecticut Paid Leave contributions deposits | Quarterly with the Paid Leave wage report | ⚠️ check |
+| Connecticut Paid Leave (CT_PL, employee, CT Paid Leave Authority) | 0.5%, on the first $184,500 | ⚠️ check |
+| Connecticut UI (CT_UI, employer, CT DOL) | 1.9% default; employer enters its own rate, on the first $27,000 | ⚠️ check |
+| Quarterly report | Connecticut Quarterly Reconciliation of Withholding (CT-941) | ⚠️ check |
+| Quarterly report | Employer Contribution Return (UC-2) | ⚠️ check |
+| Quarterly report | Connecticut Paid Leave quarterly wage report | ⚠️ check |
+| Minimum wage | $16.94 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours a year (balance up to 40), for employers with 11 or more employees | ⚠️ check |
+| New-hire report | Within 20 days to Connecticut New Hire Reporting Program | ⚠️ check |
+
+- ⚠️ CT-W4 withholding code: A (married filing separately, or single with no dependents), B (head of household), C (married filing jointly, spouse doesn't work), D (no exemption or credit), F (single, married separately or with a working spouse, who wants more withheld: the head of household style rates at the single exemption). Code E (no withholding needed) is the exempt box.
+- ⚠️ No CT-W4 on file: "Not filed", 6.99% of wages with no exemption, as IP 2026(1) says.
+- ⚠️ CT-W4 line 3 (reduced withholding per paycheck) isn't supported; only extra withholding (line 2) is.
+- ⚠️ Connecticut Paid Leave: 0.5% of each employee's wages up to the Social Security wage base, paid quarterly to the CT Paid Leave Authority. TrailBook shows it in W-2 box 14 as CTPL.
+- ⚠️ Deposits: monthly by the 15th of the next month, or weekly (by the Wednesday after the Saturday-to-Friday week; TrailBook uses the third business day after the Friday) once last year's withholding was over $10,000. Quarterly remitters ($2,000 or less) can pay later than shown.
+- ⚠️ UI rates are per employer: enter yours from the Connecticut DOL rate notice. New employers pay 1.9%. ⚠️ check: whether the 1.0% fund solvency tax is added to the new-employer rate for 2026; if it is, enter 2.9%.
+- ⚠️ Paid sick leave: from 2026 employers with 11 or more employees must give 1 hour per 30 worked, up to 40 hours a year. TrailBook doesn't accrue it for employers with fewer than 11 employees. From 2027 it covers employers with 1 or more.
+- ⚠️ Sales tax: TrailBook doesn't work out Connecticut sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Connecticut DRS, TPG-211, 2026 Withholding Calculation Rules (Rev. 12/25) (Tables A to E by withholding code A, B, C, D and F; steps 1 to 16); Connecticut DRS, 2026 Withholding Tables (weekly) (checks of the calculation: $807 to $817 a week is $28.56 for code A and $31.73 for code D); Connecticut DRS, IP 2026(1), Connecticut Employer's Tax Guide (Circular CT) (no CT-W4: 6.99% with no exemption; weekly remitters (over $10,000 last year) by the Wednesday after the Saturday-to-Friday week; monthly ($2,000 to $10,000) by the 15th; quarterly ($2,000 or less); CT-941 by the last day of the month after the quarter); Connecticut Department of Labor, Information on Unemployment Tax Rate for Calendar Year 2026 ($27,000 wage base; 1.9% new-employer rate; 1.0% fund solvency tax rate); Connecticut Paid Leave Authority, as reported by payroll publishers (0.5% employee contribution up to the Social Security wage base ($184,500)); Core-CT notice, minimum wage increase (January 2, 2026); Connecticut DOL Paid Sick Leave guidance (C.G.S. 31-57r) ($16.94 minimum wage from January 1, 2026; 1 hour of paid sick leave per 30 worked, up to 40 a year, for employers with 11 or more employees from 2026).
+
+### Iowa (us-ia 2026.1, `src/rules/us-ia-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 3.8% of the year's wages less $13,000 (other), $19,500 (head of household) or $26,000 (married, spouse not working), less $40 an IA W-4 allowance, divided by the pay periods | ⚠️ check |
+| Iowa withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $120,000; quarterly withholding return | ⚠️ check |
+| Iowa UI deposits | Quarterly with the quarterly contribution and payroll report | ⚠️ check |
+| Iowa UI (IA_UI, employer, IWD) | 1% default; employer enters its own rate, on the first $20,400 | ⚠️ check |
+| Quarterly report | Iowa Quarterly Withholding Tax Return | ⚠️ check |
+| Quarterly report | Iowa Quarterly Contribution and Payroll Report | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 15 days to Iowa Centralized Employee Registry | ⚠️ check |
+
+- ⚠️ IA W-4 marital status: "Other" (or married filing jointly with a working spouse, or not given), head of household, or married filing jointly with a spouse who has no earned income (or qualifying surviving spouse).
+- ⚠️ Allowances: the 2024 and later IA W-4 asks for a dollar total allowance amount (normally $40 for each person and dependent claimed). TrailBook asks for the number of $40 allowances, so enter the IA W-4 total ÷ 40. An older (2023 or earlier) IA W-4 counts allowances directly, at $40 each, the same way. ⚠️ check: an older IA W-4's "single" uses the $13,000 deduction and "married" the $26,000 one; pick those statuses for employees who haven't refiled.
+- ⚠️ No IA W-4 on file: "Other" with no allowances.
+- ⚠️ Deposits: TrailBook shows Iowa withholding monthly, due the 15th of the next month, and for employers with more than $120,000 last year on the federal deposit dates. Iowa's own dates differ a little: the third month of each quarter is paid with the quarterly return at the end of the next month, and semimonthly filers pay by the 25th and the 10th. Quarterly filers (under $6,000 a year) can pay later than shown.
+- ⚠️ UI rates are per employer: enter yours from the Iowa Workforce Development rate notice. New employers pay 1.0%. The 2026 wage base fell to $20,400 (it rises to $21,100 in 2027).
+- ⚠️ Sales tax: TrailBook doesn't work out Iowa sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Iowa Department of Revenue, Iowa Withholding Formula, effective January 1, 2026 (released November 2025) (deductions $13,000 / $19,500 / $26,000 a year by IA W-4 marital status; 3.8% rate; allowance amount off the tax; $40 per allowance on 2023 and earlier IA W-4s; examples 1 to 3 ($59.26, $38.72, $45.15)); Iowa Department of Revenue, Iowa Withholding Tax Information and Filing Frequency and Return Due Dates pages (no IA W-4: an allowance amount of zero (701 IAC 307.3(3)"a"); quarterly under $6,000 a year; monthly $6,000 to $120,000 by the 15th for the first two months of a quarter; semimonthly over $120,000); Iowa Workforce Development 2026 rates, as reported by Bloomberg Tax ($20,400 wage base (down from $39,500); 1.0% new-employer rate); Iowa Code 91D.1 (minimum wage $7.25); Iowa Code 252G.3 (new hire reporting within 15 days); no state paid sick leave law ($7.25 minimum wage; report new hires within 15 days).
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
@@ -993,4 +1157,4 @@ Each state is one file in `src/rules` with a `StateRulePack`, added to the regis
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), the Illinois Department of Revenue (IL-700-T, IL-941) and IDES (UI), the Colorado Department of Revenue (DR 1098, DR 0004), CDLE (UI, minimum wage, COMPS Order) and the FAMLI Division, the North Carolina Department of Revenue (NC-30) and DES, the Georgia Department of Revenue (Employer's Tax Guide) and Department of Labor, the Utah State Tax Commission (Publication 14) and Department of Workforce Services, the Idaho State Tax Commission (EPB00744 and EPB00745) and Department of Labor, Michigan Treasury (Form 446, calendar-year withholding figures), UIA and LEO (minimum wage, Earned Sick Time Act), Virginia Tax (Employer Withholding Instructions), the VEC and DOLI (minimum wage), Massachusetts DOR (Circular M, M-941), DUA (UI, EMAC, Workforce Training Fund) and DFML (PFML rates), the New Jersey Division of Taxation (NJ-WT and rate tables) and NJDOL (UI, disability, family leave, WF/SWF rates each July, minimum wage), the Pennsylvania Department of Revenue (employer withholding rate and deposit tiers), L&I (UC tax highlights), DCED (Act 32 earned income tax) and the City of Philadelphia (wage tax rates, which change each July 1), the Ohio Department of Taxation (optional computer formula, employer and school district withholding guidelines) and ODJFS (UI), and the Ohio minimum wage notice, the Indiana Department of Revenue (Departmental Notice #1 county rates) and DWD, the Comptroller of Maryland (withholding guide, percentage tables and county rates) and the Maryland Department of Labor (UI, minimum wage, FAMLI start), the Missouri Department of Revenue (Form 4282) and DOLIR, Kansas City and St. Louis earnings tax, the Wisconsin Department of Revenue (Publication W-166) and DWD, the Minnesota Department of Revenue (withholding booklet), UI Minnesota (UI, Paid Leave premiums) and DLI (minimum wage, earned sick and safe time), Minneapolis and St. Paul minimum wages, SCDOR (WH-1603F and the Act 110 withholding tables) and SC DEW, the Chicago and Cook County minimum wage notices, and Denver, Edgewater and Boulder minimum wages, plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), the Illinois Department of Revenue (IL-700-T, IL-941) and IDES (UI), the Colorado Department of Revenue (DR 1098, DR 0004), CDLE (UI, minimum wage, COMPS Order) and the FAMLI Division, the North Carolina Department of Revenue (NC-30) and DES, the Georgia Department of Revenue (Employer's Tax Guide) and Department of Labor, the Utah State Tax Commission (Publication 14) and Department of Workforce Services, the Idaho State Tax Commission (EPB00744 and EPB00745) and Department of Labor, Michigan Treasury (Form 446, calendar-year withholding figures), UIA and LEO (minimum wage, Earned Sick Time Act), Virginia Tax (Employer Withholding Instructions), the VEC and DOLI (minimum wage), Massachusetts DOR (Circular M, M-941), DUA (UI, EMAC, Workforce Training Fund) and DFML (PFML rates), the New Jersey Division of Taxation (NJ-WT and rate tables) and NJDOL (UI, disability, family leave, WF/SWF rates each July, minimum wage), the Pennsylvania Department of Revenue (employer withholding rate and deposit tiers), L&I (UC tax highlights), DCED (Act 32 earned income tax) and the City of Philadelphia (wage tax rates, which change each July 1), the Ohio Department of Taxation (optional computer formula, employer and school district withholding guidelines) and ODJFS (UI), and the Ohio minimum wage notice, the Indiana Department of Revenue (Departmental Notice #1 county rates) and DWD, the Comptroller of Maryland (withholding guide, percentage tables and county rates) and the Maryland Department of Labor (UI, minimum wage, FAMLI start), the Missouri Department of Revenue (Form 4282) and DOLIR, Kansas City and St. Louis earnings tax, the Wisconsin Department of Revenue (Publication W-166) and DWD, the Minnesota Department of Revenue (withholding booklet), UI Minnesota (UI, Paid Leave premiums) and DLI (minimum wage, earned sick and safe time), Minneapolis and St. Paul minimum wages, SCDOR (WH-1603F and the Act 110 withholding tables) and SC DEW, the Alabama Department of Revenue (withholding booklet) and Department of Workforce, the Louisiana Department of Revenue (R-1306) and Workforce Commission, the Kentucky Department of Revenue (withholding formula) and Office of Unemployment Insurance, the Oklahoma Tax Commission (OW-2) and OESC, Connecticut DRS (TPG-211, withholding tables, IP 2026(1)), the Connecticut Department of Labor (UI, minimum wage, paid sick leave) and the CT Paid Leave Authority, the Iowa Department of Revenue (withholding formula) and Iowa Workforce Development, the Chicago and Cook County minimum wage notices, and Denver, Edgewater and Boulder minimum wages, plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
