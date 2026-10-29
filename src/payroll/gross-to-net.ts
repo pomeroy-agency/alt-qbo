@@ -2,7 +2,7 @@ import { D, type Dec, maxBig, minBig, toMajor, toMinor } from "../core/money.js"
 import type { ResolvedRules } from "../rules/index.js";
 import type { DE4 } from "./california.js";
 import { federalWithholding, type W4 } from "./federal.js";
-import { stateWithholding, type StateWithholding } from "./state-withholding.js";
+import { localWithholding, stateWithholding, type StateWithholding } from "./state-withholding.js";
 import { exemptSalaryOn, minimumWageOn, wageAreaName, wageHourFor } from "../rules/minimum-wage.js";
 
 export type PayFrequency = "weekly" | "biweekly" | "semimonthly" | "monthly";
@@ -246,6 +246,11 @@ export function calculatePaycheck(
       warnings.push(`no ${st.incomeTax.certificate} on file: ${stateName} income tax withheld at the flat ${new D(st.incomeTax.noCertificateRate).mul(100)}%`);
     }
     add(st.incomeTaxAgency.code, st.incomeTaxAgency.agency, "employee", incomeTaxWages, toMinor(sit));
+    // City income taxes (New York City, Yonkers) for employees whose record says they apply.
+    for (const local of st.localIncomeTaxes ?? []) {
+      const amount = localWithholding(local, st.incomeTax, input.stateWithholding, toMajor(incomeTaxWages), periods);
+      if (amount.gt(0)) add(local.code, local.agency, "employee", incomeTaxWages, toMinor(amount));
+    }
   }
   // Hours worked for taxes charged by the hour; a salaried employee counts as 40 hours a week.
   const hoursWorked = input.hourlyRate ? money(input.regularHours).add(money(input.overtimeHours)).add(money(input.doubleTimeHours)) : new D(2080).div(periods);

@@ -403,13 +403,30 @@ Sources: Oregon DOR, Withholding Tax Formulas, 150-206-436 (Rev. 12-31-25), effe
 
 - ⚠️ No IT-2104 on file: withheld as single with no allowances. Married withholding at the higher single rate, and head of household, use the single tables.
 - ⚠️ Withholding over $700 not yet paid is due within 3 business days of the payday; the rest is paid with the NY-45. Check whether your business must use the 5-business-day rule instead.
-- ⚠️ New York City and Yonkers resident withholding isn't calculated yet. This is the main gap before releasing New York for employees who live there.
 - ⚠️ Disability (DBL) and Paid Family Leave contributions are withheld from employees and go toward your insurance carrier's premium; TrailBook holds them in a liability account and doesn't schedule a state payment.
 - ⚠️ Paid Family Leave is capped by its annual maximum ($411.91), shown as a wage base of $95,349.54.
 - ⚠️ The Metropolitan Commuter Transportation Mobility Tax (employers in the MCTD with more than $312,500 of payroll a quarter) isn't calculated.
 - ⚠️ Minimum wage and the executive/administrative exempt salary depend on where the employee works: choose New York City, Long Island and Westchester on the employee, or leave the rest of the state.
 - ⚠️ Prenatal leave (20 hours a year) and the spread-of-hours and call-in pay rules aren't tracked.
 - ⚠️ Sales tax: TrailBook doesn't work out New York sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+#### us-ny 2026.2: New York City and Yonkers (added 2026-10-29, awaiting Greg's review; merging the pull request releases it)
+
+2026.2 replaces 2026.1 with everything above unchanged, plus city income tax. It's withheld only for employees whose record has the box ticked (the employee form shows "Lives in New York City", "Lives in Yonkers", and "Works in Yonkers, lives elsewhere" under the IT-2104 fields).
+
+| Item | Figure | Status |
+|---|---|---|
+| New York City resident tax (NYC_WH) | NYS-50-T-NYC exact calculation: Table B deduction (weekly $96.15 single / $105.75 married; biweekly $192.30 / $211.50; semimonthly $208.35 / $229.15; monthly $416.70 / $458.30), Table C exemption ($19.25 / $38.50 / $41.65 / $83.30 each), then 2.05% to 4.25% in six brackets, one table for single and married | ⚠️ check |
+| Yonkers resident tax (YON_WH) | 16.75% of the New York State amount (Method II), before any extra withholding | ⚠️ check |
+| Yonkers nonresident earnings tax (YON_NR) | 0.5% of wages less the Method VII exclusion (weekly: under $77 nothing; $58 from $77, $38 from $192, $19 from $385, none from $577; other frequencies in the pack) | ⚠️ check |
+| Paid and reported | With New York State withholding on the NYS-1 and NY-45; same liability account (2340) | ⚠️ check |
+| W-2 | Boxes 18 to 20: local wages, local tax, NYC or YONKERS | ⚠️ check |
+
+- ⚠️ Tested against the publication's own examples: NYC single weekly $400 with 3 exemptions is $6.11, monthly $50,000 with 3 is $2,070.50, married monthly $50,000 with 3 is $2,068.73 (all six NYC examples match).
+- ⚠️ TrailBook doesn't guess city tax from an address: the owner or accountant ticks it from the employee's IT-2104 (and IT-2104.1 for nonresidents).
+- ⚠️ NYC uses the state allowance count (IT-2104 line 1); a different NYC count on line 2 isn't kept separately yet. Extra NYC and Yonkers withholding (lines 4 and 5) isn't split out either; the one extra amount goes to state withholding.
+
+Sources (2026.2): NYS-50-T-NYC (1/26), New York City Withholding Tax Tables and Methods (exact calculation method); NYS-50-T-Y (1/26), Yonkers Withholding Tax Tables and Methods (resident 16.75% of the state amount; nonresident Method VII). Both read from the publications on 2026-10-29.
 
 Sources: NYS-50-T-NYS (1/26), New York State Withholding Tax Tables and Methods, pages 14 to 22 (tables A to C (deduction and exemption allowances), Method II tables II-A to II-D, Method III top rates); NYS-50 (Employer's Guide); Tax Law 674 (withholding paid within 3 business days once $700 or more is withheld; otherwise with the NY-45; no IT-2104 means single with no allowances); NYS DOL, Current 2026 Employer Contribution Rate ($17,600 UI wage base; new employers 4.1% (4.025% UI plus 0.075% Re-employment Service Fund)); DFS, 2026 Paid Family Leave rate decision; paidfamilyleave.ny.gov/2026 (0.432% of wages, at most $411.91 a year); Workers' Compensation Law 209 (disability (DBL) employee contribution 0.5% of wages, at most $0.60 a week); Labor Law 652; 12 NYCRR 142 (Proskauer and Seyfarth summaries) ($17.00 minimum wage in NYC, Long Island and Westchester, $16.00 elsewhere; exempt salary $1,275 / $1,199.10 a week); Labor Law 196-b (paid sick leave) (1 hour per 30 worked; 56 hours for 100+ employees, 40 for fewer).
 

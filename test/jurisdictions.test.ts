@@ -4,8 +4,8 @@ import { minimumWageOn } from "../src/rules/minimum-wage.js";
 import { usCalifornia2026 } from "../src/rules/us-ca-2026.js";
 import { calculatePaycheck, type EmployeePayInput } from "../src/payroll/gross-to-net.js";
 import { splitWorkweek } from "../src/payroll/hours.js";
-import { depositSchedule, type RunTaxes } from "../src/payroll/deposits.js";
-import { stateWithholding } from "../src/payroll/state-withholding.js";
+import { depositAccounts, depositSchedule, type RunTaxes } from "../src/payroll/deposits.js";
+import { localWithholding, stateWithholding } from "../src/payroll/state-withholding.js";
 import { D } from "../src/core/money.js";
 
 describe("jurisdictions", () => {
@@ -289,5 +289,35 @@ describe("New York", () => {
     const d = depositSchedule([run("r1", "2026-07-10", 400), run("r2", "2026-07-24", 400), run("r3", "2026-08-07", 300)], "monthly", { country: "US", region: "NY" })
       .filter((x) => x.kind === "ny_wh");
     expect(d.map((x) => [x.dueDate, x.amountMinor])).toEqual([["2026-07-29", 80000n], ["2026-11-02", 30000n]]);
+  });
+
+  const local = (id: string, status: "single" | "married", allowances: number, wages: number, periods: number) =>
+    localWithholding(ny.payroll.localIncomeTaxes!.find((l) => l.id === id)!, nyTax, { filingStatus: status, allowances, localities: [id] }, new D(wages), periods).toFixed(2);
+
+  it("matches NYS-50-T-NYC's exact calculation examples for New York City residents", () => {
+    expect(local("nyc", "single", 3, 400, 52)).toBe("6.11");
+    expect(local("nyc", "single", 1, 5000, 24)).toBe("188.80");
+    expect(local("nyc", "single", 3, 50000, 12)).toBe("2070.50");
+    expect(local("nyc", "married", 4, 400, 52)).toBe("5.17");
+    expect(local("nyc", "married", 3, 5000, 24)).toBe("184.37");
+    expect(local("nyc", "married", 3, 50000, 12)).toBe("2068.73");
+  });
+
+  it("withholds 16.75% of the state amount for Yonkers residents and 0.5% after the exclusion for nonresidents", () => {
+    expect(local("yonkers", "single", 3, 400, 52)).toBe(new D("8.0074").mul("0.1675").toFixed(2));
+    expect(local("yonkers_nr", "single", 0, 200, 52)).toBe("0.81");
+    expect(local("yonkers_nr", "single", 0, 70, 52)).toBe("0.00");
+    expect(local("yonkers_nr", "single", 0, 1000, 52)).toBe("5.00");
+  });
+
+  it("withholds city tax only for employees who claim it, and pays it with state withholding", () => {
+    const weekly: EmployeePayInput = { employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "20.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } };
+    expect(calculatePaycheck(weekly, rules, {}, "2026-06-05").taxes.some((t) => t.code === "NYC_WH")).toBe(false);
+    const p = calculatePaycheck({ ...weekly, stateWithholding: { filingStatus: "single", allowances: 0, localities: ["nyc"] } }, rules, {}, "2026-06-05");
+    const nyc = p.taxes.find((t) => t.code === "NYC_WH")!;
+    expect(nyc.amountMinor).toBe(BigInt(local("nyc", "single", 0, 800, 52).replace(".", "")));
+    expect(nyc.paidBy).toBe("employee");
+    expect(depositAccounts("ny_wh", ny)).toMatchObject({ NY_WH: "ny_wh_payable", NYC_WH: "ny_wh_payable", YON_WH: "ny_wh_payable" });
+    expect(ny.version).toBe("2026.2");
   });
 });

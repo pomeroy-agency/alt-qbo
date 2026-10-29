@@ -181,6 +181,12 @@ function cleanStateWithholding(w: EmployeeFields["stateWithholding"]): StateWith
     if (!Number.isInteger(n) || n < 0 || n > 99) invalid("state allowances should be a whole number from 0 to 99");
     out.allowances = n;
   }
+  if (w.localities !== undefined && w.localities !== null) {
+    if (!Array.isArray(w.localities) || w.localities.length > 5 || !w.localities.every((l) => typeof l === "string" && /^[a-z_]{2,20}$/.test(l))) {
+      invalid("pick the city taxes from the list");
+    }
+    if (w.localities.length) out.localities = [...new Set(w.localities as string[])];
+  }
   return Object.keys(out).length ? out : null;
 }
 

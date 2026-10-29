@@ -151,6 +151,39 @@ export type StateIncomeTaxRules =
       topRates: Record<"single" | "married", { from: string; rate: string }[]>;
     };
 
+type PayPeriodKey = "weekly" | "biweekly" | "semimonthly" | "monthly";
+
+/** How a city's income tax is withheld. */
+export type LocalIncomeTaxRules =
+  /** New York City: the NYS-50-T-NYC exact calculation method; the same table for single and married. */
+  | {
+      method: "ny_exact";
+      deduction: Record<PayPeriodKey, { single: string; married: string }>;
+      exemption: Record<PayPeriodKey, string>;
+      tables: Record<PayPeriodKey, { from: string; subtract: string; rate: string; add: string }[]>;
+    }
+  /** Yonkers residents: a share of the state withholding worked out before any extra withholding. */
+  | { method: "share_of_state"; share: string }
+  /** Yonkers nonresidents: a rate on wages less an exclusion by wage level; no tax where the exclusion is null. */
+  | { method: "exclusion_percent"; rate: string; exclusions: Record<PayPeriodKey, { from: string; exclusion: string | null }[]> };
+
+/** A city income tax withheld for employees who live (or work) there; each employee says which apply. */
+export interface LocalIncomeTax {
+  /** Stable id stored on the employee, like "nyc". */
+  id: string;
+  /** On forms and pay stubs, like "NYC income tax". */
+  name: string;
+  /** For the employee form, like "Lives in New York City". */
+  label: string;
+  /** Tax code on pay stubs, like "NYC_WH". */
+  code: string;
+  agency: string;
+  account: string;
+  /** Locality name for W-2 box 20, like "NYC" or "YONKERS". */
+  w2Locality: string;
+  rules: LocalIncomeTaxRules;
+}
+
 /** A state payroll tax on wages other than income tax: SDI, UI, ETT, job training tax and the like. */
 export interface StatePayrollTax {
   /** Tax code on pay stubs and in pay run totals, like "CA_SDI" or "TX_UI". */
@@ -312,6 +345,8 @@ export interface StateRulePack extends RulePackMeta {
     incomeTax: StateIncomeTaxRules;
     /** Agency that takes state income tax withheld, when there is one. */
     incomeTaxAgency?: { agency: string; code: string; label: string; account: string };
+    /** City income taxes withheld with the state's (New York City, Yonkers). */
+    localIncomeTaxes?: LocalIncomeTax[];
     taxes: StatePayrollTax[];
     deposits: StateDepositRule[];
     employerAccount: StateEmployerAccount;

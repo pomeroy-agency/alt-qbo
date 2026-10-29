@@ -41,7 +41,7 @@ export function depositAccounts(kind: DepositKind, state: StateRulePack): Record
   const accounts: Record<string, string> = {};
   for (const code of r.codes) {
     const account = state.payroll.incomeTaxAgency?.code === code ? state.payroll.incomeTaxAgency.account
-      : state.payroll.taxes.find((t) => t.code === code)?.account;
+      : [...(state.payroll.localIncomeTaxes ?? []), ...state.payroll.taxes].find((t) => t.code === code)?.account;
     if (account) accounts[code] = account;
   }
   return accounts;
