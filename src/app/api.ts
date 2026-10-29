@@ -1363,6 +1363,10 @@ function payrollProfile(pack: StateRulePack, today: string) {
     incomeTax: it.method === "none" ? { method: "none" as const }
       : it.method === "elected_percent" ? { method: it.method, certificate: it.certificate, choices: it.choices, defaultRate: it.defaultRate, zeroAllowed: it.zeroAllowed }
       : it.method === "or_formula" ? { method: it.method, certificate: it.certificate, noCertificateRate: it.noCertificateRate }
+      : it.method === "annual_formula" ? {
+        method: it.method, certificate: it.certificate, statuses: it.statuses.map((s) => ({ id: s.id, label: s.label })), noCertificateStatus: it.noCertificateStatus,
+        statusFromW4: Boolean(it.statusFromW4), allowances: it.allowances.map((a) => a.label), dollarAllowance: it.dollarAllowance?.label ?? null,
+      }
       : { method: it.method, certificate: it.certificate },
     localIncomeTaxes: (pack.payroll.localIncomeTaxes ?? []).map((t) => ({ id: t.id, label: t.label })),
     taxLabels: taxLabels(pack),
@@ -1420,7 +1424,7 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
     const pack = statePackFor({ country: ent.country, region: ent.region }, pacificToday());
     for (const [code, v] of Object.entries(rates)) {
       const percent = typeof v === "string" && v.trim() ? v.trim() : null;
-      if (percent !== null && !/^\d{1,2}(\.\d{1,3})?$/.test(percent)) throw new HttpError(400, "the rate should be a percentage like 3.4");
+      if (percent !== null && !/^\d{1,2}(\.\d{1,4})?$/.test(percent)) throw new HttpError(400, "the rate should be a percentage like 3.4");
       await setStateTaxRate(tx, { orgId: ctx.orgId, entityId: p.entity!, code, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
     }
     if (account !== undefined) {

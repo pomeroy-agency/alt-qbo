@@ -149,7 +149,57 @@ export type StateIncomeTaxRules =
       tables: Record<"single" | "married", Record<"weekly" | "biweekly" | "semimonthly" | "monthly", { from: string; subtract: string; rate: string; add: string }[]>>;
       /** Method III: from `from` annualized net wages, that rate of all of it. */
       topRates: Record<"single" | "married", { from: string; rate: string }[]>;
+    }
+  /**
+   * The common annualized formula: wages for the year, less the filing
+   * status's standard deduction (or the dollar allowance the employee
+   * entered) and the allowances claimed, through the status's rates, less
+   * any credit, divided by the pay periods (Illinois, Colorado, North
+   * Carolina, Georgia, Utah, Idaho, Michigan, Virginia, Massachusetts, New
+   * Jersey).
+   */
+  | {
+      method: "annual_formula";
+      /** The state's own certificate; null where the state uses the federal W-4 alone (Utah). */
+      certificate: string | null;
+      statuses: AnnualFormulaStatus[];
+      /** Status used when the employee hasn't filed the state certificate. */
+      noCertificateStatus: string;
+      /** The status follows the federal W-4 when there's no state certificate on file (Colorado, Utah). */
+      statusFromW4?: Record<FederalFilingStatus, string>;
+      /**
+       * Kinds of allowances on the certificate (Illinois lines 1 and 2), each a
+       * deduction from the year's wages, or with `credit` an amount off the
+       * year's tax (Massachusetts blindness).
+       */
+      allowances: { label: string; amount: string; credit?: boolean }[];
+      /** Added to the deduction once the employee claims at least one of the first kind of allowance (Massachusetts: $3,400). */
+      exemptionBase?: string;
+      /** The employee's Social Security and Medicare come off wages first, up to this much a year (Massachusetts: $2,000). */
+      ficaDeductionCap?: string;
+      /** Nothing is withheld when at least one allowance is claimed and the year's wages are below this (Massachusetts: $8,000). */
+      noTaxBelowAnnualWages?: string;
+      /** The employee may enter a dollar allowance that replaces the standard deduction (Colorado DR 0004 line 2). */
+      dollarAllowance?: { label: string };
+      /** Marginal rates on taxable wages for the year, by `AnnualFormulaStatus.table`. */
+      tables: Record<string, { over: string; rate: string }[]>;
+      /**
+       * Round each paycheck's amount to the cent or, as North Carolina asks,
+       * the whole dollar; "annual_dollar" rounds the year's tax to the dollar
+       * before dividing (Virginia).
+       */
+      round: "cent" | "dollar" | "annual_dollar";
     };
+
+/** One filing status on a state certificate. */
+export interface AnnualFormulaStatus {
+  id: string;
+  label: string;
+  standardDeduction: string;
+  table: string;
+  /** Utah's base allowance: a credit that shrinks by `phaseOutRate` of wages above `phaseOutFrom`. */
+  credit?: { base: string; phaseOutFrom: string; phaseOutRate: string };
+}
 
 type PayPeriodKey = "weekly" | "biweekly" | "semimonthly" | "monthly";
 
@@ -233,8 +283,13 @@ interface DepositRuleBase {
 export type StateDepositRule =
   /** California PIT and SDI: quarterly, monthly or on the federal semiweekly timing by amount withheld. */
   | (DepositRuleBase & { schedule: "ca_edd"; monthlyAtOrAbove: string; federalTimingOver: string })
-  /** Paid with the quarterly report, by the last day of the month after the quarter (UI everywhere). */
-  | (DepositRuleBase & { schedule: "quarterly"; report: string })
+  /**
+   * Paid with the quarterly report, by the last day of the month after the
+   * quarter (UI everywhere), or by `dueDay` of that month. With
+   * `noWeekendExtension` a due date on a weekend or holiday moves to the
+   * business day before (New Jersey: the 30th, no extensions).
+   */
+  | (DepositRuleBase & { schedule: "quarterly"; report: string; dueDay?: number; noWeekendExtension?: boolean })
   /**
    * Withholding paid on the federal 941 deposit dates when the average of the
    * last four quarters' state withholding is over `federalTimingAverageOver`,
@@ -247,7 +302,14 @@ export type StateDepositRule =
    * which the amount not yet paid reaches `atOrAbove`; what's left at the
    * quarter's end is paid with the return (New York's $700 rule).
    */
-  | (DepositRuleBase & { schedule: "accumulated_threshold"; atOrAbove: string; businessDays: number; report: string });
+  | (DepositRuleBase & { schedule: "accumulated_threshold"; atOrAbove: string; businessDays: number; report: string })
+  /**
+   * Monthly, due on `dueDay` of the next month (or its last day), unless
+   * last year's withholding was over `lookbackOver`: then on the federal
+   * semiweekly dates, or for "weekly" by the third business day after the
+   * Friday of the payday's week (Colorado). Null: always monthly.
+   */
+  | (DepositRuleBase & { schedule: "monthly_or_larger"; lookbackOver: string | null; largeFiler: "federal" | "weekly"; dueDay: number | "last"; report: string });
 
 /** A quarterly return or wage report the state wants. */
 export interface StateQuarterlyForm {
@@ -267,6 +329,10 @@ export interface StateQuarterlyForm {
   /** A combined return's withheld taxes (state income tax, Oregon's statewide transit tax). */
   withholdingCodes?: string[];
   fileAt: string;
+  /** Due on this day of the month after the quarter instead of its last day (New Jersey: the 30th). */
+  dueDay?: number;
+  /** A due date on a weekend or holiday moves to the business day before, not after (New Jersey). */
+  noWeekendExtension?: boolean;
 }
 
 /** A part of a state with its own minimum wage (and exempt salary): Portland metro, New York City. */

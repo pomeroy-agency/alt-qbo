@@ -5,7 +5,7 @@ import type { Actor, Role } from "../core/ledger.js";
 import { D, toMajor, toMinor } from "../core/money.js";
 import { unseal } from "../core/pii.js";
 import { resolveRules, statePackFor, type Place, type StateQuarterlyForm, type StateRulePack } from "../rules/index.js";
-import { addDays, endOfNextMonth, onOrNextBusinessDay, quarterEnd, quarterOf } from "./business-days.js";
+import { addDays, endOfNextMonth, onOrNextBusinessDay, onOrPreviousBusinessDay, quarterEnd, quarterOf, type Calendar } from "./business-days.js";
 import type { DepositKind } from "./deposits.js";
 import type { Paycheck } from "./gross-to-net.js";
 import { placeOf } from "./tax-deposits.js";
@@ -548,9 +548,16 @@ export async function formStateQuarterly(
   if (rows.some((r) => !r.ssn)) warnings.push(`Some employees have no Social Security number on file; the ${spec.form} needs one for each.`);
   return {
     form: spec.form, title: spec.title, period: `Q${input.quarter} ${input.year}`,
-    dueDate: onOrNextBusinessDay(endOfNextMonth(to), pack.calendar), employer, fileAt: spec.fileAt,
+    dueDate: stateFormDue(spec, to, pack.calendar), employer, fileAt: spec.fileAt,
     lines, employees: rows.sort((a, b) => String(a.name).localeCompare(String(b.name))), warnings,
   };
+}
+
+/** A state quarterly form's due date: the last day of the month after the quarter unless the form names a day. */
+function stateFormDue(spec: StateQuarterlyForm, quarterEndDate: string, calendar: Calendar): string {
+  const last = endOfNextMonth(quarterEndDate);
+  const day = spec.dueDay ? `${last.slice(0, 8)}${String(spec.dueDay).padStart(2, "0")}` : last;
+  return spec.noWeekendExtension ? onOrPreviousBusinessDay(day, calendar) : onOrNextBusinessDay(day, calendar);
 }
 
 /** The forms due for a business, newest period first, so the page can list them. */
@@ -561,7 +568,7 @@ export function formsFor(year: number, today: string, state: StateRulePack) {
     if (addDays(end, -92) > today) continue;
     out.push({ form: "941", slug: "941", period: `Q${q} ${year}`, year, quarter: q, dueDate: onOrNextBusinessDay(endOfNextMonth(end), "federal") });
     for (const f of state.forms.quarterly) {
-      out.push({ form: f.form, slug: f.slug, period: `Q${q} ${year}`, year, quarter: q, dueDate: onOrNextBusinessDay(endOfNextMonth(end), state.calendar) });
+      out.push({ form: f.form, slug: f.slug, period: `Q${q} ${year}`, year, quarter: q, dueDate: stateFormDue(f, end, state.calendar) });
     }
   }
   out.unshift(

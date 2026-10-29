@@ -97,6 +97,13 @@ export function onOrNextBusinessDay(date: string, calendar: Calendar): string {
   return d;
 }
 
+/** The date itself if it's a business day, otherwise the one before. */
+export function onOrPreviousBusinessDay(date: string, calendar: Calendar): string {
+  let d = date;
+  while (!isBusinessDay(d, calendar)) d = addDays(d, -1);
+  return d;
+}
+
 /** The nth business day after a date. */
 export function businessDaysAfter(date: string, n: number, calendar: Calendar): string {
   let d = date;

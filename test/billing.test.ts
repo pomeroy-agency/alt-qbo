@@ -78,7 +78,7 @@ describe("billing", () => {
     expect(b.data.prices.plan).toEqual({ books: { month: 1500, year: 15000 }, books_payroll: { month: 3500, year: 35000 } });
     expect(b.data.prices.perPersonMonth).toBe(400);
     // Launched states only, for now.
-    const out = await call(`/api/orgs/${orgId}/billing/details`, { cookie: su.cookie, body: { name: "X", email: "x@example.com", address: { line1: "1 Main", city: "Boise", state: "ID", zip: "83702" } } });
+    const out = await call(`/api/orgs/${orgId}/billing/details`, { cookie: su.cookie, body: { name: "X", email: "x@example.com", address: { line1: "1 Main", city: "Helena", state: "MT", zip: "59601" } } });
     expect(out.status).toBe(400);
   });
 
