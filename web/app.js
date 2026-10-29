@@ -71,6 +71,11 @@ const TAX_LABEL = {
   FUTA: "FUTA", CA_UI: "CA UI", CA_ETT: "CA ETT",
 };
 
+/** A tax code's name: federal and California ones above, the business's state's from the server, else the code. */
+function taxLabel(code, labels) {
+  return TAX_LABEL[code] ?? labels?.[code] ?? pay.state?.taxLabels?.[code] ?? code.replace(/_/g, " ");
+}
+
 // ------------------------------------------------------------------ layout
 
 // Light, dark, or follow the device. Kept per browser; the page works without it.
@@ -1668,7 +1673,8 @@ function stateCertificateFields(e, v, sel) {
     return `<label>${esc(it.certificate)} status${sel("swStatus", opts, status)}</label>
       <label>${esc(it.certificate)} allowances<input name="swAllowances" value="${v(sw.allowances ?? 0)}" inputmode="numeric"></label>
       <label>${esc(it.certificate)} extra each paycheck ($)<input name="swExtra" value="${v(sw.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
-      <label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Claimed exempt for this year</label>`;
+      <label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Claimed exempt for this year</label>
+      ${(pay.state?.localIncomeTaxes ?? []).map((l) => `<label class="check"><input type="checkbox" name="swLocal" value="${esc(l.id)}" ${sw.localities?.includes(l.id) ? "checked" : ""}> ${esc(l.label)}</label>`).join("")}`;
   }
   return `<p class="hash">${esc(pay.state?.name ?? "This state")} has no income tax on wages, so there's no state withholding form.</p>`;
 }
@@ -1759,7 +1765,8 @@ function employeeBody(f) {
     ...(d.de4Status ? { de4: { filingStatus: d.de4Status, regularAllowances: d.de4Allowances, additionalWithholding: d.de4Extra } } : {}),
     ...(d.swRate !== undefined ? { stateWithholding: { rate: d.swRate, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked) } } : {}),
     ...(d.swStatus !== undefined ? { stateWithholding: d.swStatus
-      ? { filingStatus: d.swStatus, allowances: d.swAllowances, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked) }
+      ? { filingStatus: d.swStatus, allowances: d.swAllowances, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked),
+          localities: [...f.querySelectorAll("[name=swLocal]:checked")].map((i) => i.value) }
       : null } : {}),
     deductions: [{ kind: "traditional401k", amount: d.k401 }, { kind: "section125", amount: d.section125 }, { kind: "post_tax", amount: d.postTax }],
     openingYtd: d.ytdWages ? { year: d.ytdYear, wages: d.ytdWages, federalIncomeTax: d.ytdFit, socialSecurityTax: d.ytdSs, medicareTax: d.ytdMed, caIncomeTax: d.ytdPit, caSdi: d.ytdSdi } : null,
@@ -1819,21 +1826,22 @@ function payRunBody() {
 
 function runTable(run) {
   const taxCodes = [...new Set(run.paychecks.flatMap((p) => p.taxes.map((t) => t.code)))];
-  const ee = taxCodes.filter((c) => !c.endsWith("_ER") && !["FUTA", "CA_UI", "CA_ETT"].includes(c));
+  const paidBy = new Map(run.paychecks.flatMap((p) => p.taxes.map((t) => [t.code, t.paidBy])));
+  const ee = taxCodes.filter((c) => paidBy.get(c) === "employee");
   const er = taxCodes.filter((c) => !ee.includes(c));
   const amt = (p, c) => usd(p.taxes.find((t) => t.code === c)?.amountMinor ?? 0);
   const issues = run.paychecks.flatMap((p) => [...p.blockers.map((b) => ["bad", `${p.name}: ${b}`]), ...p.warnings.map((w) => ["warn", `${p.name}: ${w}`])]);
   return `
     ${issues.map(([k, m]) => `<div class="alert ${k}">${k === "bad" ? "Must fix before approval: " : ""}${esc(m)}</div>`).join("")}
     <div class="table-wrap"><table>
-      <thead><tr><th>Employee</th><th class="num">Gross</th>${ee.map((c) => `<th class="num">${TAX_LABEL[c]}</th>`).join("")}<th class="num">Deductions</th><th class="num">Net pay</th></tr></thead>
+      <thead><tr><th>Employee</th><th class="num">Gross</th>${ee.map((c) => `<th class="num">${esc(taxLabel(c))}</th>`).join("")}<th class="num">Deductions</th><th class="num">Net pay</th></tr></thead>
       <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${e.code.toLowerCase().replace("_", " ")}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.sickLeave ? `<div class="hash">sick leave ${p.sickLeave.grantedHours ? `${hrs(p.sickLeave.grantedHours)}h granted for the year, ` : ""}+${hrs(p.sickLeave.accruedHours)}h earned, ${hrs(p.sickLeave.usedHours ?? 0)}h taken, balance ${hrs(p.sickLeave.balanceHours)}h</div>` : ""}</td>
         <td class="num">${usd(p.grossMinor)}</td>${ee.map((c) => `<td class="num">${amt(p, c)}</td>`).join("")}
         <td class="num">${usd(p.deductions.reduce((s, d) => s + BigInt(d.amountMinor), 0n))}</td><td class="num"><strong>${usd(p.netPayMinor)}</strong></td></tr>`).join("")}</tbody>
     </table></div>
     <h3>Employer taxes</h3>
     <div class="table-wrap"><table>
-      <thead><tr><th>Employee</th>${er.map((c) => `<th class="num">${TAX_LABEL[c]}</th>`).join("")}<th class="num">Total</th></tr></thead>
+      <thead><tr><th>Employee</th>${er.map((c) => `<th class="num">${esc(taxLabel(c))}</th>`).join("")}<th class="num">Total</th></tr></thead>
       <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}</td>${er.map((c) => `<td class="num">${amt(p, c)}</td>`).join("")}<td class="num">${usd(p.employerTaxMinor)}</td></tr>`).join("")}</tbody>
     </table></div>
     <div class="row" style="margin-top:12px;gap:24px">
@@ -2028,7 +2036,7 @@ function stubCard(r, c, s) {
       <tbody>${c.earnings.map((e) => `<tr><td>${e.code.charAt(0) + e.code.slice(1).toLowerCase().replace("_", " ")}</td><td class="num">${e.hours ?? ""}</td><td class="num">${e.rate ? `$${Number(e.rate).toFixed(2)}` : ""}</td><td class="num">${usd(e.amountMinor)}</td><td></td></tr>`).join("")}
         <tr><td><strong>Gross pay</strong></td><td class="num">${hours || ""}</td><td></td><td class="num"><strong>${usd(c.grossMinor)}</strong></td><td class="num">${usd(y.grossMinor)}</td></tr></tbody>
       <thead><tr><th colspan="3">Taxes withheld</th><th class="num"></th><th class="num"></th></tr></thead>
-      <tbody>${eeTaxes.map((t) => `<tr><td colspan="3">${TAX_LABEL[t.code]}</td><td class="num">${usd(t.amountMinor)}</td><td class="num">${usd(y.byTax[t.code] ?? 0)}</td></tr>`).join("")}</tbody>
+      <tbody>${eeTaxes.map((t) => `<tr><td colspan="3">${esc(taxLabel(t.code, r.taxLabels))}</td><td class="num">${usd(t.amountMinor)}</td><td class="num">${usd(y.byTax[t.code] ?? 0)}</td></tr>`).join("")}</tbody>
       ${c.deductions.length ? `<thead><tr><th colspan="5">Deductions</th></tr></thead><tbody>${c.deductions.map((d) => `<tr><td colspan="3">${esc(d.description)}</td><td class="num">${usd(d.amountMinor)}</td><td class="num">${usd(y.byDeduction[d.kind] ?? 0)}</td></tr>`).join("")}</tbody>` : ""}
       <tbody>${BigInt(c.reimbursementMinor) ? `<tr><td colspan="3">Expense reimbursement (not taxed)</td><td class="num">${usd(c.reimbursementMinor)}</td><td></td></tr>` : ""}
         <tr><td colspan="3"><strong>Net pay</strong></td><td class="num"><strong>${usd(c.netPayMinor)}</strong></td><td class="num">${usd(y.netPayMinor)}</td></tr></tbody>
@@ -2070,7 +2078,7 @@ const fmtLine = (l) => l.value === null ? `<span class="muted">${l.kind === "mon
 function columnLabel(k) {
   if (k === "ssn") return "SSN";
   if (k === "name") return "Employee";
-  const m = k.match(/^([A-Z]{2}_[A-Z0-9_]+)(Taxable|Withheld)Minor$/);
+  const m = k.match(/^([A-Z]{2,3}_[A-Z0-9_]+)(Taxable|Withheld)Minor$/);
   if (m) return `${m[1].replace(/_/g, " ")} ${m[2] === "Taxable" ? "taxable wages" : "withheld"}`;
   return { wagesMinor: "Wages", withheldMinor: "Withheld" }[k] ?? k;
 }
@@ -2095,6 +2103,7 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
         <tr><td>14 Other</td><td colspan="3">${w.box14.map((b) => `${esc(b.label)} ${usd(b.amountMinor)}`).join(", ") || "—"}</td></tr>
         ${w.box15 ? `<tr><td>15 State / employer's state ID</td><td>${esc(w.box15.state)} ${esc(w.box15.employerStateId ?? "missing")}</td><td>16 State wages</td><td class="num">${usd(w.box16)}</td></tr>
         <tr><td></td><td></td><td>17 State income tax</td><td class="num">${usd(w.box17)}</td></tr>` : `<tr><td>15 to 17</td><td colspan="3" class="muted">No state income tax</td></tr>`}
+        ${(w.local ?? []).map((l) => `<tr><td>18 Local wages</td><td class="num">${usd(l.wagesMinor)}</td><td>19 Local income tax / 20 ${esc(l.locality)}</td><td class="num">${usd(l.taxMinor)}</td></tr>`).join("")}
       </tbody></table></div>`).join("")
     : rows.length ? `<h3>Wage detail</h3><div class="table-wrap"><table>
       <thead><tr>${Object.keys(rows[0]).map((k) => `<th class="${k.endsWith("Minor") ? "num" : ""}">${esc(columnLabel(k))}</th>`).join("")}</tr></thead>

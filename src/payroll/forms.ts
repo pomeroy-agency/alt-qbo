@@ -423,6 +423,8 @@ export async function formW2(
       box5: t("MEDICARE_EE").wages, box6: t("MEDICARE_EE").amount + t("ADDL_MEDICARE_EE").amount,
       box12, box14: pack.forms.w2Box14.filter((b) => t(b.code).amount).map((b) => ({ label: b.label, amountMinor: t(b.code).amount })),
       box15: income ? { state: st, employerStateId: stateId } : null, box16: t(income?.code).wages, box17: t(income?.code).amount,
+      // Boxes 18 to 20: each city tax withheld (New York City, Yonkers).
+      local: (pack.payroll.localIncomeTaxes ?? []).filter((l) => t(l.code).amount).map((l) => ({ locality: l.w2Locality, wagesMinor: t(l.code).wages, taxMinor: t(l.code).amount })),
       hasEarlierPay: Boolean(p?.openingYtd && p.openingYtd.year === input.year),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
@@ -485,7 +487,9 @@ export async function formStateQuarterly(
   if (full) await auditSsn(tx, input.orgId, input.entityId, input.actor, spec.form, `Q${input.quarter} ${input.year}`);
   const people = await employeesOf(tx, input.entityId);
   const pct = (r: string) => `${new D(r).mul(100).toString()}%`;
-  const label = (code: string) => pack.payroll.taxes.find((t) => t.code === code)?.label ?? pack.payroll.incomeTaxAgency?.label ?? code;
+  const label = (code: string) => pack.payroll.taxes.find((t) => t.code === code)?.label
+    ?? pack.payroll.localIncomeTaxes?.find((t) => t.code === code)?.name
+    ?? pack.payroll.incomeTaxAgency?.label ?? code;
   const warnings = baseWarnings(employer, runs);
   if (!employer.stateEmployerAccount) warnings.push(`Add your ${pack.payroll.employerAccount.label} in payroll settings; the ${spec.form} needs it.`);
   const paid = await stateDepositsPaid(tx, input.entityId, pack, [...spec.codes, ...(spec.withholdingCodes ?? [])], from, to);

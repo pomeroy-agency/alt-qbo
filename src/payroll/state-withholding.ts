@@ -1,5 +1,5 @@
 import { D, type Dec } from "../core/money.js";
-import type { StateIncomeTaxRules } from "../rules/types.js";
+import type { LocalIncomeTax, StateIncomeTaxRules } from "../rules/types.js";
 import { californiaWithholding, type DE4 } from "./california.js";
 
 /**
@@ -18,6 +18,8 @@ export interface StateWithholding {
   filingStatus?: "single" | "married" | "married_single_rate";
   /** Allowance states: allowances (exemptions) claimed. */
   allowances?: number;
+  /** City income taxes that apply to the employee, by id (New York: "nyc", "yonkers", "yonkers_nr"). */
+  localities?: string[];
 }
 
 type Frequency = "weekly" | "biweekly" | "semimonthly" | "monthly";
@@ -57,6 +59,34 @@ function newYorkWithholding(rules: Extract<StateIncomeTaxRules, { method: "ny_ex
   if (top) return annualNet.mul(top.rate).div(periods);
   const r = row(rules.tables[status][freq], net, (x) => x.from);
   return new D(r.add).add(net.sub(r.subtract).mul(r.rate));
+}
+
+/** One city income tax for one paycheck; zero when the employee didn't claim the city. */
+export function localWithholding(
+  local: LocalIncomeTax, stateRules: StateIncomeTaxRules, c: StateWithholding | null | undefined, wagesThisPeriod: Dec, periodsPerYear: number,
+): Dec {
+  const cert = c ?? {};
+  if (!cert.localities?.includes(local.id) || cert.exempt) return new D(0);
+  const freq = FREQUENCY[periodsPerYear];
+  if (!freq) throw new Error(`no ${local.label} table for ${periodsPerYear} pay periods a year`);
+  const r = local.rules;
+  switch (r.method) {
+    case "ny_exact": {
+      const status = cert.filingStatus === "married" ? "married" : "single";
+      const net = D.max(wagesThisPeriod.sub(r.deduction[freq][status]).sub(new D(r.exemption[freq]).mul(cert.allowances ?? 0)), 0);
+      const x = row(r.tables[freq], net, (t) => t.from);
+      return new D(x.add).add(net.sub(x.subtract).mul(x.rate)).toDecimalPlaces(2);
+    }
+    case "share_of_state": {
+      if (stateRules.method !== "ny_exact") throw new Error(`${local.label} needs New York's state method`);
+      return newYorkWithholding(stateRules, cert, wagesThisPeriod, periodsPerYear).mul(r.share).toDecimalPlaces(2);
+    }
+    case "exclusion_percent": {
+      const x = row(r.exclusions[freq], wagesThisPeriod, (t) => t.from);
+      if (x.exclusion === null) return new D(0);
+      return D.max(wagesThisPeriod.sub(x.exclusion), 0).mul(r.rate).toDecimalPlaces(2);
+    }
+  }
 }
 
 /** State income tax withheld from one paycheck, by the state's method. */
