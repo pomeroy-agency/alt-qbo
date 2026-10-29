@@ -16,6 +16,8 @@ import { usMassachusetts2026 } from "./us-ma-2026.js";
 import { usMichigan2026 } from "./us-mi-2026.js";
 import { usNewJersey2026 } from "./us-nj-2026.js";
 import { usVirginia2026 } from "./us-va-2026.js";
+import { usOhio2026 } from "./us-oh-2026.js";
+import { usPennsylvania2026 } from "./us-pa-2026.js";
 import { isLive } from "./jurisdictions.js";
 import type { FederalRulePack, Place, RulePack, StateRulePack } from "./types.js";
 
@@ -32,7 +34,7 @@ function deepFreeze<T>(value: T): T {
 
 const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia2026, ...NO_INCOME_TAX_STATES_2026, usArizona2026, usOregon2026, usNewYork2026,
   usIllinois2026, usColorado2026, usNorthCarolina2026, usGeorgia2026, usUtah2026, usIdaho2026,
-  usMichigan2026, usVirginia2026, usMassachusetts2026, usNewJersey2026]);
+  usMichigan2026, usVirginia2026, usMassachusetts2026, usNewJersey2026, usPennsylvania2026, usOhio2026]);
 
 
 export class JurisdictionError extends Error {

@@ -124,6 +124,8 @@ export interface StateDepositOptions {
    * before the year, for states whose timing depends on it (Arizona).
    */
   priorQuarterlyAverageMinor?: bigint;
+  /** Last calendar year's totals by tax code, for rules that look back at their own taxes (monthly_or_larger). */
+  priorYearMinorByCode?: Record<string, bigint>;
 }
 
 /**
@@ -251,7 +253,11 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
         }
       } else if (rule.schedule === "monthly_or_larger") {
         // Monthly by default; larger filers (by last year's withholding) on the federal dates or weekly.
-        const large = rule.lookbackOver !== null && (opts.priorQuarterlyAverageMinor ?? 0n) * 4n > minor(rule.lookbackOver);
+        // Last year's withholding: of this rule's own taxes where known (Philadelphia's wage tax), else the state income tax.
+        const priorYear = opts.priorYearMinorByCode ? rule.codes.reduce((sum, c) => sum + (opts.priorYearMinorByCode![c] ?? 0n), 0n)
+          : (opts.priorQuarterlyAverageMinor ?? 0n) * 4n;
+        const large = rule.lookbackOver !== null && priorYear > minor(rule.lookbackOver);
+        const semimonthly = !large && rule.semimonthlyOver !== undefined && priorYear > minor(rule.semimonthlyOver);
         const dueMonthly = (date: string) => onOrNextBusinessDay(rule.dueDay === "last" ? endOfNextMonth(date)
           : `${endOfNextMonth(date).slice(0, 8)}${String(rule.dueDay).padStart(2, "0")}`, cal);
         const dueText = rule.dueDay === "last" ? "the end of the next month" : `the ${rule.dueDay}th of the next month`;
@@ -273,6 +279,14 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
                 `More than $${rule.lookbackOver} withheld last year: due with your federal deposits`));
             } else if (!fed && (!next || next.payDate.slice(0, 7) !== run.payDate.slice(0, 7))) {
               push(bucket.take(rule.kind, `${rule.kind}:m:${run.payDate.slice(0, 7)}`, monthName(run.payDate), dueMonthly(run.payDate), `Monthly: by ${dueText}`));
+            }
+          } else if (semimonthly) {
+            // The 1st to the 15th and the 16th to the month's end, each due the third business day after it closes.
+            const half = (d: string) => `${d.slice(0, 7)}${Number(d.slice(8)) <= 15 ? "a" : "b"}`;
+            if (!next || half(next.payDate) !== half(run.payDate)) {
+              const end = Number(run.payDate.slice(8)) <= 15 ? `${run.payDate.slice(0, 8)}15` : addDays(`${endOfNextMonth(run.payDate).slice(0, 8)}01`, -1);
+              push(bucket.take(rule.kind, `${rule.kind}:s:${half(run.payDate)}`, `${monthName(run.payDate)}, ${end.slice(8) === "15" ? "1st to 15th" : "16th to end"}`,
+                businessDaysAfter(end, 3, cal), `Semi-monthly filer (more than $${rule.semimonthlyOver} withheld last year): by the third business day after the half-month closes`));
             }
           } else if (!next || next.payDate.slice(0, 7) !== run.payDate.slice(0, 7)) {
             push(bucket.take(rule.kind, `${rule.kind}:m:${run.payDate.slice(0, 7)}`, monthName(run.payDate), dueMonthly(run.payDate),

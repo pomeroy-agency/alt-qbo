@@ -254,7 +254,7 @@ export function calculatePaycheck(
     add(st.incomeTaxAgency.code, st.incomeTaxAgency.agency, "employee", incomeTaxWages, toMinor(sit));
     // City income taxes (New York City, Yonkers) for employees whose record says they apply.
     for (const local of st.localIncomeTaxes ?? []) {
-      const amount = localWithholding(local, st.incomeTax, input.stateWithholding, toMajor(incomeTaxWages), periods);
+      const amount = localWithholding(local, st.incomeTax, input.stateWithholding, toMajor(incomeTaxWages), periods, onDate);
       if (amount.gt(0)) add(local.code, local.agency, "employee", incomeTaxWages, toMinor(amount));
     }
   }

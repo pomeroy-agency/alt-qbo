@@ -71,15 +71,20 @@ export async function taxDeposits(tx: Tx, entityId: string, year: number, today:
   const state = statePackFor(place, `${year}-12-31`);
   // Some states' timing depends on how much was withheld in the four quarters before the year.
   let priorQuarterlyAverageMinor: bigint | undefined;
+  let priorYearMinorByCode: Record<string, bigint> | undefined;
   const incomeCode = state.payroll.incomeTaxAgency?.code;
   if (incomeCode && state.payroll.deposits.some((d) => d.schedule === "federal_timing_by_average" || d.schedule === "monthly_or_larger")) {
     const prior = await tx.query(
       `SELECT id, pay_date::text, result FROM pay_runs WHERE entity_id = $1 AND status = 'posted' AND pay_date >= $2 AND pay_date <= $3`,
       [entityId, `${year - 1}-01-01`, `${year - 1}-12-31`],
     );
-    priorQuarterlyAverageMinor = prior.rows.map(runTaxes).reduce((s, r) => s + (r.byTax[incomeCode] ?? 0n), 0n) / 4n;
+    priorYearMinorByCode = {};
+    for (const r of prior.rows.map(runTaxes)) {
+      for (const [code, amount] of Object.entries(r.byTax)) priorYearMinorByCode[code] = (priorYearMinorByCode[code] ?? 0n) + amount;
+    }
+    priorQuarterlyAverageMinor = (priorYearMinorByCode[incomeCode] ?? 0n) / 4n;
   }
-  const deposits = depositSchedule(runs, await federalDepositSchedule(tx, entityId), place, { priorQuarterlyAverageMinor });
+  const deposits = depositSchedule(runs, await federalDepositSchedule(tx, entityId), place, { priorQuarterlyAverageMinor, priorYearMinorByCode });
   const { rows: paid } = await tx.query(
     `SELECT deposit_key, paid_date::text, amount_minor, by_tax, confirmation, entry_id, created_by
        FROM tax_deposit_payments WHERE entity_id = $1 AND deposit_key = ANY($2) ORDER BY created_at`,

@@ -192,6 +192,22 @@ function cleanStateWithholding(w: EmployeeFields["stateWithholding"]): StateWith
     }
     if (w.localities.length) out.localities = [...new Set(w.localities as string[])];
   }
+  // Entered local rates (fractions) and yearly amounts (dollars), and the place each is for.
+  const ids = (v: unknown, what: string) => {
+    if (v === undefined || v === null) return [];
+    if (typeof v !== "object" || Array.isArray(v) || Object.keys(v).length > 5 || !Object.keys(v).every((k) => /^[a-z_]{2,20}$/.test(k))) invalid(what);
+    return Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined && x !== null && x !== "");
+  };
+  const rates = ids(w.localRates, "enter the local tax rates as numbers");
+  for (const [, x] of rates) {
+    if (typeof x !== "string" || !/^\d{1,3}(\.\d{1,6})?$/.test(x) || new D(x).gt(100)) invalid("a local tax rate should be a fraction like 0.01, or a yearly amount up to $100");
+  }
+  if (rates.length) out.localRates = Object.fromEntries(rates.map(([k, x]) => [k, new D(x as string).toString()]));
+  const places = ids(w.localPlaces, "enter the local tax places as text");
+  for (const [, x] of places) {
+    if (typeof x !== "string" || x.trim().length > 40 || /[<>]/.test(x)) invalid("a local tax place should be a short name or code");
+  }
+  if (places.length) out.localPlaces = Object.fromEntries(places.map(([k, x]) => [k, (x as string).trim()]));
   return Object.keys(out).length ? out : null;
 }
 
