@@ -789,6 +789,172 @@ Sources: PA Department of Revenue, Employer Withholding (pa.gov/agencies/revenue
 
 Sources: Ohio Department of Taxation, Employer Withholding Taxes: Optional Computer Formula (Rev. 07/26, effective August 1, 2026) ($650 an exemption; 1.6% up to $26,050; $416.80 plus 2.99% to $100,000; $2,627.91 plus 3.4% above); Ohio Department of Taxation, 2026 Employer and School District Withholding Tax Filing Guidelines (quarterly for $2,000 or less of Ohio and school district tax in the look-back year (to June 30), monthly by the 15th up to $84,000, partial-weekly (3 banking days after each Saturday-to-Tuesday and Wednesday-to-Friday period) from $84,000; traditional-base school districts use the Ohio wage base and exemptions, earned-income districts a flat rate with no exemptions); ODJFS 2026 contribution rates, as reported by payroll publishers and the HB 376 fiscal note ($9,000 wage base; 2.85% new-employer rate including the 0.15% technology and customer service fee (5.85% in construction)); Ohio Constitution art. II, s. 34a; Ohio Department of Commerce minimum wage notice for 2026, as reported ($11.00 for employers with gross receipts over $405,000; $7.25 at or below); ORC 718 (municipal income tax withholding); ORC 4141.29 (new hire reporting) (employers withhold the city tax where work is done, and may withhold for the home city; report new hires within 20 days; no statewide paid sick leave law).
 
+## Fifth round of states: us-in, us-md, us-mo, us-wi, us-mn, us-sc 2026.1 (draft, added 2026-10-29, awaiting Greg's review)
+
+The next six by market size and nearness. All use the `annual_formula` method, which gained what these states need: a third kind of allowance (Indiana's adopted-child exemption), a standard deduction that shrinks with wages (Wisconsin), and a deduction that is a share of wages up to a cap once an allowance is claimed (South Carolina's 10% up to $7,500). Local taxes: Indiana county tax and Maryland county tax are rates the employer enters for each employee from the state's county table; Indiana's is on wages less the state exemptions and Maryland's on the state's taxable wages (a new `state_taxable` base). Kansas City and St. Louis earnings taxes are set at 1%. Minnesota Paid Leave premiums start in 2026 and are added. Pay runs (previews included) wait until these packs are released.
+
+Tested against each publication's own examples: Indiana's $800 weekly example ($13.96 state, $4.73 county), South Carolina's $750 weekly with 3 allowances ($10.58), Wisconsin's three W-166 examples ($7.59, $14.34, $22.08), and Maryland's 3.30% percentage table (state plus county equal the table's combined 8.05%). Minnesota and Missouri were checked by hand against their formulas.
+
+Read from the agencies' own documents on 2026-10-29: Indiana Departmental Notice #1, the Maryland Comptroller's 2026 withholding guide, tables and county-rate memo, Missouri's Employer's Tax Guide (Form 4282), Wisconsin's Publication W-166, Minnesota's 2026 withholding booklet and UI Minnesota's 2026 rate and Paid Leave pages, and South Carolina's WH-1603F and withholding page. From payroll publishers: Indiana, Missouri, Wisconsin, South Carolina and Maryland UI rates, Minnesota Paid Leave's employee share and wage base, Kansas City and St. Louis deposit schedules, and Indiana's deposit dates.
+
+### Indiana (us-in 2026.1, `src/rules/us-in-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 2.95% of wages less $1,000 a WH-4 personal exemption, $1,500 a dependent exemption and $3,000 an adopted child, spread over the pay periods; no WH-4 means no exemptions | ⚠️ check |
+| Indiana county income tax (IN_COUNTY, Indiana Revenue) | Rate entered for each employee (up to 3.5%) on wages less the state exemptions | ⚠️ check |
+| Indiana state and county withholding deposits | Monthly by the 20th of the next month; WH-1 | ⚠️ check |
+| Indiana UI deposits | Quarterly with the UC-1/UC-5A | ⚠️ check |
+| Indiana UI (IN_UI, employer, DWD) | 2.5% default; employer enters its own rate, on the first $9,500 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Contribution and Wage Report (UC-1/UC-5A) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Indiana New Hire Reporting Center | ⚠️ check |
+
+- ⚠️ WH-4 line 5 is personal exemptions ($1,000 each, including 65 or older and blind); lines 6 and 7 together are dependent exemptions ($1,500 each); line 8 is adopted children ($3,000 each). No WH-4 on file: no exemptions.
+- ⚠️ County tax: tick it and enter the rate from the county table in Departmental Notice #1 for the county the employee lived in on January 1 (or worked in, if they lived outside Indiana), and the county's name. It's withheld on the same base as the state tax and paid with the WH-1.
+- ⚠️ Deposits: TrailBook shows the WH-1 due on the 20th of the next month, the early-filer date. Employers with $1,000 a month or less on average have until the 30th, so the dates shown are earlier than needed for them.
+- ⚠️ UI rates are per employer: enter yours from the DWD rate notice. New employers pay 2.5%.
+- ⚠️ Sales tax: TrailBook doesn't work out Indiana sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Indiana Department of Revenue, Departmental Notice #1 (R47 / 10-26, effective October 1, 2026) (2.95% state rate for 2026; $1,000 per personal exemption (WH-4 line 5), $1,500 per dependent and first-time dependent exemption (lines 6 and 7), $3,000 per adopted child (line 8); county tax on the same base at the January 1 county of residence (or of principal work for nonresidents); the 92 county rates; the $800 weekly example); Indiana Department of Revenue filing calendar, as summarised by Thomson Reuters and payroll publishers (WH-1 monthly, due the 20th of the next month for early filers (over $1,000 a month on average last year), the 30th for others); Indiana DWD 2026 rates, as summarised by payroll publishers ($9,500 wage base; 2.5% new-employer rate); IC 22-2-2 (minimum wage); IC 22-4-10-1.5 (new hire reporting) ($7.25 minimum wage; no state paid sick leave law; report new hires within 20 days).
+
+### Maryland (us-md 2026.1, `src/rules/us-md-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $3,400 and $3,200 an MW507 exemption, at 4.75% rising to 6.5% (single brackets from $100,000, joint and head of household from $150,000), divided by the pay periods; plus the county rate below | ⚠️ check |
+| Maryland county income tax (or the nonresident rate) (MD_COUNTY, Comptroller of Maryland) | Rate entered for each employee (up to 3.3%) on the state's taxable wages | ⚠️ check |
+| Maryland state and county withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $14,999.99; MW506 | ⚠️ check |
+| Maryland UI deposits | Quarterly with the Quarterly contribution and employment report | ⚠️ check |
+| Maryland UI (MD_UI, employer, Maryland Labor) | 2.6% default; employer enters its own rate, on the first $8,500 | ⚠️ check |
+| Quarterly report | Maryland Quarterly Contribution and Employment Report | ⚠️ check |
+| Minimum wage | $15.00 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours a year (balance up to 64) | ⚠️ check |
+| New-hire report | Within 20 days to Maryland New Hire Registry | ⚠️ check |
+
+- ⚠️ Maryland's withholding combines the state tax and the county tax. TrailBook shows them as two lines (Maryland income tax and Maryland county income tax) and puts the county tax in W-2 boxes 18 to 20. ⚠️ check: Maryland may want state and county combined in box 17 instead.
+- ⚠️ MW507 status: single (also married filing separately), married filing jointly, head of household (joint brackets), or married withholding at the single rate. Exemptions are $3,200 each; the MW507 worksheet lowers how many higher earners can claim. No MW507 on file: single with no exemptions, and you should withhold the 3.30% county rate.
+- ⚠️ County tax: tick it and enter the rate of the county (or Baltimore City) the employee lives in, from the Comptroller's 2026 table, and the county's name. Anne Arundel and Frederick rates depend on income; use the one for the employee's expected wages. For a nonresident working in Maryland, enter 2.25% and "Nonresident".
+- ⚠️ Small paychecks: the Comptroller's tables say not to withhold on very small paychecks (under $96 a week); TrailBook still works out the small amount.
+- ⚠️ Deposits: TrailBook shows the MW506 monthly, due the 15th of the next month. Accelerated filers ($15,000 or more last year) owe within 3 business days of each payday once $700 builds up; TrailBook shows them on the federal semi-weekly dates, which can be a day or two later after a Saturday or Sunday payday. Quarterly filers (under $700 a quarter) can pay later.
+- ⚠️ UI rates are per employer: enter yours from the Maryland Department of Labor rate notice. New employers pay 2.6%. ⚠️ check: a 0.15% administrative fee on taxable wages from 2026 is mentioned in a 2026 fiscal note; it isn't added here.
+- ⚠️ FAMLI (paid family and medical leave) contributions start January 1, 2027; nothing is taken in 2026.
+- ⚠️ Sales tax: TrailBook doesn't work out Maryland sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Comptroller of Maryland, 2026 percentage method of withholding tables (e.g. 3.30 percent local income tax) ($3,400 standard deduction; $3,200 per exemption; combined rates from 8.05% (4.75% + 3.30%) with brackets at $150,000 joint / $100,000 single and up); Comptroller of Maryland, Central Payroll Bureau memo, 2026 Maryland State and Local Income Tax Withholding Information (February 4, 2026) (state brackets to 6.5% over $1,200,000 joint / $1,000,000 single; 2026 county rates (Anne Arundel and Frederick by income); 3.30% when no county is known; nonresident special rate 2.25%); Comptroller of Maryland, 2026 Maryland Employer Withholding Guide (monthly MW506 by the 15th of the next month (over $700 in a quarter); quarterly under $700; accelerated within 3 business days of payday after $15,000 last year once $700 builds up); Maryland Department of Labor 2026 Table A, with rates as reported by Bloomberg Tax ($8,500 wage base; 2.6% new-employer rate); Md. Code, Lab. & Empl. 3-413 (minimum wage), 3-1301 (Healthy Working Families Act), Fam. Law 10-108.6 (new hire reporting); HB 102 (2025) on FAMLI ($15.00 minimum wage; 1 hour of sick and safe leave per 30 worked, up to 40 used and 64 held a year (unpaid under 15 employees); report new hires within 20 days; FAMLI contributions start January 1, 2027).
+
+### Missouri (us-mo 2026.1, `src/rules/us-mo-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $16,100 ($32,200 spouse not working, $24,150 head of household), 0% to $1,348 then 2% to 4.7% over $9,436, per pay period rounded to the dollar; no MO W-4 means single | ⚠️ check |
+| Lives or works in Kansas City (1% earnings tax) (KC_EARN, Kansas City Revenue) | 1% of wages | ⚠️ check |
+| Lives or works in the City of St. Louis (1% earnings tax) (STL_EARN, St. Louis Collector of Revenue) | 1% of wages | ⚠️ check |
+| Missouri withholding deposits | Monthly by the 15th of the next month; MO-941 | ⚠️ check |
+| Kansas City earnings tax deposits | Monthly by the 15th of the next month; RD-130M | ⚠️ check |
+| St. Louis earnings tax deposits | Quarterly with the W-10 | ⚠️ check |
+| Missouri UI deposits | Quarterly with the MODES-4-7 | ⚠️ check |
+| Missouri UI (MO_UI, employer, DOLIR) | 2.376% default; employer enters its own rate, on the first $9,000 | ⚠️ check |
+| Quarterly report | Quarterly Contribution and Wage Report (MODES-4-7) | ⚠️ check |
+| Quarterly report | Kansas City Employer's Quarterly Return of Earnings Tax Withheld (RD-110) | ⚠️ check |
+| Quarterly report | St. Louis Employer's Return of Earnings Tax Withheld (W-10) | ⚠️ check |
+| Minimum wage | $15.00 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Missouri New Hire Reporting Program | ⚠️ check |
+
+- ⚠️ MO W-4 status: single, married with a working spouse and married filing separately share the $16,100 deduction; tick the box for a spouse who doesn't work ($32,200); head of household is $24,150. No MO W-4 on file: single. Missouri asks for each paycheck's withholding rounded to the whole dollar.
+- ⚠️ Deposits: TrailBook shows Missouri withholding monthly by the 15th of the next month, which is what monthly filers owe for the first two months of each quarter (the third month can wait for the MO-941, so the date shown is earlier than needed). Quarter-monthly filers ($9,000 a month in two of the last 12 months) owe more often than shown; TrailBook doesn't work those out.
+- ⚠️ Kansas City and St. Louis earnings taxes: tick the one that applies when the employee lives in the city or works there. Both are 1% of wages. Kansas City's is paid on the same schedule as Missouri withholding (RD-130M) with a quarterly RD-110; St. Louis's on the quarterly W-10. Work done outside the city by a nonresident isn't taxed; TrailBook doesn't split wages by where the work was done.
+- ⚠️ UI rates are per employer: enter yours from the DOLIR rate notice. New employers pay 2.376% (nonprofits 1%).
+- ⚠️ Missouri's Proposition A paid sick leave was repealed from August 28, 2025, so there's no state paid sick leave.
+- ⚠️ Sales tax: TrailBook doesn't work out Missouri sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Missouri DOR, Employer's Tax Guide (Form 4282), 2026 Missouri Withholding Tax Formula (standard deductions $16,100 / $32,200 / $24,150; annual brackets 0% to $1,348, then 2% to 4.5% in $1,348 steps, 4.7% over $9,436; rounding to the whole dollar); Missouri DOR, Employer's Tax Guide (Form 4282), filing frequencies and 2026 due dates (monthly ($500 a month in two of the last 12 months) by the 15th, the quarter's last month with the MO-941 by the end of the next month; quarterly and annual filers; quarter-monthly at $9,000 a month); Missouri DOLIR 2026 rates, as reported by Bloomberg Tax ($9,000 wage base; 2.376% new-employer rate (1% nonprofits)); RSMo 290.502 as amended by Proposition A (2024) and HB 567 (2025); Kansas City Code ch. 68 and St. Louis City earnings tax, as summarised by payroll publishers ($15.00 minimum wage from January 1, 2026; Proposition A's paid sick leave repealed from August 28, 2025; 1% Kansas City and St. Louis earnings taxes, paid on the state's frequency (Kansas City) or quarterly (St. Louis W-10)); RSMo 285.304 (new hire reporting) (report new hires within 20 days).
+
+### Wisconsin (us-wi 2026.1, `src/rules/us-wi-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less a sliding deduction ($6,702 single, less 12% over $17,780; $9,461 married, less 20% over $25,727) and $400 a WT-4 exemption, 3.54% / 4.65% / 5.30% / 7.65%, divided by the pay periods | ⚠️ check |
+| Wisconsin withholding deposits | Monthly by the last day of the next month; WT-6 | ⚠️ check |
+| Wisconsin UI deposits | Quarterly with the UCT-101 | ⚠️ check |
+| Wisconsin UI (WI_UI, employer, DWD) | 3.05% default; employer enters its own rate, on the first $14,000 | ⚠️ check |
+| Quarterly report | Quarterly Contribution Report and wage report (UCT-101) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Wisconsin New Hire Reporting Center | ⚠️ check |
+
+- ⚠️ WT-4 status: single, married, or married but withholding at the higher single rate. No WT-4 on file: single with no exemptions.
+- ⚠️ Deposits: the department assigns each employer a frequency. TrailBook shows the WT-6 monthly, due the last day of the next month. Employers assigned semi-monthly owe the first half of each month by its last day and the second half by the 15th of the next month, earlier than shown; quarterly and annual filers can pay later.
+- ⚠️ UI rates are per employer: enter yours from the DWD rate notice. Most new employers pay 3.05%.
+- ⚠️ Sales tax: TrailBook doesn't work out Wisconsin sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Wisconsin DOR Publication W-166, Withholding Tax Guide, alternate method (laws as of January 15, 2026) (deduction $6,702 single (less 12% over $17,780, none from $73,630) and $9,461 married (less 20% over $25,727, none from $73,032); $400 per exemption; 3.54% to $12,760, 4.65% to $25,520, 5.30% to $280,950, 7.65% above; the three worked examples); Wisconsin DOR Publication W-166, filing frequency and due dates (frequency assigned by the department; monthly and quarterly WT-6 due the last day of the next month; semi-monthly due the last day of the month (1st to 15th) and the 15th of the next (16th to month end)); Wisconsin DWD UI financing summary and 2026 rates, as summarised by payroll publishers ($14,000 wage base; 3.05% new-employer rate (2.50% construction is per payroll size)); Wis. Stat. 104 (minimum wage); Publication W-166 (new hire reporting) ($7.25 minimum wage; no state paid sick leave law; report new hires within 20 days).
+
+### Minnesota (us-mn 2026.1, `src/rules/us-mn-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $5,300 a W-4MN allowance; single 5.35% from $4,700 to 9.85% over $207,850, married 5.35% from $14,700 to 9.85% over $352,630; divided by the pay periods | ⚠️ check |
+| Minnesota withholding deposits | On the federal deposit dates when last year's average quarter was over $1,500, otherwise quarterly; quarterly withholding return | ⚠️ check |
+| Minnesota UI deposits | Quarterly with the Quarterly UI Wage Detail Report | ⚠️ check |
+| Minnesota Paid Leave premiums deposits | Quarterly with the Paid Leave wage detail report | ⚠️ check |
+| Minnesota Paid Leave (employee) (MN_PFL_EE, employee, DEED) | 0.44%, on the first $185,000 | ⚠️ check |
+| Minnesota Paid Leave (employer) (MN_PFL_ER, employer, DEED) | 0.44% default; employer enters its own rate, on the first $185,000 | ⚠️ check |
+| Minnesota UI (MN_UI, employer, UI Minnesota) | 1.69% default; employer enters its own rate, on the first $44,000 | ⚠️ check |
+| Minnesota workforce enhancement fee (MN_WEF, employer, UI Minnesota) | 0.1%, on the first $44,000 | ⚠️ check |
+| Quarterly report | Quarterly UI Wage Detail Report | ⚠️ check |
+| Quarterly report | Paid Leave quarterly wage detail and premiums | ⚠️ check |
+| Minimum wage | $11.41 | ⚠️ check |
+| Minimum wage, Minneapolis | $16.37 | ⚠️ check |
+| Minimum wage, St. Paul | $16.37 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | 1 hour per 30 worked, up to 48 hours a year (balance up to 80) | ⚠️ check |
+| New-hire report | Within 20 days to Minnesota New Hire Reporting Center | ⚠️ check |
+
+- ⚠️ W-4MN status: single, married, or married but withholding at the higher single rate. No W-4MN on file: single with no allowances.
+- ⚠️ Deposits: TrailBook follows your federal deposit dates when the average quarter's Minnesota withholding last year was over $1,500 (Minnesota looks at the previous quarter), and otherwise shows it due with the quarterly return.
+- ⚠️ UI rates are per employer: enter yours from the UI tax rate determination, with the 0.40% base tax and 14% additional assessment included. New employers get an industry rate; TrailBook's default is 1.08% plus the base tax and assessment (professional services, 1.69%). The 0.10% workforce enhancement fee is added separately.
+- ⚠️ Paid Leave: TrailBook takes the employee's 0.44% from pay and adds the employer's share (0.44%, or 0.22% for small employers assigned the 0.66% rate). Employers that pay the whole premium themselves enter 0.88% as their share and the employee's is still taken; tell us if you need that switched off.
+- ⚠️ Minneapolis and St. Paul have their own minimum wage ($16.37 in 2026); pick the area for employees working there. St. Paul's smaller employers may have a lower rate.
+- ⚠️ Sales tax: TrailBook doesn't work out Minnesota sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Minnesota Department of Revenue, 2026 Minnesota Income Tax Withholding instruction booklet, computer formula ($5,300 per allowance; single schedule from $4,700 (5.35%, 6.80% from $38,010, 7.85% from $114,130, 9.85% from $207,850); married from $14,700 (6.80% from $63,400, 7.85% from $208,180, 9.85% from $352,630)); Minnesota Department of Revenue, 2026 withholding booklet, deposit schedules (semiweekly or monthly (by the 15th) following the federal schedule when more than $1,500 was withheld in the previous quarter; otherwise quarterly with the return); Unemployment Insurance Minnesota (uimn.org), 2026 tax rate factors and new employer rates; Paid Leave small employer premium rate page ($44,000 wage base; 0.40% base tax; 14% additional assessment; new-employer rates by industry (1.00% to 4.06%); Paid Leave 0.88% (0.66% small employers)); Minnesota DEED Paid Leave premiums, as reported by PayrollOrg and EY (employees can be charged up to 50% of the premium (0.44%); the small employer share is 0.22%; premiums apply up to $185,000 of wages); Minnesota DLI minimum wage page; Minn. Stat. 181.9445 (earned sick and safe time); Minneapolis and St. Paul ordinances as reported ($11.41 minimum wage for 2026; 1 hour per 30 worked, up to 48 a year; $16.37 in Minneapolis and St. Paul); Minn. Stat. 256.998 (new hire reporting) (report new hires within 20 days).
+
+### South Carolina (us-sc 2026.1, `src/rules/us-sc-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $5,000 an SC W-4 allowance and, with at least one allowance, 10% of wages up to $7,500; 0% to $3,640, 3% to $18,230, 6% above; divided by the pay periods | ⚠️ check |
+| South Carolina withholding deposits | On the federal deposit dates; WH-1605/WH-1606 | ⚠️ check |
+| South Carolina UI deposits | Quarterly with the UCE-120 | ⚠️ check |
+| South Carolina UI (SC_UI, employer, DEW) | 1% default; employer enters its own rate, on the first $14,000 | ⚠️ check |
+| Quarterly report | SC Withholding Quarterly Tax Return (WH-1605, WH-1606 for the fourth quarter) | ⚠️ check |
+| Quarterly report | Employer Quarterly Contribution and Wage Report (UCE-120) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to South Carolina New Hire Reporting Program | ⚠️ check |
+
+- ⚠️ Act 110 (signed March 30, 2026) lowered the 2026 income tax rates to 1.99% and 5.21%. SCDOR says it will adjust the withholding tables but hasn't published new ones; until it does, employers use the WH-1603F above, which this pack follows. The daily rule watch looks for the new tables.
+- ⚠️ SC W-4 allowances are $5,000 each. The 10% standard deduction (up to $7,500) applies only when at least one allowance is claimed. No SC W-4 on file: no allowances, so no deduction.
+- ⚠️ Deposits: South Carolina withholding is due with the same frequency as your federal deposits (monthly by the 15th, or the semi-weekly dates). The quarterly WH-1605 (WH-1606 for the fourth quarter) is due the last day of the month after the quarter.
+- ⚠️ UI rates are per employer: enter yours from the DEW rate notice. New employers pay 1.0%.
+- ⚠️ Sales tax: TrailBook doesn't work out South Carolina sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: SCDOR WH-1603F, Formula for Computing South Carolina 2026 Withholding Tax (Rev. 11/4/25) ($5,000 per allowance; standard deduction of 10% of wages up to $7,500 with one or more allowances, none with zero; 0% to $3,640, 3% to $18,230, 6% above; the $750 weekly example ($10.58)); SCDOR withholding page and Information Letter #26-20 (Act 110) (deposits with the same frequency as federal payments; quarterly WH-1605 and WH-1606 due the last day of the month after the quarter; Act 110 rate changes with withholding tables still to be adjusted); SC DEW glossary and 2026 rate announcement ($14,000 wage base; 1.0% new-employer rate); SC Code 41-10 (no state minimum wage); SC Code 63-17-2310 (new hire reporting) (federal $7.25 minimum wage; no state paid sick leave law; report new hires within 20 days).
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
@@ -827,4 +993,4 @@ Each state is one file in `src/rules` with a `StateRulePack`, added to the regis
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), the Illinois Department of Revenue (IL-700-T, IL-941) and IDES (UI), the Colorado Department of Revenue (DR 1098, DR 0004), CDLE (UI, minimum wage, COMPS Order) and the FAMLI Division, the North Carolina Department of Revenue (NC-30) and DES, the Georgia Department of Revenue (Employer's Tax Guide) and Department of Labor, the Utah State Tax Commission (Publication 14) and Department of Workforce Services, the Idaho State Tax Commission (EPB00744 and EPB00745) and Department of Labor, Michigan Treasury (Form 446, calendar-year withholding figures), UIA and LEO (minimum wage, Earned Sick Time Act), Virginia Tax (Employer Withholding Instructions), the VEC and DOLI (minimum wage), Massachusetts DOR (Circular M, M-941), DUA (UI, EMAC, Workforce Training Fund) and DFML (PFML rates), the New Jersey Division of Taxation (NJ-WT and rate tables) and NJDOL (UI, disability, family leave, WF/SWF rates each July, minimum wage), the Pennsylvania Department of Revenue (employer withholding rate and deposit tiers), L&I (UC tax highlights), DCED (Act 32 earned income tax) and the City of Philadelphia (wage tax rates, which change each July 1), the Ohio Department of Taxation (optional computer formula, employer and school district withholding guidelines) and ODJFS (UI), and the Ohio minimum wage notice, the Chicago and Cook County minimum wage notices, and Denver, Edgewater and Boulder minimum wages, plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), the Illinois Department of Revenue (IL-700-T, IL-941) and IDES (UI), the Colorado Department of Revenue (DR 1098, DR 0004), CDLE (UI, minimum wage, COMPS Order) and the FAMLI Division, the North Carolina Department of Revenue (NC-30) and DES, the Georgia Department of Revenue (Employer's Tax Guide) and Department of Labor, the Utah State Tax Commission (Publication 14) and Department of Workforce Services, the Idaho State Tax Commission (EPB00744 and EPB00745) and Department of Labor, Michigan Treasury (Form 446, calendar-year withholding figures), UIA and LEO (minimum wage, Earned Sick Time Act), Virginia Tax (Employer Withholding Instructions), the VEC and DOLI (minimum wage), Massachusetts DOR (Circular M, M-941), DUA (UI, EMAC, Workforce Training Fund) and DFML (PFML rates), the New Jersey Division of Taxation (NJ-WT and rate tables) and NJDOL (UI, disability, family leave, WF/SWF rates each July, minimum wage), the Pennsylvania Department of Revenue (employer withholding rate and deposit tiers), L&I (UC tax highlights), DCED (Act 32 earned income tax) and the City of Philadelphia (wage tax rates, which change each July 1), the Ohio Department of Taxation (optional computer formula, employer and school district withholding guidelines) and ODJFS (UI), and the Ohio minimum wage notice, the Indiana Department of Revenue (Departmental Notice #1 county rates) and DWD, the Comptroller of Maryland (withholding guide, percentage tables and county rates) and the Maryland Department of Labor (UI, minimum wage, FAMLI start), the Missouri Department of Revenue (Form 4282) and DOLIR, Kansas City and St. Louis earnings tax, the Wisconsin Department of Revenue (Publication W-166) and DWD, the Minnesota Department of Revenue (withholding booklet), UI Minnesota (UI, Paid Leave premiums) and DLI (minimum wage, earned sick and safe time), Minneapolis and St. Paul minimum wages, SCDOR (WH-1603F and the Act 110 withholding tables) and SC DEW, the Chicago and Cook County minimum wage notices, and Denver, Edgewater and Boulder minimum wages, plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

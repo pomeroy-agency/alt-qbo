@@ -1674,7 +1674,7 @@ function stateCertificateFields(e, v, sel) {
     const statuses = it.statuses.map((s) => [s.id, s.label]);
     const opts = it.statusFromW4 ? [["", "Same as the federal W-4"], ...statuses] : statuses;
     const status = sw.filingStatus ?? (it.statusFromW4 ? "" : it.noCertificateStatus);
-    const counts = [sw.allowances ?? 0, sw.allowances2 ?? 0];
+    const counts = [sw.allowances ?? 0, sw.allowances2 ?? 0, sw.allowances3 ?? 0];
     return `<input type="hidden" name="swForm" value="1">
       ${statuses.length > 1 ? `<label>${esc(it.certificate)} status${sel("swStatus", opts, status)}</label>` : ""}
       ${it.allowances.map((label, i) => `<label>${esc(label)}<input name="swAllowances${i ? i + 1 : ""}" value="${v(counts[i])}" inputmode="numeric"></label>`).join("")}
@@ -1819,7 +1819,7 @@ function employeeBody(f) {
     ...(d.de4Status ? { de4: { filingStatus: d.de4Status, regularAllowances: d.de4Allowances, additionalWithholding: d.de4Extra } } : {}),
     ...(d.swRate !== undefined ? { stateWithholding: { rate: d.swRate, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked) } } : {}),
     ...(d.swForm !== undefined ? { stateWithholding: {
-      filingStatus: d.swStatus || undefined, allowances: d.swAllowances, allowances2: d.swAllowances2, additionalWithholding: d.swExtra,
+      filingStatus: d.swStatus || undefined, allowances: d.swAllowances, allowances2: d.swAllowances2, allowances3: d.swAllowances3, additionalWithholding: d.swExtra,
       allowanceAmount: d.swAllowanceAmount?.replace(/[$,\s]/g, "") || undefined, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked),
       ...localTaxBody(f),
     } } : d.swStatus !== undefined ? { stateWithholding: d.swStatus

@@ -177,6 +177,8 @@ export type StateIncomeTaxRules =
       exemptionBase?: string;
       /** The employee's Social Security and Medicare come off wages first, up to this much a year (Massachusetts: $2,000). */
       ficaDeductionCap?: string;
+      /** Added to the deduction once at least one of the first kind of allowance is claimed: this share of the year's wages, up to `max` (South Carolina: 10%, up to $7,500). */
+      percentDeduction?: { rate: string; max: string };
       /** Nothing is withheld when at least one allowance is claimed and the year's wages are below this (Massachusetts: $8,000). */
       noTaxBelowAnnualWages?: string;
       /** The employee may enter a dollar allowance that replaces the standard deduction (Colorado DR 0004 line 2). */
@@ -197,6 +199,8 @@ export interface AnnualFormulaStatus {
   label: string;
   standardDeduction: string;
   table: string;
+  /** The standard deduction shrinks by `rate` of the year's wages above `from`, to nothing (Wisconsin). */
+  phaseOut?: { from: string; rate: string };
   /** Utah's base allowance: a credit that shrinks by `phaseOutRate` of wages above `phaseOutFrom`. */
   credit?: { base: string; phaseOutFrom: string; phaseOutRate: string };
 }
@@ -222,10 +226,12 @@ export type LocalIncomeTaxRules =
    * A rate the employer looks up for each employee and enters (Pennsylvania
    * earned income tax, Ohio city and school district taxes), on wages or on
    * the year's wages less the state's exemptions spread over the pay periods
-   * (Ohio traditional-base school districts). `placeLabel` asks for the
+   * (Ohio traditional-base school districts, Indiana counties), or on the
+   * state's taxable wages after its standard deduction too (Maryland
+   * counties). `placeLabel` asks for the
    * place's name or code, which goes in W-2 box 20.
    */
-  | { method: "employee_rate"; base: "wages" | "less_state_exemptions"; maxRate: string; rateLabel: string; placeLabel: string; hint: string }
+  | { method: "employee_rate"; base: "wages" | "less_state_exemptions" | "state_taxable"; maxRate: string; rateLabel: string; placeLabel: string; hint: string }
   /** A yearly amount the employer enters, withheld evenly over the pay periods (Pennsylvania Local Services Tax, up to $52). */
   | { method: "annual_amount"; maxAnnual: string; amountLabel: string; placeLabel: string; hint: string };
 
