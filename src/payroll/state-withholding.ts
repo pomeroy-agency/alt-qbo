@@ -1,0 +1,183 @@
+import { D, type Dec } from "../core/money.js";
+import type { FederalFilingStatus, LocalIncomeTax, StateIncomeTaxRules } from "../rules/types.js";
+import { californiaWithholding, type DE4 } from "./california.js";
+
+/**
+ * An employee's state withholding certificate for a state other than
+ * California (whose DE 4 is kept on its own). Which fields count depends on
+ * the state's method.
+ */
+export interface StateWithholding {
+  /** Elected-percentage states (Arizona A-4): the rate chosen, like "0.025"; absent means the default. */
+  rate?: string;
+  /** Extra withholding each paycheck. */
+  additionalWithholding?: string;
+  /** Claimed exempt (or elected zero) for the year. */
+  exempt?: boolean;
+  /**
+   * Allowance states: the status claimed. Oregon and New York use "single",
+   * "married" and "married_single_rate" (married withholding at the single
+   * rate); annual-formula states use their pack's status ids.
+   */
+  filingStatus?: string;
+  /** Allowance states: allowances (exemptions) claimed. */
+  allowances?: number;
+  /** A second kind of allowance (Illinois IL-W-4 line 2). */
+  allowances2?: number;
+  /** A dollar allowance for the year that replaces the standard deduction (Colorado DR 0004 line 2). */
+  allowanceAmount?: string;
+  /** City income taxes that apply to the employee, by id (New York: "nyc", "yonkers", "yonkers_nr"). */
+  localities?: string[];
+}
+
+type Frequency = "weekly" | "biweekly" | "semimonthly" | "monthly";
+const FREQUENCY: Record<number, Frequency> = { 52: "weekly", 26: "biweekly", 24: "semimonthly", 12: "monthly" };
+
+/** The bracket row in force: the last one whose start is at or below the amount. */
+function row<T>(rows: T[], amount: Dec, start: (r: T) => string): T {
+  return [...rows].reverse().find((r) => amount.gte(start(r))) ?? rows[0]!;
+}
+
+function oregonWithholding(rules: Extract<StateIncomeTaxRules, { method: "or_formula" }>, c: StateWithholding, wages: Dec, fit: Dec, periods: number): Dec {
+  const annual = wages.mul(periods);
+  // OR-W-4: single with 3 or more allowances uses the married table and deduction, but the single phase-out and allowance limit.
+  const married = c.filingStatus === "married";
+  const asSingle = !married;
+  const allowanceCount = c.allowances ?? 0;
+  const table = married || allowanceCount >= 3 ? "married" : "single";
+  const phaseOut = asSingle ? "single" : "married";
+  const capRow = row(rules.federalSubtraction[phaseOut], annual, (r) => r.wagesFrom);
+  const fedSub = D.min(fit.mul(periods), capRow.cap);
+  const base = D.max(annual.sub(fedSub).sub(rules.standardDeduction[table]), 0);
+  const band = annual.gte(rules.highWageFrom) ? "high" : "low";
+  const b = row(rules.brackets[band][table], base, (r) => r.over);
+  const allowances = annual.gt(rules.allowancesZeroAbove[phaseOut]) ? 0 : allowanceCount;
+  const tax = new D(b.base).add(base.sub(b.over).mul(b.rate)).sub(new D(rules.exemptionCredit).mul(allowances));
+  return D.max(tax, 0).div(periods);
+}
+
+function newYorkWithholding(rules: Extract<StateIncomeTaxRules, { method: "ny_exact" }>, c: StateWithholding, wages: Dec, periods: number): Dec {
+  const freq = FREQUENCY[periods];
+  if (!freq) throw new Error(`no New York table for ${periods} pay periods a year`);
+  // IT-2104: married withholding at the higher single rate, and head of household, use the single tables.
+  const status = c.filingStatus === "married" ? "married" : "single";
+  const net = D.max(wages.sub(rules.deduction[freq][status]).sub(new D(rules.exemption[freq]).mul(c.allowances ?? 0)), 0);
+  const annualNet = net.mul(periods);
+  const top = [...rules.topRates[status]].reverse().find((r) => annualNet.gte(r.from));
+  if (top) return annualNet.mul(top.rate).div(periods);
+  const r = row(rules.tables[status][freq], net, (x) => x.from);
+  return new D(r.add).add(net.sub(r.subtract).mul(r.rate));
+}
+
+/** One city income tax for one paycheck; zero when the employee didn't claim the city. */
+export function localWithholding(
+  local: LocalIncomeTax, stateRules: StateIncomeTaxRules, c: StateWithholding | null | undefined, wagesThisPeriod: Dec, periodsPerYear: number,
+): Dec {
+  const cert = c ?? {};
+  if (!cert.localities?.includes(local.id) || cert.exempt) return new D(0);
+  const freq = FREQUENCY[periodsPerYear];
+  if (!freq) throw new Error(`no ${local.label} table for ${periodsPerYear} pay periods a year`);
+  const r = local.rules;
+  switch (r.method) {
+    case "ny_exact": {
+      const status = cert.filingStatus === "married" ? "married" : "single";
+      const net = D.max(wagesThisPeriod.sub(r.deduction[freq][status]).sub(new D(r.exemption[freq]).mul(cert.allowances ?? 0)), 0);
+      const x = row(r.tables[freq], net, (t) => t.from);
+      return new D(x.add).add(net.sub(x.subtract).mul(x.rate)).toDecimalPlaces(2);
+    }
+    case "share_of_state": {
+      if (stateRules.method !== "ny_exact") throw new Error(`${local.label} needs New York's state method`);
+      return newYorkWithholding(stateRules, cert, wagesThisPeriod, periodsPerYear).mul(r.share).toDecimalPlaces(2);
+    }
+    case "exclusion_percent": {
+      const x = row(r.exclusions[freq], wagesThisPeriod, (t) => t.from);
+      if (x.exclusion === null) return new D(0);
+      return D.max(wagesThisPeriod.sub(x.exclusion), 0).mul(r.rate).toDecimalPlaces(2);
+    }
+  }
+}
+
+function annualFormulaWithholding(
+  rules: Extract<StateIncomeTaxRules, { method: "annual_formula" }>, c: StateWithholding | null | undefined, w4Status: FederalFilingStatus | undefined,
+  wages: Dec, periods: number, fica: EmployeeFica | undefined,
+): Dec {
+  const fromW4 = rules.statusFromW4 && w4Status ? rules.statusFromW4[w4Status] : undefined;
+  const status = rules.statuses.find((s) => s.id === c?.filingStatus) ?? rules.statuses.find((s) => s.id === (fromW4 ?? rules.noCertificateStatus)) ?? rules.statuses[0]!;
+  const counts = [c?.allowances ?? 0, c?.allowances2 ?? 0];
+  if (rules.noTaxBelowAnnualWages && counts[0]! > 0 && wages.mul(periods).lt(rules.noTaxBelowAnnualWages)) return new D(0);
+  // Massachusetts: this paycheck's Social Security and Medicare, until the year's total reaches the cap.
+  let ficaOff = new D(0);
+  if (rules.ficaDeductionCap && fica) ficaOff = D.min(fica.thisPeriod, D.max(new D(rules.ficaDeductionCap).sub(fica.yearToDate), 0));
+  const annual = wages.sub(ficaOff).mul(periods);
+  let deduction = new D(rules.dollarAllowance && c?.allowanceAmount !== undefined ? c.allowanceAmount : status.standardDeduction);
+  if (rules.exemptionBase && counts[0]! > 0) deduction = deduction.add(rules.exemptionBase);
+  let credits = new D(0);
+  rules.allowances.forEach((a, i) => {
+    const amount = new D(a.amount).mul(counts[i] ?? 0);
+    if (a.credit) credits = credits.add(amount);
+    else deduction = deduction.add(amount);
+  });
+  const taxable = D.max(annual.sub(deduction), 0);
+  let tax = new D(0);
+  const rows = rules.tables[status.table]!;
+  rows.forEach((r, i) => {
+    const top = rows[i + 1]?.over;
+    const slice = D.min(taxable, top ?? taxable).sub(r.over);
+    if (slice.gt(0)) tax = tax.add(slice.mul(r.rate));
+  });
+  if (status.credit) {
+    credits = credits.add(D.max(new D(status.credit.base).sub(D.max(annual.sub(status.credit.phaseOutFrom), 0).mul(status.credit.phaseOutRate)), 0));
+  }
+  tax = D.max(tax.sub(credits), 0);
+  if (rules.round === "annual_dollar") tax = tax.toDecimalPlaces(0, D.ROUND_HALF_UP);
+  const perPeriod = tax.div(periods);
+  return rules.round === "dollar" ? perPeriod.toDecimalPlaces(0, D.ROUND_HALF_UP) : perPeriod;
+}
+
+/** The employee's Social Security and Medicare, for states that let them come off wages first (Massachusetts). */
+export interface EmployeeFica {
+  thisPeriod: Dec;
+  yearToDate: Dec;
+}
+
+/** State income tax withheld from one paycheck, by the state's method. */
+export function stateWithholding(
+  rules: StateIncomeTaxRules,
+  cert: { de4?: DE4; state?: StateWithholding | null; w4Status?: FederalFilingStatus },
+  wagesThisPeriod: Dec,
+  periodsPerYear: number,
+  /** Federal income tax withheld from the same paycheck (Oregon subtracts it). */
+  federalWithheld: Dec = new D(0),
+  fica?: EmployeeFica,
+): Dec {
+  switch (rules.method) {
+    case "none":
+      return new D(0);
+    case "ca_method_b":
+      if (!cert.de4) throw new Error("a California employee needs a DE 4");
+      return californiaWithholding(rules.tables, cert.de4, wagesThisPeriod, periodsPerYear);
+    case "elected_percent": {
+      const c = cert.state ?? {};
+      if (c.exempt) return new D(0);
+      const rate = c.rate && rules.choices.includes(c.rate) ? c.rate : rules.defaultRate;
+      return wagesThisPeriod.mul(rate).add(c.additionalWithholding ?? 0).toDecimalPlaces(2);
+    }
+    case "or_formula": {
+      const c = cert.state;
+      if (!c) return wagesThisPeriod.mul(rules.noCertificateRate).toDecimalPlaces(2);
+      if (c.exempt) return new D(0);
+      return oregonWithholding(rules, c, wagesThisPeriod, federalWithheld, periodsPerYear).add(c.additionalWithholding ?? 0).toDecimalPlaces(2);
+    }
+    case "ny_exact": {
+      // No IT-2104 on file: single with no allowances.
+      const c = cert.state ?? {};
+      if (c.exempt) return new D(0);
+      return newYorkWithholding(rules, c, wagesThisPeriod, periodsPerYear).add(c.additionalWithholding ?? 0).toDecimalPlaces(2);
+    }
+    case "annual_formula": {
+      if (cert.state?.exempt) return new D(0);
+      return annualFormulaWithholding(rules, cert.state, cert.w4Status, wagesThisPeriod, periodsPerYear, fica)
+        .add(cert.state?.additionalWithholding ?? 0).toDecimalPlaces(2);
+    }
+  }
+}

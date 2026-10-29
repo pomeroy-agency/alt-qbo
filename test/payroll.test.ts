@@ -7,7 +7,7 @@ import { allRulePacks, JurisdictionError, resolveRules, rulePackHash } from "../
 import { usFederal2026 } from "../src/rules/us-federal-2026.js";
 import { usCalifornia2026 } from "../src/rules/us-ca-2026.js";
 import { federalSchedule } from "../src/payroll/federal.js";
-import { splitCaliforniaWeek } from "../src/payroll/hours.js";
+import { splitWorkweek } from "../src/payroll/hours.js";
 import { calculatePaycheck, type EmployeePayInput } from "../src/payroll/gross-to-net.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove, localMinimumWage, localWagePlace } from "../src/rules/local-minimum-wage.js";
 import { approveAndPostPayRun, calculatePayRun, payRunJournalLines } from "../src/payroll/pay-run.js";
@@ -41,14 +41,16 @@ describe("rule packs", () => {
     }).toThrow();
     expect(rules.provenance).toEqual([
       `us-federal@2026.1#${rulePackHash(usFederal2026).slice(0, 12)}`,
-      `us-ca@2026.1#${rulePackHash(usCalifornia2026).slice(0, 12)}`,
+      `us-ca@2026.2#${rulePackHash(usCalifornia2026).slice(0, 12)}`,
     ]);
     expect(() => resolveRules(CA, "2027-01-01")).toThrow(JurisdictionError);
     // Greg signed off the 2026 packs on 2026-10-27.
     expect(resolveRules(CA, "2026-06-15", { requireReleased: true }).federal.status).toBe("released");
+    // Packs added since then stay drafts until Greg signs them off.
+    const drafts: string[] = [];
     for (const p of allRulePacks()) {
       expect(p.sources.length).toBeGreaterThan(0);
-      expect(p.status).toBe("released");
+      expect(p.status).toBe(drafts.includes(p.id) ? "draft" : "released");
     }
   });
 
@@ -107,9 +109,9 @@ describe("local minimum wages", () => {
     expect(localMinimumWage("Hayward", "2026-05-01", 26)).toMatchObject({ rate: "17.79", sizeNote: expect.stringContaining("26 on file") });
     expect(localMinimumWage("Novato", "2026-05-01", 50)?.rate).toBe("17.46");
     expect(localMinimumWage("Novato", "2026-05-01", 120)?.rate).toBe("17.73");
-    expect(localMinimumAbove("16.90", "Oakland", "2026-05-01", 1)?.rate).toBe("17.34");
+    expect(localMinimumAbove({ country: "US", region: "CA" }, "16.90", "Oakland", "2026-05-01", 1)?.rate).toBe("17.34");
     // From 2027 the state's 17.40 is above Oakland's 2026 rate.
-    expect(localMinimumAbove("17.40", "Oakland", "2027-01-01", 1)).toBeNull();
+    expect(localMinimumAbove({ country: "US", region: "CA" }, "17.40", "Oakland", "2027-01-01", 1)).toBeNull();
   });
 
   it("warns, rather than blocks, when an hourly rate is below the local minimum", () => {
@@ -125,12 +127,12 @@ describe("local minimum wages", () => {
 describe("California workweek hours", () => {
   const wh = usCalifornia2026.wageHour;
   it("pays daily overtime past 8 hours and double time past 12", () => {
-    expect(splitCaliforniaWeek([13, 0, 0, 0, 0, 0, 0], wh)).toEqual({ regular: "8", overtime: "4", doubleTime: "1" });
-    expect(splitCaliforniaWeek([10, 10, 8, 8, 8, 0, 0], wh)).toEqual({ regular: "40", overtime: "4", doubleTime: "0" });
+    expect(splitWorkweek([13, 0, 0, 0, 0, 0, 0], wh)).toEqual({ regular: "8", overtime: "4", doubleTime: "1" });
+    expect(splitWorkweek([10, 10, 8, 8, 8, 0, 0], wh)).toEqual({ regular: "40", overtime: "4", doubleTime: "0" });
   });
   it("applies weekly overtime past 40 regular hours and the seventh-day rule", () => {
-    expect(splitCaliforniaWeek([9, 9, 9, 9, 9, 4, 13], wh)).toEqual({ regular: "40", overtime: "17", doubleTime: "5" });
-    expect(splitCaliforniaWeek([8, 8, 8, 8, 8, 8, 0], wh)).toEqual({ regular: "40", overtime: "8", doubleTime: "0" });
+    expect(splitWorkweek([9, 9, 9, 9, 9, 4, 13], wh)).toEqual({ regular: "40", overtime: "17", doubleTime: "5" });
+    expect(splitWorkweek([8, 8, 8, 8, 8, 8, 0], wh)).toEqual({ regular: "40", overtime: "8", doubleTime: "0" });
   });
 });
 
@@ -156,9 +158,9 @@ describe("gross-to-net", () => {
 
   it("stops Social Security, FUTA, UI and ETT at their wage bases and starts Additional Medicare over $200k", () => {
     const p = calculatePaycheck(
-      { ...salaried, ytd: { socialSecurityWages: 18300000n, medicareWages: 19900000n, futaWages: 700000n, caUiWages: 600000n } },
+      { ...salaried, ytd: { socialSecurityWages: 18300000n, medicareWages: 19900000n, futaWages: 700000n, stateWages: { CA_UI: 600000n, CA_ETT: 600000n } } },
       rules,
-      { caUiRate: "0.062" },
+      { stateRates: { CA_UI: "0.062" } },
     );
     expect(tax(p, "SS_EE")).toBe(9300n); // 1,500 left under the $184,500 base
     expect(tax(p, "ADDL_MEDICARE_EE")).toBe(1710n); // 0.9% x 1,900 over $200,000
@@ -169,7 +171,7 @@ describe("gross-to-net", () => {
   });
 
   it("pays hourly overtime and accrues sick leave", () => {
-    const hours = splitCaliforniaWeek([10, 10, 8, 8, 8, 0, 0], usCalifornia2026.wageHour);
+    const hours = splitWorkweek([10, 10, 8, 8, 8, 0, 0], usCalifornia2026.wageHour);
     const p = calculatePaycheck(
       {
         employeeId: "emp-2", name: "Luis Ortega", payFrequency: "weekly", hourlyRate: "25.00",

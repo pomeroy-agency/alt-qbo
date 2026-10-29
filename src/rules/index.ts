@@ -2,9 +2,25 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "../core/audit.js";
 import { usCalifornia2026 } from "./us-ca-2026.js";
 import { usFederal2026 } from "./us-federal-2026.js";
-import type { CaliforniaRulePack, FederalRulePack, Place, RulePack } from "./types.js";
+import { NO_INCOME_TAX_STATES_2026 } from "./us-states-2026.js";
+import { usArizona2026 } from "./us-az-2026.js";
+import { usNewYork2026 } from "./us-ny-2026.js";
+import { usOregon2026 } from "./us-or-2026.js";
+import { usIllinois2026 } from "./us-il-2026.js";
+import { usColorado2026 } from "./us-co-2026.js";
+import { usNorthCarolina2026 } from "./us-nc-2026.js";
+import { usGeorgia2026 } from "./us-ga-2026.js";
+import { usUtah2026 } from "./us-ut-2026.js";
+import { usIdaho2026 } from "./us-id-2026.js";
+import { usMassachusetts2026 } from "./us-ma-2026.js";
+import { usMichigan2026 } from "./us-mi-2026.js";
+import { usNewJersey2026 } from "./us-nj-2026.js";
+import { usVirginia2026 } from "./us-va-2026.js";
+import { isLive } from "./jurisdictions.js";
+import type { FederalRulePack, Place, RulePack, StateRulePack } from "./types.js";
 
 export * from "./types.js";
+export * from "./jurisdictions.js";
 
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -14,10 +30,10 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia2026]);
+const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia2026, ...NO_INCOME_TAX_STATES_2026, usArizona2026, usOregon2026, usNewYork2026,
+  usIllinois2026, usColorado2026, usNorthCarolina2026, usGeorgia2026, usUtah2026, usIdaho2026,
+  usMichigan2026, usVirginia2026, usMassachusetts2026, usNewJersey2026]);
 
-/** Places the product is launched in. Anything else is refused at entity setup. */
-export const SUPPORTED_PLACES: readonly Place[] = [{ country: "US", region: "CA" }];
 
 export class JurisdictionError extends Error {
   constructor(message: string) {
@@ -31,8 +47,9 @@ export function rulePackHash(pack: RulePack): string {
   return createHash("sha256").update(canonicalJson(pack)).digest("hex");
 }
 
+/** A place the product is launched in (see jurisdictions.ts). Anything else is refused at entity setup. */
 export function isSupportedPlace(place: Place): boolean {
-  return SUPPORTED_PLACES.some((p) => p.country === place.country && p.region === place.region);
+  return isLive(place.country, place.region);
 }
 
 export interface ResolveOptions {
@@ -42,7 +59,7 @@ export interface ResolveOptions {
 
 export interface ResolvedRules {
   federal: FederalRulePack;
-  state: CaliforniaRulePack;
+  state: StateRulePack;
   /** "id@version#hash" for each pack used. */
   provenance: string[];
 }
@@ -59,8 +76,8 @@ export function resolveRules(place: Place, onDate: string, opts: ResolveOptions 
     (p): p is FederalRulePack => p.kind === "us-federal" && p.place.country === place.country && inForce(p),
   );
   const state = REGISTRY.find(
-    (p): p is CaliforniaRulePack =>
-      p.kind === "us-ca" && p.place.country === place.country && p.place.region === place.region && inForce(p),
+    (p): p is StateRulePack =>
+      p.kind === "state" && p.place.country === place.country && p.place.region === place.region && inForce(p),
   );
   if (!federal || !state) {
     throw new JurisdictionError(`no rule pack in force for ${place.country}-${place.region} on ${onDate}`);
@@ -97,4 +114,21 @@ export function resolveSetupRules(place: Place, onDate: string): ResolvedRules {
 
 export function allRulePacks(): readonly RulePack[] {
   return REGISTRY;
+}
+
+/**
+ * The state pack for a place on a date, or else the nearest one (the latest
+ * before it, or the first after it), for labels, forms and settings that
+ * don't change from year to year. Figures for a pay date use `resolveRules`.
+ */
+export function statePackFor(place: Place, onDate: string): StateRulePack {
+  if (!isSupportedPlace(place)) {
+    throw new JurisdictionError(`TrailBook is not launched in ${[place.country, place.region].filter(Boolean).join("-")} yet`);
+  }
+  const packs = REGISTRY.filter((p): p is StateRulePack => p.kind === "state" && p.place.country === place.country && p.place.region === place.region)
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const pack = packs.find((p) => p.effectiveFrom <= onDate && onDate <= p.effectiveTo)
+    ?? packs.filter((p) => p.effectiveTo < onDate).at(-1) ?? packs[0];
+  if (!pack) throw new JurisdictionError(`no rule pack for ${place.country}-${place.region}`);
+  return pack;
 }

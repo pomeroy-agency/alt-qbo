@@ -354,3 +354,16 @@ describe("tax lookup health check", () => {
     expect(await get()).toMatchObject({ ok: false });
   });
 });
+
+describe("sales tax in a state TrailBook doesn't work out yet", () => {
+  it("issues invoices without tax unless an owner or accountant sets the rate", async () => {
+    const b = await business();
+    await b.t((tx) => tx.query("UPDATE entities SET region = 'TX' WHERE id = $1", [b.entity.id]));
+    const c = await b.contact("Austin Client", { address: { line1: "1 Congress Ave", city: "Austin", state: "TX", zip: "78701" } });
+    const d = await b.t((tx) => decideSalesTax(tx, { entityId: b.entity.id, contactId: c.id, date: "2026-05-01", categories: ["goods"] }));
+    expect(d).toMatchObject({ source: "none", rate: "0.00000" });
+    expect(explainTax(d)).toMatch(/^No sales tax: .*Texas sales tax/);
+    const manual = await b.t((tx) => decideSalesTax(tx, { entityId: b.entity.id, contactId: c.id, date: "2026-05-01", categories: ["goods"], manual: { ratePercent: "8.25", reason: "Austin combined rate", actor: owner } }));
+    expect(manual).toMatchObject({ source: "manual", rate: "0.08250" });
+  });
+});

@@ -3,7 +3,9 @@
 // "Deposits Due on Business Days Only"); state holidays don't delay them.
 // California's own deadlines move past weekends and state holidays. For
 // California, only holidays the state shares with the federal calendar are
-// counted, so a due date shown is never later than the real one.
+// counted, so a due date shown is never later than the real one. For other
+// states ("weekends") only weekends move a date, for the same reason: a state
+// holiday TrailBook doesn't know about can only make the real date later.
 
 const day = (iso: string) => new Date(`${iso}T12:00:00Z`);
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -78,11 +80,12 @@ export function californiaHolidays(year: number): Set<string> {
   return cache.get(key)!;
 }
 
-export type Calendar = "federal" | "california";
+export type Calendar = "federal" | "california" | "weekends";
 
 export function isBusinessDay(date: string, calendar: Calendar): boolean {
   const w = weekday(date);
   if (w === 0 || w === 6) return false;
+  if (calendar === "weekends") return true;
   const year = Number(date.slice(0, 4));
   return !(calendar === "federal" ? federalHolidays(year) : californiaHolidays(year)).has(date);
 }
@@ -91,6 +94,13 @@ export function isBusinessDay(date: string, calendar: Calendar): boolean {
 export function onOrNextBusinessDay(date: string, calendar: Calendar): string {
   let d = date;
   while (!isBusinessDay(d, calendar)) d = addDays(d, 1);
+  return d;
+}
+
+/** The date itself if it's a business day, otherwise the one before. */
+export function onOrPreviousBusinessDay(date: string, calendar: Calendar): string {
+  let d = date;
+  while (!isBusinessDay(d, calendar)) d = addDays(d, -1);
   return d;
 }
 

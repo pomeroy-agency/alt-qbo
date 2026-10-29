@@ -1,11 +1,12 @@
 import type { Tx } from "../db/pool.js";
 import { LedgerError } from "../core/errors.js";
 import { D } from "../core/money.js";
-import { resolveRules } from "../rules/index.js";
+import { resolveRules, statePackFor, type Place, type StateWageHourRules } from "../rules/index.js";
+import { minimumWageOn } from "../rules/minimum-wage.js";
 import { localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { listEmployees, openingFor, salaryPerPeriod, type Employee } from "./employees.js";
 import type { EmployeePayInput, Paycheck, SickLeaveInput, SickLeavePolicy, TaxLine, YearToDate } from "./gross-to-net.js";
-import { splitCaliforniaWeek } from "./hours.js";
+import { splitWorkweek } from "./hours.js";
 import { calculatePayRun, type PayRun, type PayRunInput } from "./pay-run.js";
 
 // Pay runs built from saved employees. A run copies each employee's pay and
@@ -36,8 +37,6 @@ export interface PayRunRequest {
   lines: PayRunLine[];
 }
 
-const CA = { country: "US", region: "CA" } as const;
-
 function invalid(message: string): never {
   throw new LedgerError("INVALID", message);
 }
@@ -53,22 +52,26 @@ export async function payRunInputFromEmployees(tx: Tx, entityId: string, req: Pa
     ids.add(l.employeeId);
   }
   const all = new Map((await listEmployees(tx, entityId)).map((e) => [e.id, e]));
-  const entity = (await tx.query("SELECT ca_ui_rate::text, sick_leave_policy FROM entities WHERE id = $1", [entityId])).rows[0];
-  const rules = resolveRules(CA, req.payDate);
+  const entity = (await tx.query("SELECT country, region, state_tax_rates, sick_leave_policy FROM entities WHERE id = $1", [entityId])).rows[0];
+  const place: Place = { country: entity.country, region: entity.region };
+  const rules = resolveRules(place, req.payDate);
   const headcount = employeeCount([...all.values()], req.periodEnd);
   const employees = req.lines.map((l): EmployeePayInput => {
     const e = all.get(l.employeeId);
     if (!e) invalid("employee not found");
     if (e.hireDate > req.periodEnd) invalid(`${e.name} starts on ${e.hireDate}, after this pay period`);
     if (e.terminationDate && e.terminationDate < req.periodStart) invalid(`${e.name}'s last day was ${e.terminationDate}, before this pay period`);
-    const input = payInput(e, l, rules.state.wageHour, { policy: entity?.sick_leave_policy ?? "accrual", year: Number(req.payDate.slice(0, 4)) });
+    const input = payInput(e, l, rules.state.wageHour, { policy: entity?.sick_leave_policy ?? "accrual", year: Number(req.payDate.slice(0, 4)), headcount });
     // The rate in force at the end of the period, for the business's size.
-    const local = input.hourlyRate ? localMinimumAbove(rules.state.wageHour.minimumWage, e.workCity, req.periodEnd, headcount) : null;
-    return local ? { ...input, localMinimumWage: local } : input;
+    const local = input.hourlyRate
+      ? localMinimumAbove(place, minimumWageOn(rules.state.wageHour, req.periodEnd), e.workCity, req.periodEnd, headcount)
+      : null;
+    const withArea = rules.state.wageHour.areas && e.workCity ? { ...input, workArea: e.workCity } : input;
+    return local ? { ...withArea, localMinimumWage: local } : withArea;
   });
   return {
-    payRunId, kind: "regular", periodStart: req.periodStart, periodEnd: req.periodEnd, payDate: req.payDate, place: CA,
-    employer: entity?.ca_ui_rate ? { caUiRate: new D(entity.ca_ui_rate).toString() } : {},
+    payRunId, kind: "regular", periodStart: req.periodStart, periodEnd: req.periodEnd, payDate: req.payDate, place,
+    employer: Object.keys(entity?.state_tax_rates ?? {}).length ? { stateRates: entity.state_tax_rates } : {},
     employees, live: true,
   };
 }
@@ -82,17 +85,21 @@ export function employeeCount(employees: Employee[], date: string): number {
 const WEEKS_PER_PERIOD: Record<Employee["payFrequency"], string> = { weekly: "1", biweekly: "2", semimonthly: "2.1667", monthly: "4.3333" };
 
 function payInput(
-  e: Employee, l: PayRunLine, wageHour: Parameters<typeof splitCaliforniaWeek>[1], sick: { policy: SickLeavePolicy; year: number },
+  e: Employee, l: PayRunLine, wageHour: StateWageHourRules, sick: { policy: SickLeavePolicy; year: number; headcount: number },
 ): EmployeePayInput {
   const frontLoad = sick.policy === "front_load";
+  const law = wageHour.sickLeave;
+  // A smaller employer may cap use and accrual lower where the state allows it.
+  const caps = law?.smallEmployer && sick.headcount < law.smallEmployer.under ? law.smallEmployer : law;
   const sickLeave: SickLeaveInput = {
     balanceHours: e.sickBalanceHours, policy: sick.policy, usedHours: l.sickHoursUsed,
+    ...(caps && caps !== law ? { accrualCapHours: caps.accrualCapHours } : {}),
     // Front-loading grants the year's hours on the first run of the year; nothing carries over.
-    ...(frontLoad && e.sickGrantedYear !== sick.year ? { grantHours: wageHour.sickLeave.annualUseCapHours } : {}),
+    ...(caps && frontLoad && e.sickGrantedYear !== sick.year ? { grantHours: caps.annualUseCapHours } : {}),
   };
   const base: EmployeePayInput = {
     employeeId: e.id, name: e.name, payFrequency: e.payFrequency,
-    w4: e.w4, de4: e.de4, deductions: e.deductions,
+    w4: e.w4, de4: e.de4, stateWithholding: e.stateWithholding, deductions: e.deductions,
     bonus: l.bonus, bonusDiscretionary: l.bonusDiscretionary, commission: l.commission, reimbursement: l.reimbursement,
   };
   if (e.payType === "salary") {
@@ -109,7 +116,11 @@ function payInput(
     for (const w of weeks) {
       let s;
       try {
-        s = splitCaliforniaWeek(w.map((h) => Number(h) || 0), wageHour);
+        // Nevada's daily overtime is only for employees paid under 1.5 times the minimum wage.
+        const ot = wageHour.overtime;
+        const daily = !ot.dailyOnlyBelowHourlyRate || new D(e.payRate).lt(ot.dailyOnlyBelowHourlyRate);
+        const rules = daily ? wageHour : { ...wageHour, overtime: { weeklyAfter: ot.weeklyAfter } };
+        s = splitWorkweek(w.map((h) => Number(h) || 0), rules);
       } catch (err) {
         invalid(`${e.name}: ${(err as Error).message}`);
       }
@@ -126,16 +137,18 @@ function payInput(
   };
 }
 
+const FEDERAL_CODES = new Set(["FIT", "SS_EE", "SS_ER", "MEDICARE_EE", "MEDICARE_ER", "ADDL_MEDICARE_EE", "FUTA"]);
+
 /** Year-to-date figures for one employee, in cents. */
 export interface EmployeeYtd extends YearToDate {
   grossMinor: bigint;
   netPayMinor: bigint;
-  byTax: Partial<Record<TaxLine["code"], bigint>>;
+  byTax: Record<string, bigint>;
   byDeduction: Record<string, bigint>;
 }
 
 function emptyYtd(): EmployeeYtd {
-  return { socialSecurityWages: 0n, medicareWages: 0n, futaWages: 0n, caUiWages: 0n, grossMinor: 0n, netPayMinor: 0n, byTax: {}, byDeduction: {} };
+  return { socialSecurityWages: 0n, medicareWages: 0n, futaWages: 0n, stateWages: {}, grossMinor: 0n, netPayMinor: 0n, byTax: {}, byDeduction: {} };
 }
 
 /**
@@ -165,15 +178,20 @@ export async function yearToDate(
       y.socialSecurityWages += taxWages("SS_EE");
       y.medicareWages += taxWages("MEDICARE_EE");
       y.futaWages += taxWages("FUTA");
-      y.caUiWages += taxWages("CA_UI");
+      // Every other tax's taxable wages, for the state taxes capped at a wage base.
+      for (const t of p.taxes) {
+        if (!FEDERAL_CODES.has(t.code)) y.stateWages![t.code] = (y.stateWages![t.code] ?? 0n) + BigInt(t.taxableWagesMinor);
+      }
       y.grossMinor += BigInt(p.grossMinor);
       y.netPayMinor += BigInt(p.netPayMinor);
-      for (const t of p.taxes) y.byTax[t.code as TaxLine["code"]] = (y.byTax[t.code as TaxLine["code"]] ?? 0n) + BigInt(t.amountMinor);
+      for (const t of p.taxes) y.byTax[t.code] = (y.byTax[t.code] ?? 0n) + BigInt(t.amountMinor);
       for (const d of p.deductions) y.byDeduction[d.kind] = (y.byDeduction[d.kind] ?? 0n) + BigInt(d.amountMinor);
     }
     if (r.id === opts.throughRunId) break;
   }
   const { rows: opening } = await tx.query("SELECT id, opening_ytd FROM employees WHERE entity_id = $1 AND opening_ytd IS NOT NULL", [entityId]);
+  const ent = opening.length ? (await tx.query("SELECT country, region FROM entities WHERE id = $1", [entityId])).rows[0] : null;
+  const state = ent ? statePackFor({ country: ent.country, region: ent.region }, payDate) : null!;
   for (const e of opening) {
     const o = openingFor({ openingYtd: e.opening_ytd }, year);
     if (o.wagesMinor === 0n && o.federalIncomeTaxMinor === 0n) continue;
@@ -182,14 +200,15 @@ export async function yearToDate(
     y.socialSecurityWages += o.wagesMinor;
     y.medicareWages += o.wagesMinor;
     y.futaWages += o.wagesMinor;
-    y.caUiWages += o.wagesMinor;
+    for (const t of state.payroll.taxes) y.stateWages![t.code] = (y.stateWages![t.code] ?? 0n) + o.wagesMinor;
     y.grossMinor += o.wagesMinor;
-    const add = (code: TaxLine["code"], v: bigint) => { if (v) y.byTax[code] = (y.byTax[code] ?? 0n) + v; };
+    const add = (code: string | undefined, v: bigint) => { if (code && v) y.byTax[code] = (y.byTax[code] ?? 0n) + v; };
     add("FIT", o.federalIncomeTaxMinor);
     add("SS_EE", o.socialSecurityTaxMinor);
     add("MEDICARE_EE", o.medicareTaxMinor);
-    add("CA_PIT", o.caIncomeTaxMinor);
-    add("CA_SDI", o.caSdiMinor);
+    // The opening figures' "caIncomeTax" and "caSdi" are the state's income tax and employee tax (SDI) wherever the business is.
+    add(state.payroll.incomeTaxAgency?.code, o.caIncomeTaxMinor);
+    add(state.payroll.taxes.find((t) => t.paidBy === "employee")?.code, o.caSdiMinor);
     y.netPayMinor += o.wagesMinor - o.federalIncomeTaxMinor - o.socialSecurityTaxMinor - o.medicareTaxMinor - o.caIncomeTaxMinor - o.caSdiMinor;
   }
   return out;
@@ -203,7 +222,7 @@ export async function calculateSavedRun(tx: Tx, entityId: string, input: PayRunI
     ...input, live: true,
     employees: input.employees.map((e) => {
       const y = ytd.get(e.employeeId);
-      return y ? { ...e, ytd: { socialSecurityWages: y.socialSecurityWages, medicareWages: y.medicareWages, futaWages: y.futaWages, caUiWages: y.caUiWages } } : e;
+      return y ? { ...e, ytd: { socialSecurityWages: y.socialSecurityWages, medicareWages: y.medicareWages, futaWages: y.futaWages, stateWages: y.stateWages } } : e;
     }),
   });
 }

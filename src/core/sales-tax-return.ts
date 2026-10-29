@@ -198,6 +198,7 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
   )).rows[0];
   if (!ent) throw new LedgerError("INVALID", "entity not found");
   const pack = rulesFor(ent.region, period.to);
+  if (pack.kind !== "us-ca-sales-tax") throw new LedgerError("INVALID", `TrailBook prepares the California return only so far; ${ent.region} returns aren't built yet`);
   const r = await salesTaxReport(tx, entityId, period.from, period.to);
 
   // Taxable sales and purchases subject to use tax are taxed alike: 7.25% statewide, plus each place's district tax.

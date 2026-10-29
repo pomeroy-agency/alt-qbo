@@ -4,6 +4,8 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 
 **Sign-off, 2026-10-27.** Greg reviewed this list and approved every item as it stands. The us-federal 2026.1, us-ca 2026.1 and us-ca-sales-tax 2026.1 packs are now `released`, and saved pay runs calculate only on released packs. Items marked ⚠️ were accepted on the figures shown; each note says what to recheck when the primary source can be read, and the daily rule watch keeps looking for them. The us-ca-sales-tax 2027.1 pack stays `draft` on the review's own recommendation, until OAL approves CDTFA's emergency regulations. A daily scheduled check watches the sources for changes (see "Monitoring" at the end).
 
+**Sign-off, 2026-10-29.** Greg approved every new state pack (Texas, Florida, Nevada, Tennessee, South Dakota, Wyoming, New Hampshire, Alaska, Washington, Arizona, Oregon and New York) as it stands, ⚠️ items included. Those packs are now `released`, so saved pay runs can use them. The known gaps listed in each section remain open, and the daily rule watch keeps checking them.
+
 ## us-federal 2026.1 (`src/rules/us-federal-2026.ts`), released 2026-10-27
 
 | Figure | Value | Source | Check |
@@ -19,6 +21,8 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 | Withholding schedules, all six | derived from brackets | Pub 15-T (2026) page 11 | ✅ all six now reproduce the published table exactly (tests). **Fixed:** single Step 2 thresholds were off by 50 cents because the IRS rounds halved thresholds to the dollar |
 
 ## us-ca 2026.1 (`src/rules/us-ca-2026.ts`), released 2026-10-27
+
+Version 2026.2 (October 2026) is the same pack moved into the shared state pack format so other states can be added. No figure changed; pay runs approved earlier keep "us-ca@2026.1" in their history.
 
 | Figure | Value | Source | Check |
 |---|---|---|---|
@@ -120,6 +124,595 @@ How the app applies it (`decideUseTax` and `recordBill` in `src/core/sales-tax.t
 | Where it's reported | the CDTFA-401 for seller's permit holders. Without a permit: a CDTFA use tax return for qualified purchasers (generally $100,000+ gross receipts), otherwise the California income tax return | Rev. & Tax. Code §6225 (qualified purchasers) | ✅ Greg accepted 2026-10-25 (recheck the threshold when ca.gov can be reached) |
 | Resale, and items used outside California | not accrued: the person leaves the box unticked or picks a non-taxable kind | Reg. 1668 | ✅ by design |
 
+## States without a wage income tax (`src/rules/us-states-2026.ts`), released 2026-10-29
+
+Added 2026-10-29 at Greg's choice of order (these nine first, then Oregon, Arizona and New York). Greg approved every pack on 2026-10-29 and they are `released`. Figures were gathered on 2026-10-28; most state sites can't be opened from TrailBook's build machines, so several come from payroll publishers and each ⚠️ says what to read off the agency's own notice. UI rates are per employer: the pack holds the new-employer rate, and the employer enters its own rate from its notice. Workers' compensation (state-run in Washington and Wyoming) and local minimum wages outside California aren't covered yet. Sales tax in these states isn't worked out: invoices carry no tax unless an owner or accountant sets the rate by hand.
+
+### us-tx 2026.1, Texas
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Texas UI (TX_UI, employer, TWC) | 2.7% default; employer enters its own rate, on the first $9,000 | ✅ |
+| Quarterly report | Employer's Quarterly Report (C-3), filed and paid quarterly | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Texas Office of the Attorney General (Employer New Hire Reporting) | ✅ |
+
+- ⚠️ Some sources say a new employer's rate is the greater of 2.7% or its industry average; TWC's 2026 page says 2.7% for every industry. Employers enter their own rate from the C-22 notice either way.
+- ⚠️ No statewide paid sick leave (the Austin, Dallas and San Antonio ordinances were struck down or preempted).
+- ⚠️ Texas franchise tax (an annual report, no tax due under the $2.47 million revenue threshold) isn't payroll and isn't calculated.
+- ⚠️ Sales tax: TrailBook doesn't work out Texas sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: TWC, 2026 tax rates; Bloomberg Tax, "Texas Publishes 2026 Unemployment Insurance Tax Rates" ($9,000 wage base; 2.7% new-employer rate (rates run 0.32% to 6.32%; the employment and training assessment is included in the rate)); Texas Labor Code ch. 62 (Texas Minimum Wage Act) adopting the FLSA rate ($7.25 minimum wage; weekly overtime only); Texas Family Code 234.102 (new hires reported within 20 days).
+
+### us-fl 2026.1, Florida
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Florida reemployment tax (FL_RT, employer, FDOR) | 2.7% default; employer enters its own rate, on the first $7,000 | ✅ |
+| Quarterly report | Employer's Quarterly Report (RT-6), filed and paid quarterly | ✅ |
+| Minimum wage | $14, then $15 from 2026-09-30 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Florida New Hire Reporting Center | ✅ |
+
+- ⚠️ Tipped employees ($11.98 cash wage from September 30, 2026) aren't modelled; TrailBook checks the full minimum wage.
+- ⚠️ No statewide paid sick leave.
+- ⚠️ Sales tax: TrailBook doesn't work out Florida sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Florida Department of Revenue, Reemployment Tax Rate Information ($7,000 wage base; 2.7% initial rate for the first 10 quarters; 2026 rates 0.1% to 5.4%); Florida Constitution art. X, §24 (Amendment 2, 2020) ($14.00 minimum wage, $15.00 from September 30, 2026; CPI-indexed from 2027); Florida Statutes 409.2576 (new hires reported within 20 days).
+
+### us-nv 2026.1, Nevada
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Nevada UI (NV_UI, employer, DETR) | 2.95% default; employer enters its own rate, on the first $43,700 | ✅ |
+| Nevada Career Enhancement Program (NV_CEP, employer, DETR) | 0.05%, on the first $43,700 | ✅ |
+| Quarterly report | Employer's Quarterly Contribution and Wage Report (NUCS-4072), filed and paid quarterly | ✅ |
+| Minimum wage | $12 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week; after 8 hours a day for pay under $18.00 an hour | ✅ |
+| Paid sick leave | 1 hour per 52 worked, up to 40 hours; 0 hours for under 50 employees | ✅ |
+| New-hire report | Within 20 days to Nevada New Hire Reporting (Division of Welfare and Supportive Services) | ✅ |
+
+- ⚠️ Daily overtime applies only when the daily hours are entered (the "Daily hours" box on the pay run), and only to employees paid under $18.00 an hour; an employer and employee may agree to four 10-hour days, which TrailBook doesn't know about.
+- ⚠️ Paid leave is counted at 1 hour per 52 worked (0.01923), up to 40 hours a year, for employers with 50 or more employees; smaller employers get no accrual. Check the 40-hour carryover cap reading.
+- ⚠️ The Modified Business Tax (a quarterly Department of Taxation tax on wages over $50,000 a quarter, 1.17% for most businesses) isn't calculated.
+- ⚠️ Sales tax: TrailBook doesn't work out Nevada sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: DETR, Contributions Newsletter June 2026; UI Information for Employers ($43,700 wage base; 2.95% new-employer rate; 0.05% Career Enhancement Program on the same base); NRS 608.250 as amended by AB 456 (2019); 2024 constitutional amendment ($12.00 minimum wage for all employers from July 1, 2024); NRS 608.018; NRS 608.0197 (daily overtime under 1.5 times the minimum wage; paid leave at 0.01923 hours per hour for 50+ employees).
+
+### us-tn 2026.1, Tennessee
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Tennessee UI (TN_UI, employer, TDLWD) | 2.7% default; employer enters its own rate, on the first $7,000 | ✅ |
+| Quarterly report | Employer's Quarterly Premium and Wage Report (LB-0456), filed and paid quarterly | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Tennessee New Hire Reporting | ✅ |
+
+- ⚠️ Some new employers (certain industries) get a different starting rate; employers enter their own from the notice.
+- ⚠️ Check the quarterly report's form number (LB-0456) against the current Jobs4TN filing screens.
+- ⚠️ No statewide paid sick leave for private employers.
+- ⚠️ Sales tax: TrailBook doesn't work out Tennessee sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: TDLWD, UI Tax Rates page; Bloomberg Tax, "Tennessee UI Tax Schedule Unchanged for Rest of 2026" ($7,000 wage base; 2.7% for most new employers; Premium Rate Table 6 for 2026); FLSA, 29 U.S.C. 206 (Tennessee has no state minimum wage) ($7.25 minimum wage; weekly overtime only).
+
+### us-sd 2026.1, South Dakota
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| South Dakota reemployment assistance (SD_UI, employer, DLR) | 1.2% default; employer enters its own rate, on the first $15,000 | ✅ |
+| South Dakota investment fee (SD_FEE, employer, DLR) | 0.55% default; employer enters its own rate, on the first $15,000 | ✅ |
+| Quarterly report | Quarterly Contribution, Investment Fee and Wage Report, filed and paid quarterly | ✅ |
+| Minimum wage | $11.85 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to South Dakota New Hire Reporting Center | ✅ |
+
+- ⚠️ SB 26 (2026) lowers reemployment contribution rates; sources disagree on whether from July 1, 2026 or January 1, 2027. Employers enter their own rate from the DLR notice, so a rate change needs no pack change, but the new-employer default may.
+- ⚠️ No statewide paid sick leave.
+- ⚠️ Sales tax: TrailBook doesn't work out South Dakota sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: SD DLR employer handbook, as summarised by TimeTrex and Paylocity ($15,000 wage base; 1.2% new-employer rate plus 0.55% investment fee; 0.08% administrative fee once rated); SDCL 60-11-3 (CPI-indexed) ($11.85 minimum wage from January 1, 2026).
+
+### us-wy 2026.1, Wyoming
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Wyoming UI (WY_UI, employer, DWS) | 0% default; employer enters its own rate (required before a paycheck), on the first $33,800 | ✅ |
+| Quarterly report | Unemployment Insurance Quarterly Summary and Wage Report, filed and paid quarterly | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Wyoming New Hire Reporting Center | ✅ |
+
+- ⚠️ No default rate: a pay run waits until the employer enters its rate, because new-employer rates range from about 2.3% to 9.8% by industry.
+- ⚠️ Wyoming's state-run workers' compensation premiums are reported with the same quarterly filing but are not calculated by TrailBook yet.
+- ⚠️ No statewide paid sick leave.
+- ⚠️ Sales tax: TrailBook doesn't work out Wyoming sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Wyoming DWS 2026 taxable wage base; Experian, 2026 Unemployment Tax Outlook ($33,800 wage base; new-employer rates by industry); FLSA, 29 U.S.C. 206 (Wyoming's own $5.15 is below it) ($7.25 minimum wage; weekly overtime only).
+
+### us-nh 2026.1, New Hampshire
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| New Hampshire UI (NH_UI, employer, NHES) | 1.3% default; employer enters its own rate, on the first $14,000 | ✅ |
+| New Hampshire administrative contribution (NH_ADMIN, employer, NHES) | 0.4% default; employer enters its own rate, on the first $14,000 | ✅ |
+| Quarterly report | Employer Quarterly Tax and Wage Report, filed and paid quarterly | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to New Hampshire Employment Security (New Hire Reporting) | ✅ |
+
+- ⚠️ NHES may change rates each quarter; Q3-Q4 2026 rates weren't published when this was written.
+- ⚠️ New Hampshire taxes interest and dividends only until 2025 and has no wage tax; no sales tax either, so invoices there correctly carry none.
+- ⚠️ No statewide paid sick leave.
+
+Sources: NHES 2026 Q1-Q2 rate chart, as reproduced by TimeTrex and Paylocity; RSA 282-A:69 ($14,000 wage base; new employers 1.3% UI plus 0.4% administrative contribution); RSA 279:21 (adopts the federal minimum wage) ($7.25 minimum wage).
+
+### us-ak 2026.1, Alaska
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Alaska UI (employee) (AK_UI_EE, employee, AKDOL) | 0.5%, on the first $54,200 | ✅ |
+| Alaska UI (AK_UI, employer, AKDOL) | 1% default; employer enters its own rate, on the first $54,200 | ✅ |
+| Quarterly report | Employer's Quarterly Contribution Report (TQ01C), filed and paid quarterly | ✅ |
+| Minimum wage | $13, then $14 from 2026-07-01 | ✅ |
+| Exempt salary floor (a year) | $54,080, then $58,240 from 2026-07-01 | ✅ |
+| Overtime | After 40 hours a week; after 8 hours a day | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 56 hours; 40 hours for under 15 employees | ✅ |
+| New-hire report | Within 20 days to Alaska Child Support Services Division (New Hire Reporting) | ✅ |
+
+- ⚠️ Daily overtime applies only to employers with 4 or more employees; TrailBook applies it to everyone, which only matters when daily hours are entered.
+- ⚠️ Paid sick leave caps are read as both a use and an accrual cap; check the statute's carryover rule.
+- ⚠️ The employee UI contribution has no box on the W-2; it's shown on pay stubs and the quarterly report.
+- ⚠️ Alaska has no state sales tax (many boroughs and cities do); TrailBook doesn't work out local Alaska sales tax yet.
+
+Sources: Alaska DOLWD, 2026 Unemployment Insurance Tax Rates; Research and Analysis memo, November 2025 ($54,200 wage base; employee rate 0.50%; employer rate 1.00% for new employers); Ballot Measure 1 (2024), AS 23.10.065 ($13.00 minimum wage, $14.00 from July 1, 2026, $15.00 from July 1, 2027; paid sick leave from July 1, 2025); AS 23.10.055, 23.10.060 (exempt salary twice the minimum wage for 40 hours; daily and weekly overtime).
+
+### us-wa 2026.1, Washington
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Washington Paid Leave (employee) (WA_PFML_EE, employee, ESD) | 0.8072%, on the first $184,500 | ✅ |
+| WA Cares (WA_CARES, employee, ESD) | 0.58%, no wage base | ✅ |
+| Washington UI (WA_UI, employer, ESD) | 0% default; employer enters its own rate (required before a paycheck), on the first $78,200 | ✅ |
+| Washington Paid Leave (employer) (WA_PFML_ER, employer, ESD) | 0% default; employer enters its own rate, on the first $184,500 | ✅ |
+| Quarterly report | Unemployment Insurance Quarterly Tax and Wage Report, filed and paid quarterly | ✅ |
+| Quarterly report | Paid Family and Medical Leave and WA Cares Quarterly Report, filed and paid quarterly | ✅ |
+| Minimum wage | $17.13 | ✅ |
+| Exempt salary floor (a year) | $80,168.4 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 40 worked, no cap | ✅ |
+| New-hire report | Within 20 days to Washington Division of Child Support (New Hire Reporting) | ✅ |
+
+- ⚠️ Workers' compensation through L&I is charged per hour worked by risk class, partly withheld from employees, and reported quarterly. TrailBook doesn't calculate it yet; this is the main gap before releasing Washington.
+- ⚠️ WA Cares exemptions (employees approved by ESD) aren't modelled: everyone pays the 0.58%.
+- ⚠️ The year-end 40-hour sick leave carryover cap isn't applied; balances keep growing. Front-loading grants 40 hours.
+- ⚠️ Seattle, SeaTac, Tukwila, Renton, Bellingham, Burien, Everett and King County have higher local minimum wages that TrailBook doesn't check yet.
+- ⚠️ Sales tax: TrailBook doesn't work out Washington sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: ESD, "Paid Family & Medical Leave premium rate increases to 1.13% in 2026"; paidleave.wa.gov updates (1.13% total, employees 71.43% (0.8072%), employers 28.57% (0.3228%) for 50+ employees; up to the Social Security wage base ($184,500)); RCW 50B.04.080 (WA Cares) (0.58% employee premium on all wages); ESD 2026 taxable wage base (Bloomberg Tax) ($78,200 UI wage base; new employers by industry); L&I, 2026 minimum wage and exempt salary ($17.13 minimum wage; $80,168.40 exempt salary).
+
+## us-az 2026.1 (`src/rules/us-az-2026.ts`), released 2026-10-29
+
+Added 2026-10-29. Arizona withholding is the flat percentage the employee elects on Form A-4, so no tables are needed. Oregon and New York were added the same day, below.
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | Employee elects 0.5%, 1%, 1.5%, 2%, 2.5%, 3%, 3.5% on Form A-4; 2% without one; 0% may be elected (ADOR) | ✅ |
+| Withholding deposits | On the federal schedule if last year's quarterly average was over $1,500; otherwise with the A1-QRT | ✅ |
+| Arizona UI (AZ_UI, employer, DES) | 2% default; employer enters its own rate, on the first $8,000 | ✅ |
+| Arizona job training tax (AZ_JTT, employer, DES) | 0% default; employer enters its own rate, on the first $8,000 | ✅ |
+| Quarterly report | Arizona Quarterly Withholding Tax Return (A1-QRT), filed and paid quarterly | ✅ |
+| Quarterly report | Unemployment Tax and Wage Report (UC-018), filed and paid quarterly | ✅ |
+| Minimum wage | $15.15 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours; 24 hours for under 15 employees | ✅ |
+| New-hire report | Within 20 days to Arizona New Hire Reporting Center | ✅ |
+
+- ⚠️ A new employee who files no A-4 is withheld at 2.0%. An employee may elect 0% only if they expect no Arizona tax for the year; TrailBook takes that election as given.
+- ⚠️ UI and job training tax rates are per employer: enter them from the DES rate notice. New employers pay 2.0% UI and no job training tax.
+- ⚠️ Deposits: if last year's average quarterly Arizona withholding was over $1,500, deposits are due on the federal schedule; otherwise with the A1-QRT. Check ADOR's current threshold.
+- ⚠️ Flagstaff ($18.35) and Tucson ($15.45) have higher local minimum wages that TrailBook doesn't check yet.
+- ⚠️ Tipped employees ($12.15 cash wage) aren't modelled; TrailBook checks the full minimum wage.
+- ⚠️ Paid sick time caps are read as both a use and an accrual cap (A.R.S. 23-372 allows carrying over up to 40 hours, or 24 for small employers).
+- ⚠️ The A1-R annual reconciliation and W-2 state copies are prepared from the W-2 data; the A1-R itself isn't produced yet.
+- ⚠️ Sales tax: Arizona's transaction privilege tax isn't worked out yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Bloomberg Law, "Arizona's 2026 Withholding Rates Unchanged From 2025"; A.R.S. 43-401 (A-4 choices 0.5% to 3.5% in half-point steps; 2.0% when no A-4 is filed; 0% may be elected when no Arizona tax is expected); Arizona DES 2026 UI rates, as summarised by Avionté and FirstHR ($8,000 wage base; 2.0% new-employer rate; 0.04% to 9.72% range); A.R.S. 23-769 (job training tax) (0.1% on the UI wage base for rated employers; not charged to new employers or those with a negative balance); A.R.S. 23-363 (Proposition 206, CPI-indexed); Industrial Commission of Arizona ($15.15 minimum wage from January 1, 2026); A.R.S. 23-371 to 23-381 (Fair Wages and Healthy Families Act) (earned paid sick time: 1 hour per 30 worked; 40 hours a year for 15+ employees, 24 for fewer); A.R.S. 43-403, 43-413; ADOR Form A1-QRT and A1-R instructions (quarterly withholding return; deposit timing follows the federal schedule when last year's quarterly average was over $1,500).
+
+## us-or 2026.1 and us-ny 2026.1 (`src/rules/us-or-2026.ts`, `src/rules/us-ny-2026.ts`), released 2026-10-29
+
+Added 2026-10-29. Withholding for both states was read from the agencies' own 2026 publications (Oregon 150-206-436 Rev. 12-31-25; NYS-50-T-NYS (1/26)); tests check TrailBook against the publications' worked examples. Both states have minimum wage areas: each employee's work area is picked on the employee form.
+
+### Oregon
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | Annual formula from 150-206-436: standard deduction $2,910 single / $5,820 married, federal tax subtraction up to $8,750 phasing out from $125,000 single / $250,000 married, $263 credit per allowance (none above $100,000 / $200,000), 8% without an OR-W-4 | ✅ |
+| Oregon withholding and statewide transit tax deposits | On your federal deposit dates | ✅ |
+| Oregon statewide transit tax (OR_STT, employee, DOR) | 0.1%, no wage base | ✅ |
+| Paid Leave Oregon (employee) (OR_PFML_EE, employee, OED) | 0.6%, on the first $184,500 | ✅ |
+| Workers' Benefit Fund (employee) (OR_WBF_EE, employee, DCBS) | 0.90 cents per hour worked, no wage base | ✅ |
+| Oregon UI (OR_UI, employer, OED) | 2.4% default; employer enters its own rate, on the first $56,700 | ✅ |
+| Workers' Benefit Fund (employer) (OR_WBF_ER, employer, DCBS) | 0.90 cents per hour worked, no wage base | ✅ |
+| Paid Leave Oregon (employer) (OR_PFML_ER, employer, OED) | 0% default; employer enters its own rate, on the first $184,500 | ✅ |
+| TriMet or Lane transit tax (OR_TRANSIT, employer, DOR) | 0% default; employer enters its own rate, no wage base | ✅ |
+| Quarterly report | Oregon Quarterly Tax Report (Form OQ), filed and paid quarterly | ✅ |
+| Quarterly report | Paid Leave Oregon Quarterly Contribution Report, filed and paid quarterly | ✅ |
+| Minimum wage | $15.05, then $15.55 from 2026-07-01 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Minimum wage, Portland metro | $16.30, then $16.80 from 2026-07-01 | ✅ |
+| Minimum wage, Nonurban counties | $14.05, then $14.55 from 2026-07-01 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 80 hours | ✅ |
+| New-hire report | Within 20 days to Oregon Department of Justice, Division of Child Support (New Hire Reporting) | ✅ |
+
+- ⚠️ Withholding uses the annual formula divided by the pay periods, exactly as the publication describes; amounts aren't rounded to whole dollars (allowed, not required).
+- ⚠️ An employee with no OR-W-4 on file is withheld at a flat 8% (HB 2119), with a warning on the paycheck.
+- ⚠️ Single with 3 or more allowances uses the married table and deduction but the single phase-out and $100,000 allowance limit, per the publication's FAQ 7.
+- ⚠️ Oregon withholding and the statewide transit tax are deposited on your federal deposit dates; UI and the Workers' Benefit Fund are paid with the quarterly Form OQ.
+- ⚠️ The Workers' Benefit Fund is charged on hours worked; salaried employees count as 40 hours a week.
+- ⚠️ TriMet and Lane Transit District payroll taxes apply only to work inside those districts; enter your rate (TriMet 0.8237%, Lane 0.80% in 2026 per payroll publishers) in payroll settings if they apply.
+- ⚠️ Paid Leave Oregon's employer share is only for employers with 25 or more employees; enter 0.4% in payroll settings if that's you.
+- ⚠️ Minimum wage depends on where the employee works: Portland metro (inside the urban growth boundary), standard, or nonurban counties. Choose the area on each employee.
+- ⚠️ Sick time: up to 40 hours may be used a year, and balances may be capped at 80 hours (ORS 653.606); TrailBook caps accrual at 80.
+- ⚠️ Employers with fewer than 10 employees (6 in Portland) must give sick time but needn't pay it; TrailBook tracks it the same way.
+- ⚠️ Sales tax: Oregon has none. Corporate Activity Tax isn't payroll and isn't calculated.
+
+Sources: Oregon DOR, Withholding Tax Formulas, 150-206-436 (Rev. 12-31-25), effective January 1, 2026 (brackets, $2,910/$5,820 standard deductions, $263 exemption credit, $8,750 federal tax subtraction and its phase-out, allowance limits, 8% without a certificate, deposits on the federal schedule); Oregon Employment Department, 2026 tax rates (press release 2025-11-18) ($56,700 UI wage base; tax schedule 3; 2.4% new-employer rate); Oregon DOR, Statewide Transit Tax page (Measure 120 failed May 19, 2026) (0.1% employee statewide transit tax); Paid Leave Oregon, 2026 contribution rate (1% up to $184,500: employees 0.6%, employers with 25+ employees 0.4%); DCBS, Workers' Benefit Fund page (1.8 cents per hour worked in 2026, half from the employee); BOLI, 2026 minimum wage announcement (April 23, 2026) ($15.05 / $16.30 / $14.05 to June 30, 2026; $15.55 / $16.80 / $14.55 from July 1, 2026); ORS 653.601 to 653.661 (sick time) (1 hour per 30 worked, up to 40 hours a year; paid for employers with 10+ employees (6+ with a Portland location)).
+
+### New York
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | Method II exact calculation tables II-A to II-D for each pay frequency, Method III top rates (10.45%, 11.1%, 11.7%) from $1,077,550 single / $2,155,350 married net; no IT-2104 means single, 0 allowances | ✅ |
+| Withholding deposits | Within 3 business days once $700 or more is owed; otherwise with the NY-45 | ✅ |
+| NY disability (DBL) (NY_SDI, employee, Carrier) | 0.5%, no wage base, at most $0.60 a week (goes to your insurance carrier) | ✅ |
+| NY Paid Family Leave (NY_PFL, employee, Carrier) | 0.432%, on the first $95,349.54 (goes to your insurance carrier) | ✅ |
+| New York UI (NY_UI, employer, DOL) | 4.1% default; employer enters its own rate, on the first $17,600 | ✅ |
+| Quarterly report | Quarterly Combined Withholding, Wage Reporting, and Unemployment Insurance Return (NY-45), filed and paid quarterly | ✅ |
+| Minimum wage | $16.00 | ✅ |
+| Exempt salary floor (a year) | $62,353.20 | ✅ |
+| Minimum wage, New York City, Long Island and Westchester | $17.00; exempt salary $66,300 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 56 hours; 40 hours for under 100 employees | ✅ |
+| New-hire report | Within 20 days to New York State Department of Taxation and Finance (New Hire Notification) | ✅ |
+
+- ⚠️ No IT-2104 on file: withheld as single with no allowances. Married withholding at the higher single rate, and head of household, use the single tables.
+- ⚠️ Withholding over $700 not yet paid is due within 3 business days of the payday; the rest is paid with the NY-45. Check whether your business must use the 5-business-day rule instead.
+- ⚠️ Disability (DBL) and Paid Family Leave contributions are withheld from employees and go toward your insurance carrier's premium; TrailBook holds them in a liability account and doesn't schedule a state payment.
+- ⚠️ Paid Family Leave is capped by its annual maximum ($411.91), shown as a wage base of $95,349.54.
+- ⚠️ The Metropolitan Commuter Transportation Mobility Tax (employers in the MCTD with more than $312,500 of payroll a quarter) isn't calculated.
+- ⚠️ Minimum wage and the executive/administrative exempt salary depend on where the employee works: choose New York City, Long Island and Westchester on the employee, or leave the rest of the state.
+- ⚠️ Prenatal leave (20 hours a year) and the spread-of-hours and call-in pay rules aren't tracked.
+- ⚠️ Sales tax: TrailBook doesn't work out New York sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+#### us-ny 2026.2: New York City and Yonkers (added 2026-10-29, awaiting Greg's review; merging the pull request releases it)
+
+2026.2 replaces 2026.1 with everything above unchanged, plus city income tax. It's withheld only for employees whose record has the box ticked (the employee form shows "Lives in New York City", "Lives in Yonkers", and "Works in Yonkers, lives elsewhere" under the IT-2104 fields).
+
+| Item | Figure | Status |
+|---|---|---|
+| New York City resident tax (NYC_WH) | NYS-50-T-NYC exact calculation: Table B deduction (weekly $96.15 single / $105.75 married; biweekly $192.30 / $211.50; semimonthly $208.35 / $229.15; monthly $416.70 / $458.30), Table C exemption ($19.25 / $38.50 / $41.65 / $83.30 each), then 2.05% to 4.25% in six brackets, one table for single and married | ⚠️ check |
+| Yonkers resident tax (YON_WH) | 16.75% of the New York State amount (Method II), before any extra withholding | ⚠️ check |
+| Yonkers nonresident earnings tax (YON_NR) | 0.5% of wages less the Method VII exclusion (weekly: under $77 nothing; $58 from $77, $38 from $192, $19 from $385, none from $577; other frequencies in the pack) | ⚠️ check |
+| Paid and reported | With New York State withholding on the NYS-1 and NY-45; same liability account (2340) | ⚠️ check |
+| W-2 | Boxes 18 to 20: local wages, local tax, NYC or YONKERS | ⚠️ check |
+
+- ⚠️ Tested against the publication's own examples: NYC single weekly $400 with 3 exemptions is $6.11, monthly $50,000 with 3 is $2,070.50, married monthly $50,000 with 3 is $2,068.73 (all six NYC examples match).
+- ⚠️ TrailBook doesn't guess city tax from an address: the owner or accountant ticks it from the employee's IT-2104 (and IT-2104.1 for nonresidents).
+- ⚠️ NYC uses the state allowance count (IT-2104 line 1); a different NYC count on line 2 isn't kept separately yet. Extra NYC and Yonkers withholding (lines 4 and 5) isn't split out either; the one extra amount goes to state withholding.
+
+Sources (2026.2): NYS-50-T-NYC (1/26), New York City Withholding Tax Tables and Methods (exact calculation method); NYS-50-T-Y (1/26), Yonkers Withholding Tax Tables and Methods (resident 16.75% of the state amount; nonresident Method VII). Both read from the publications on 2026-10-29.
+
+Sources: NYS-50-T-NYS (1/26), New York State Withholding Tax Tables and Methods, pages 14 to 22 (tables A to C (deduction and exemption allowances), Method II tables II-A to II-D, Method III top rates); NYS-50 (Employer's Guide); Tax Law 674 (withholding paid within 3 business days once $700 or more is withheld; otherwise with the NY-45; no IT-2104 means single with no allowances); NYS DOL, Current 2026 Employer Contribution Rate ($17,600 UI wage base; new employers 4.1% (4.025% UI plus 0.075% Re-employment Service Fund)); DFS, 2026 Paid Family Leave rate decision; paidfamilyleave.ny.gov/2026 (0.432% of wages, at most $411.91 a year); Workers' Compensation Law 209 (disability (DBL) employee contribution 0.5% of wages, at most $0.60 a week); Labor Law 652; 12 NYCRR 142 (Proskauer and Seyfarth summaries) ($17.00 minimum wage in NYC, Long Island and Westchester, $16.00 elsewhere; exempt salary $1,275 / $1,199.10 a week); Labor Law 196-b (paid sick leave) (1 hour per 30 worked; 56 hours for 100+ employees, 40 for fewer).
+
+## Second round of states: us-il, us-co, us-nc, us-ga, us-ut, us-id 2026.1, released 2026-10-29
+
+Chosen by market size and nearness to the states already live. All six use the new `annual_formula` withholding method (the year's wages less a standard deduction or allowances, through the rates, less any credit, divided by the pay periods) and the new `monthly_or_larger` deposit rule. Greg approved every pack on 2026-10-29 and they are `released`; the ⚠️ notes below stay as the known limits to watch.
+
+Where a state changed its rate part-way through 2026 (Georgia from May 11, Utah from June 1, Idaho from July 31), the pack has only the current figures, because a business starting now pays under them. Tested against each publication's own example where it gives one: Illinois $800 a week with 2 + 2 allowances is $32.13, North Carolina single $450 a week with 2 allowances is $4, Georgia married (one income) $2,000 semimonthly with one dependent is $27.03.
+
+### Illinois (us-il 2026.1, `src/rules/us-il-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.95% of wages less $2,925 for each IL-W-4 line 1 allowance and $1,000 for each line 2 allowance, worked out for the year and divided by the pay periods; no IL-W-4 means no allowances | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $12,000; IL-941 | ✅ |
+| Illinois UI (IL_UI, employer, IDES) | 3.35% default; employer enters its own rate, on the first $14,250 | ✅ |
+| Quarterly report | Illinois Withholding Income Tax Return (IL-941) | ✅ |
+| Quarterly report | Employer's Contribution and Wage Report (UI-3/40) | ✅ |
+| Minimum wage | $15.00 | ✅ |
+| Minimum wage, Chicago | $16.60; $17.05 from 2026-07-01 | ✅ |
+| Minimum wage, Cook County, outside Chicago | $15.00; $15.40 from 2026-07-01 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 40 worked, up to 40 hours a year | ✅ |
+| New-hire report | Within 20 days to Illinois Department of Employment Security (New Hire Directory) | ✅ |
+
+- ⚠️ No IL-W-4 on file: no allowances (4.95% of all wages). IL-W-4 line 1 is the basic allowance count, line 2 the additional allowances for age 65 or blindness.
+- ⚠️ The payroll period formula is computed for the year and divided by the pay periods; amounts can differ from the wage-bracket tables by a few cents.
+- ⚠️ Withholding is paid monthly by the 15th of the next month, or semi-weekly on the federal dates once more than $12,000 was withheld in the look-back period. TrailBook uses last calendar year's withholding to decide; IDOR's notice of your payment schedule controls.
+- ⚠️ UI rates are per employer: enter yours from the IDES rate notice. New employers pay 3.35% (3.45% in NAICS sector 56).
+- ⚠️ Minimum wage depends on where the employee works: Chicago and the rest of Cook County have higher rates. Other local rates (Evanston, Oak Park and so on) aren't checked yet.
+- ⚠️ Chicago's own paid leave and paid sick leave ordinance (40 hours each) replaces the state law there; TrailBook tracks the state's 40 hours.
+- ⚠️ Paid leave carries over under the state law but use can be capped at 40 hours a year; TrailBook sets no balance cap.
+- ⚠️ Sales tax: TrailBook doesn't work out Illinois sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: IDOR Booklet IL-700-T (R-12/25), Illinois Withholding Tax Tables, effective January 1, 2026, page 3 (4.95% rate; $2,925 per line 1 allowance and $1,000 per line 2 allowance; automated payroll method and its $32.13 example); IDOR, Form IL-941 instructions (tax.illinois.gov) (monthly payments for $12,000 or less withheld in the look-back period (July to June); semi-weekly above it; IL-941 filed quarterly); IDES 2026 contribution rates, as reported by Bloomberg Tax ($14,250 wage base; 3.35% new-employer rate including the 0.55% fund-building surtax (3.45% for NAICS sector 56)); 820 ILCS 105/4 (Minimum Wage Law); Chicago and Cook County minimum wage notices (July 1, 2026, as reported by ABC7 Chicago) ($15.00 statewide; Chicago $16.60 to June 30 and $17.05 from July 1, 2026; Cook County $15.00 then $15.40); 820 ILCS 192 (Paid Leave for All Workers Act) (1 hour of paid leave per 40 worked, up to 40 hours a year); 820 ILCS 405/1801.1 (new hire reporting) (report new hires to IDES within 20 days).
+
+### Colorado (us-co 2026.1, `src/rules/us-co-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.4% of the year's wages less the DR 0004 line 2 allowance, or without one $11,000 (married filing jointly on the W-4) or $5,500; DR 0004 line 3 extra | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $50,000; DR 1094 | ✅ |
+| Colorado FAMLI (employee) (CO_FAMLI_EE, employee, FAMLI) | 0.44%, on the first $184,500 | ✅ |
+| Colorado UI (CO_UI, employer, CDLE) | 3.05% default; employer enters its own rate, on the first $30,600 | ✅ |
+| Colorado FAMLI (employer) (CO_FAMLI_ER, employer, FAMLI) | 0% default; employer enters its own rate, on the first $184,500 | ✅ |
+| Quarterly report | Colorado Wage Withholding Tax Return (DR 1094) | ✅ |
+| Quarterly report | Colorado UI Premium and Wage Report (UITR-1) | ✅ |
+| Quarterly report | Colorado FAMLI Quarterly Wage Report | ✅ |
+| Minimum wage | $15.16 | ✅ |
+| Minimum wage, Denver | $19.29 | ✅ |
+| Minimum wage, Edgewater | $18.17 | ✅ |
+| Minimum wage, City of Boulder or unincorporated Boulder County | $16.82 | ✅ |
+| Exempt salary floor (a year) | $57,784 | ✅ |
+| Overtime | After 40 hours a week or 12 hours a day | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 48 hours a year | ✅ |
+| New-hire report | Within 20 days to Colorado State Directory of New Hires | ✅ |
+
+- ⚠️ An employee who files a DR 0004 has their line 2 allowance used as is, including zero. Without one, the allowance follows the federal W-4 status: $11,000 for married filing jointly, $5,500 otherwise; with neither form, single.
+- ⚠️ Deposits: monthly by the 15th; weekly (third business day after the Friday of the payroll week) if more than $50,000 was withheld last year. Quarterly filers (under $7,000 a year) may pay monthly instead. CDOR's assigned frequency controls.
+- ⚠️ UI rates are per employer: enter yours from the CDLE rate notice. New employers pay 3.05%.
+- ⚠️ FAMLI: the employee pays 0.44% (half of 0.88%); employers with 10 or more employees pay the other 0.44% (enter it in payroll settings). TrailBook stops both at the Social Security wage base.
+- ⚠️ Local occupational privilege taxes (Denver $5.75 a month from the employee and $4 from the employer; Aurora, Glendale, Greenwood Village, Sheridan) aren't calculated.
+- ⚠️ Minimum wage depends on where the employee works: Denver, Edgewater and Boulder have higher rates. Choose the area on each employee.
+- ⚠️ Daily overtime: TrailBook pays overtime after 12 hours a day as well as 40 a week; the 12-consecutive-hours rule isn't checked.
+- ⚠️ Sales tax: TrailBook doesn't work out Colorado sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: CDOR, DR 1098 (10/21/25), 2026 Colorado Withholding Worksheet for Employers (4.40% of annualized wages less the DR 0004 line 2 allowance, or $11,000 married filing jointly / $5,500 otherwise from the W-4; single when no certificate; DR 0004 line 3 extra withholding); CDOR, Colorado Wage Withholding Tax Guide (FYI Withholding) (deposits: quarterly under $7,000 a year, monthly by the 15th, weekly over $50,000 (third business day after the Friday of the payroll week); DR 1094 return); CDLE 2026 UI premiums, as summarised by payroll publishers (Eddy, December 2025) ($30,600 wage base; 3.05% new-employer rate including the support surcharge); SB 25-144; FAMLI Division (as summarised by Ogletree and Fisher Phillips) (0.88% FAMLI premium for 2026, up to half from the employee; employers with fewer than 10 employees don't pay the employer half; up to the Social Security wage base); CDLE, 2026 minimum wage; Denver, Boulder and Edgewater ordinances (as reported in January 2026) ($15.16 statewide; Denver $19.29; Edgewater $18.17; City of Boulder and unincorporated Boulder County $16.82); COMPS Order #39 (as summarised by payroll publishers) ($57,784 exempt salary for 2026; overtime after 40 hours a week or 12 hours a day); C.R.S. 8-13.3-401 to 8-13.3-418 (Healthy Families and Workplaces Act) (1 hour of paid sick leave per 30 worked, up to 48 hours a year).
+
+### North Carolina (us-nc 2026.1, `src/rules/us-nc-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.09% of the year's wages less $12,750 (single, married, surviving spouse) or $19,125 (head of household) and $2,500 an NC-4 allowance, per pay period rounded to the dollar; no NC-4 means single, no allowances | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $24,000; NC-5 | ✅ |
+| North Carolina UI (NC_UI, employer, DES) | 1% default; employer enters its own rate, on the first $34,200 | ✅ |
+| Quarterly report | North Carolina Quarterly Income Tax Withholding Return (NC-5 / NC-5Q) | ✅ |
+| Quarterly report | Employer's Quarterly Tax and Wage Report (NCUI 101) | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to North Carolina New Hire Reporting Program | ✅ |
+
+- ⚠️ No NC-4 on file: single with no allowances.
+- ⚠️ Withholding is rounded to the whole dollar each paycheck, as NC-30 asks, before any extra withholding.
+- ⚠️ Deposits: monthly by the 15th (December's by January 31; TrailBook shows January 15, which is early but safe), or on the federal semiweekly dates once you average $2,000 a month. TrailBook decides from last year's withholding; quarterly filers (under $250 a month) may pay monthly. NCDOR's assigned frequency controls.
+- ⚠️ UI rates are per employer: enter yours from the DES rate notice. New employers pay 1.0%.
+- ⚠️ Sales tax: TrailBook doesn't work out North Carolina sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: NCDOR, NC-30 Income Tax Withholding Tables and Instructions for Employers (2026), sections 15, 16 and 27 and pages 17 to 20 (4.09% withholding rate; $12,750 standard deduction (single, married, surviving spouse) and $19,125 (head of household); $2,500 an allowance; round to the whole dollar; no NC-4 means single with no allowances; monthly NC-5 by the 15th for $250 to $2,000 a month, semiweekly with federal deposits from $2,000 a month); NC DES 2026 UI rates, as summarised by payroll publishers ($34,200 wage base; 1.0% new-employer rate); G.S. 95-25.3 (minimum wage follows the federal $7.25) ($7.25 minimum wage; no state paid sick leave law); G.S. 110-129.2 (new hire reporting) (report new hires within 20 days).
+
+### Georgia (us-ga 2026.1, `src/rules/us-ga-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.99% of the year's wages less $15,000 ($30,000 married filing jointly with one income) and $5,000 a G-4 dependent allowance; no G-4 means single, zero allowances | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $50,000; G-7 | ✅ |
+| Georgia UI (GA_UI, employer, GDOL) | 2.7% default; employer enters its own rate, on the first $9,500 | ✅ |
+| Quarterly report | Georgia Quarterly Return for Monthly Payer (G-7) | ✅ |
+| Quarterly report | Employer's Quarterly Tax and Wage Report (DOL-4N) | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 10 days to Georgia New Hire Reporting Program | ✅ |
+
+- ⚠️ Pay runs before May 11, 2026 may have used 5.19% and the old deductions; TrailBook uses the current figures for the whole year.
+- ⚠️ G-4 statuses: single (A), married filing jointly with both spouses working (B), married filing jointly with one income (C, the only one with the $30,000 deduction), married filing separately (D), head of household (E).
+- ⚠️ Only dependent allowances are modelled, at $5,000 each. The G-4's additional allowances for itemized deductions aren't, so an employee who claims them is over-withheld; adjust with fewer extra dollars if needed.
+- ⚠️ No G-4 on file: single with zero allowances.
+- ⚠️ Deposits: monthly by the 15th, or semi-weekly on the federal dates above $50,000 in the lookback period. Quarterly and annual payers (under $200 a month) may pay monthly. TrailBook decides from last year's withholding.
+- ⚠️ UI rates are per employer: enter yours (including the 0.06% administrative assessment) from the GDOL rate notice. New employers pay 2.7%.
+- ⚠️ Georgia wants new hires reported within 10 days, faster than most states.
+- ⚠️ Sales tax: TrailBook doesn't work out Georgia sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Georgia DOR, 2026 Employer's Tax Guide (updated June 2026), What's New and Percentage Method (Table E) (4.99% from May 11, 2026 (5.19% before); $30,000 standard deduction married filing jointly with one income, $15,000 for every other status; $5,000 a dependent allowance; no G-4 means single with zero allowances); Georgia DOR, 2026 Employer's Tax Guide, payment schedules (monthly by the 15th for $50,000 or less in the lookback period; semi-weekly above it; G-7 quarterly); GDOL 2026 UI rates, as summarised by payroll publishers ($9,500 wage base; 2.7% new-employer rate (2.64% plus the 0.06% administrative assessment)); O.C.G.A. 34-4-3 (federal $7.25 minimum wage applies to covered employers) ($7.25 minimum wage; no state paid sick leave law); O.C.G.A. 49-5-121 (new hire reporting) (report new hires within 10 days).
+
+### Utah (us-ut 2026.1, `src/rules/us-ut-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.45% of wages less a base allowance of $485 single / $970 married a year, which shrinks by 1.3% of wages over $9,348 / $18,696; status from the federal W-4 | ✅ |
+| Withholding deposits | Monthly by the last day of the next month; TC-941 | ✅ |
+| Utah UI (UT_UI, employer, DWS) | 1.2% default; employer enters its own rate, on the first $50,700 | ✅ |
+| Quarterly report | Utah Withholding Return (TC-941) | ✅ |
+| Quarterly report | Employer Quarterly Contribution Report (Form 3) | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Utah Department of Workforce Services (New Hire Registry) | ✅ |
+
+- ⚠️ Check against Publication 14 itself: TrailBook's build machines couldn't open it (files.tax.utah.gov is blocked to them), so these figures are from payroll publishers.
+- ⚠️ Payroll periods before June 1, 2026 used 4.5% and a $450 / $900 base allowance; TrailBook uses the current figures for the whole year.
+- ⚠️ Status comes from the federal W-4: married filing jointly uses the married figures; single, married filing separately and head of household use the single ones. W-4 allowances and extra withholding don't change Utah withholding.
+- ⚠️ The base allowance is worked out on the year's wages and divided by the pay periods; Publication 14's per-period figures are rounded, so amounts can differ by a few cents.
+- ⚠️ Deposits: monthly by the end of the next month. Quarterly filers (under $1,000 a month) may pay monthly. The Tax Commission's assigned frequency controls.
+- ⚠️ UI rates are per employer and new-employer rates depend on the industry: enter yours from the DWS rate notice.
+- ⚠️ Sales tax: TrailBook doesn't work out Utah sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Utah Publication 14 (revised for S.B. 60, payroll periods from June 1, 2026), as reported by EY Tax News (May 11, 2026), Bloomberg Tax and the USDA National Finance Center (4.45% rate; base allowance $485 single / $970 married a year; reduced by 1.3% of wages above $9,348 single / $18,696 married; status from the federal W-4 (married only for married filing jointly); no subtraction for W-4 allowances); Utah Tax Commission, withholding filing frequency (monthly payments for $1,000 or more a month, due the last day of the next month; quarterly otherwise; TC-941); Utah DWS 2026 UI rates, as summarised by payroll publishers ($50,700 wage base; new-employer rate by industry (about 1.2%)); Utah Code 34-40-103 (minimum wage follows the federal $7.25) ($7.25 minimum wage; no state paid sick leave law); Utah Code 35A-7-103 (new hire reporting) (report new hires within 20 days).
+
+### Idaho (us-id 2026.1, `src/rules/us-id-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 5.3% of the year's wages over $16,100 (single, head of household, married at the single rate) or $32,200 (married); no ID W-4 means single | ✅ |
+| Withholding deposits | Monthly by the 20th of the next month; Form 910 | ✅ |
+| Idaho UI (ID_UI, employer, IDOL) | 1% default; employer enters its own rate, on the first $58,300 | ✅ |
+| Quarterly report | Idaho Withholding Payment Voucher (Form 910) | ✅ |
+| Quarterly report | Idaho Quarterly Unemployment Insurance Tax Report | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Idaho Department of Labor (New Hire Reporting) | ✅ |
+
+- ⚠️ Pay runs before July 31, 2026 used tables that subtracted child tax credit allowances; TrailBook uses the current tables for the whole year.
+- ⚠️ No ID W-4 on file: single. Married withholding at the single rate uses the single figures.
+- ⚠️ Deposits: monthly by the 20th of the next month. Semimonthly filers (the 20th and the 5th) and quarterly or annual filers have other dates; the Tax Commission's assigned frequency controls.
+- ⚠️ UI rates are per employer: enter yours from the Idaho Department of Labor rate notice. New employers pay 1.0%.
+- ⚠️ Sales tax: TrailBook doesn't work out Idaho sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Idaho State Tax Commission, EPB00744 (07-23-2026), Table for Percentage Computation Method of Withholding; press release July 31, 2026 (5.3% over $16,100 single / $32,200 married a year ($1,342 / $2,683 monthly); child tax credit allowances no longer apply (Idaho Code 63-3029L)); Idaho State Tax Commission, Withholding Due Dates (monthly filers pay by the 20th of the next month; semimonthly, quarterly and annual filers on their own dates; Form 910); Idaho Department of Labor 2026 UI rates, as summarised by payroll publishers ($58,300 wage base; 1.0% new-employer rate); Idaho Code 44-1502 (minimum wage) ($7.25 minimum wage; no state paid sick leave law); Idaho Code 72-1601 (new hire reporting) (report new hires within 20 days).
+
+
+## Third round of states: us-mi, us-va, us-ma, us-nj 2026.1, released 2026-10-29
+
+The next four by market size and nearness. All four use the `annual_formula` method from the second round, which gained four options for them: a year's tax rounded to the dollar before dividing (Virginia), allowances that are credits off the tax rather than deductions (Massachusetts blindness), a one-time exemption base once any exemption is claimed (Massachusetts $3,400), the employee's Social Security and Medicare coming off wages first up to a yearly cap (Massachusetts $2,000), and a no-tax floor on low annual wages (Massachusetts $8,000). Quarterly deposits and forms can now name a due day and skip the weekend extension (New Jersey's NJ-927, due the 30th with no extension). Greg approved every pack on 2026-10-29 and they are `released`; the ⚠️ notes below stay as the known limits to watch.
+
+Tested against the publications' examples where they give one: Virginia $2,649 semimonthly with 5 exemptions is $109.50. Massachusetts, New Jersey and Michigan were checked by hand against their formulas (for example Massachusetts $1,000 a week, 1 exemption, $76.50 of FICA is $41.94; New Jersey Rate A $1,000 a week with 2 allowances is $27.02).
+
+Michigan city income taxes (Detroit and about 23 other cities) are the main gap: they aren't withheld yet.
+
+### Michigan (us-mi 2026.1, `src/rules/us-mi-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.25% of the year's wages less $5,900 an MI-W4 exemption, divided by the pay periods; no MI-W4 means no exemptions | ✅ |
+| Withholding deposits | Monthly by the 20th of the next month; Form 5080 | ✅ |
+| Michigan UI (MI_UI, employer, UIA) | 2.7% default; employer enters its own rate, on the first $9,000 | ✅ |
+| Quarterly report | Employer's Quarterly Wage/Tax Report (UIA 1028) | ✅ |
+| Minimum wage | $13.73 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 72 hours a year (40 under 11 employees) | ✅ |
+| New-hire report | Within 20 days to Michigan New Hire Operations Center | ✅ |
+
+- ⚠️ michigan.gov answered our requests with 403, so the rate and exemption come from Treasury's figures as reported by Bloomberg Tax and the USDA payroll bulletin, not the Form 446 itself. Worth a look at Form 446 before release.
+- ⚠️ No MI-W4 on file: no exemptions (4.25% of all wages).
+- ⚠️ City income taxes (Detroit 2.4% resident and 1.2% nonresident, Grand Rapids, Lansing and about 20 others) aren't withheld. Employers with staff in those cities must withhold them separately for now.
+- ⚠️ Withholding is paid monthly by the 20th of the next month (Form 5080). Accelerated filers pay on the federal dates; TrailBook keeps every Michigan employer on the monthly date, so an accelerated filer must follow Treasury's notice.
+- ⚠️ UI rates are per employer: enter yours from the UIA rate notice. New employers pay 2.7%. The UI wage base is $9,000 for employers who file on time and owe nothing, $9,500 otherwise; TrailBook uses $9,000.
+- ⚠️ Earned sick time: employers with 11 or more employees, 72 hours a year; 10 or fewer, 40 hours.
+- ⚠️ Sales tax: TrailBook doesn't work out Michigan sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Michigan Treasury, Withholding Tax Information by Calendar Year (2026), as reported by Bloomberg Tax and the USDA NFC payroll bulletin (4.25% rate; $5,900 a personal exemption (up from $5,800)); Michigan Treasury Form 446 (withholding guide), as summarised by payroll publishers (monthly payments due the 20th of the next month on Form 5080; accelerated filers on the federal dates); Michigan UIA 2026 rates, as reported by Bloomberg Tax and EY ($9,000 wage base for employers in good standing ($9,500 if delinquent); 2.7% new-employer rate (5% for new construction employers)); Michigan LEO, minimum wage notice ($13.73 from January 1, 2026 ($15.00 from January 1, 2027)); Earned Sick Time Act (MCL 408.961 et seq., as amended February 2025) (1 hour per 30 worked; employers with 11 or more employees may cap use at 72 hours a year, smaller employers at 40); MCL 421.13j (new hire reporting) (report new hires within 20 days).
+
+### Virginia (us-va 2026.1, `src/rules/us-va-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $8,750, $930 a VA-4 personal exemption and $800 an age 65 or blind exemption, at 2% / 3% / 5% / 5.75% (over $3,000 / $5,000 / $17,000), the year's tax rounded to the dollar, divided by the pay periods | ✅ |
+| Withholding deposits | Monthly by the 25th of the next month; on the federal semiweekly dates when last year's withholding was over $12,000; VA-5 | ✅ |
+| Virginia UI (VA_UI, employer, VEC) | 2.5% default; employer enters its own rate, on the first $8,000 | ✅ |
+| Quarterly report | Employer's Quarterly Tax and Payroll Report (VEC-FC-20/21) | ✅ |
+| Minimum wage | $12.77 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Virginia New Hire Reporting Center | ✅ |
+
+- ⚠️ The annual tax is rounded to the whole dollar before dividing, as in Virginia's own example ($2,628 / 24 = $109.50).
+- ⚠️ VA-4 line 1 is personal exemptions (E1, $930 each); line 2 is exemptions for age 65 or blindness (E2, $800 each). No VA-4 on file: no exemptions.
+- ⚠️ Withholding is paid monthly by the 25th (VA-5), or semi-weekly on the federal dates from $3,000 a quarter (VA-15, with the VA-16 each quarter). TrailBook decides from last year's withholding; Virginia Tax's filing-frequency letter controls. Quarterly filers (under $300 a quarter) can pay monthly.
+- ⚠️ UI rates are per employer: enter yours from the VEC rate notice, including the fund-building and pool charges. New employers pay 2.5%.
+- ⚠️ Virginia has no general paid sick leave law (only home health workers are covered).
+- ⚠️ Sales tax: TrailBook doesn't work out Virginia sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Virginia Tax, Employer Withholding Instructions (2614086 Rev. 10/26), formula for taxable year 2025 and after ($8,750 deduction; $930 per personal exemption (E1) and $800 per age 65 or blind exemption (E2); 2%, 3%, 5%, 5.75% brackets; the $109.50 example); Virginia Tax, Employer Withholding Instructions, filing frequency and Forms VA-5, VA-15, VA-16 (quarterly under $300 a quarter, monthly from $300 to $2,999 (VA-5 due the 25th), semi-weekly from $3,000 a quarter (within 3 banking days of the federal cutoff)); VEC 2026 rates, as summarised by Paychex and Paylocity ($8,000 wage base; 2.5% new-employer rate); Virginia DOLI, minimum wage notice (July 2025) ($12.77 from January 1, 2026); Va. Code 63.2-1946 (new hire reporting) (report new hires within 20 days).
+
+### Massachusetts (us-ma 2026.1, `src/rules/us-ma-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | Wages less this paycheck's Social Security and Medicare (until $2,000 a year), for the year, less $3,400 plus $1,000 an M-4 exemption (when at least one), at 5% (9% over $1,107,750), less $120 for head of household and $110 a blind person; nothing when an exemption is claimed and the year's wages are under $8,000 | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $25,000; M-941 | ✅ |
+| Massachusetts PFML (employee) (MA_PFML_EE, employee, DFML) | 0.46%, on the first $184,500 | ✅ |
+| Massachusetts PFML (employer) (MA_PFML_ER, employer, DFML) | 0% default; employer enters its own rate, on the first $184,500 | ✅ |
+| Massachusetts UI (MA_UI, employer, DUA) | 2.42% default; employer enters its own rate, on the first $15,000 | ✅ |
+| Massachusetts Workforce Training Fund (MA_WTF, employer, DUA) | 0.056%, on the first $15,000 | ✅ |
+| Massachusetts EMAC (MA_EMAC, employer, DUA) | 0% default; employer enters its own rate, on the first $15,000 | ✅ |
+| Quarterly report | Employer's Return of Income Taxes Withheld (M-941) | ✅ |
+| Quarterly report | Massachusetts Employment and Wage Detail Report | ✅ |
+| Quarterly report | Massachusetts PFML Quarterly Contribution Return | ✅ |
+| Minimum wage | $15.00 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours a year | ✅ |
+| New-hire report | Within 14 days to Massachusetts DOR New Hire Reporting | ✅ |
+
+- ⚠️ The Social Security and Medicare subtraction uses this paycheck's amounts until the year's total reaches $2,000. Earlier pay this year is counted from the year-to-date wages, so an employee hired after other payroll in the year starts from the wages TrailBook has.
+- ⚠️ M-4 line 1 is the exemption count. One exemption gives $4,400; each further one $1,000 more. No M-4 on file: no exemptions. Full-time students under $8,000 a year can be marked exempt.
+- ⚠️ TrailBook works the formula over the year, so amounts can differ from the wage-bracket tables by a few cents.
+- ⚠️ Withholding is paid monthly by the 15th; TrailBook uses the 15th for the quarter's last month too, though DOR allows until the M-941 at the end of the next month. Above $25,000 a year DOR wants quarter-monthly payments; TrailBook's nearest schedule is weekly, which pays at least as early.
+- ⚠️ UI rates are per employer: enter yours from the DUA rate notice, including any COVID-19 Recovery Assessment. New employers pay 2.42%.
+- ⚠️ EMAC applies from the employer's fourth year (0.12%, then 0.24%, then 0.34%); new employers leave it blank.
+- ⚠️ PFML: TrailBook withholds the full 0.46% employee share; employers that choose to pay some of it for their employees can't set that yet. Employers with 25 or more covered individuals enter the 0.42% employer share.
+- ⚠️ Earned sick time is paid at 11 or more employees; smaller employers must give the same hours unpaid.
+- ⚠️ Sales tax: TrailBook doesn't work out Massachusetts sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Massachusetts DOR, Circular M (Rev. 12/25), Income Tax Withholding Tables and percentage method from January 1, 2026 (FICA subtraction up to $2,000; exemption factor $4,400 for one, $3,400 plus $1,000 each for more; 5% and 9% above $1,107,750; head of household $120 and blindness $110 a year; no withholding under $8,000 a year when an exemption is claimed); Massachusetts DOR, Form M-941 instructions, as summarised by payroll publishers (monthly payments by the 15th (the quarter's last month with the M-941 at month end) for $1,201 to $25,000 a year; quarter-monthly above $25,000); Massachusetts DUA, Learn about UI contribution rates (mass.gov) (2.42% new-employer rate for 2026 (6.08% for new construction employers); $15,000 wage base (M.G.L. c. 151A, s. 14)); Massachusetts DFML 2026 contribution rates, as reported by Seyfarth and Fisher Phillips (0.88% of wages up to the Social Security wage base ($184,500); employees can be charged up to 0.46%; employers with 25 or more covered individuals pay the other 0.42%); M.G.L. c. 151A, s. 14L (Workforce Training Fund) and s. 14G (EMAC) (0.056% Workforce Training Fund on the UI wage base; EMAC from the employer's fourth year); M.G.L. c. 151, s. 1 (minimum wage); c. 149, s. 148C (earned sick time) ($15.00 minimum wage; 1 hour per 30 worked, up to 40 hours a year (paid at 11 or more employees)); M.G.L. c. 62E, s. 2 (new hire reporting) (report new hires within 14 days).
+
+### New Jersey (us-nj 2026.1, `src/rules/us-nj-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $1,000 an NJ-W4 allowance, through Rate table A (single or filing separately) or B (joint, head of household, surviving spouse), or C, D or E chosen on line 3: 1.5% up to 11.8% over $1 million; no NJ-W4 means Rate A, no allowances | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $9,999.99; NJ-500 | ✅ |
+| New Jersey UI/WF (employee) (NJ_UIWF_EE, employee, NJDOL) | 0.425%, on the first $44,800 | ✅ |
+| New Jersey disability (employee) (NJ_DI_EE, employee, NJDOL) | 0.19%, on the first $171,100 | ✅ |
+| New Jersey family leave (employee) (NJ_FLI_EE, employee, NJDOL) | 0.23%, on the first $171,100 | ✅ |
+| New Jersey UI (NJ_UI_ER, employer, NJDOL) | 2.6825% default; employer enters its own rate, on the first $44,800 | ✅ |
+| New Jersey WF/SWF (employer) (NJ_WF_ER, employer, NJDOL) | 0.1175%, on the first $44,800 | ✅ |
+| New Jersey disability (employer) (NJ_DI_ER, employer, NJDOL) | 0.5% default; employer enters its own rate, on the first $44,800 | ✅ |
+| New Jersey UI, disability and family leave deposits | Quarterly by the 30th of the month after the quarter, the business day before when that's a weekend or holiday; NJ-927 | ✅ |
+| Quarterly report | Employer's Quarterly Report (NJ-927) and WR-30 | ✅ |
+| Minimum wage | $15.92 | ✅ |
+| Minimum wage, Seasonal or fewer than 6 employees | $15.23 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours a year | ✅ |
+| New-hire report | Within 20 days to New Jersey New Hire Reporting Center | ✅ |
+
+- ⚠️ No NJ-W4 on file: Rate A with no allowances. NJ-WT says only that tax must be withheld; Rate A with none is the usual reading.
+- ⚠️ TrailBook works the rate tables over the year, so amounts can differ from the weekly or biweekly tables by a few cents.
+- ⚠️ Employee contributions: UI and WF/SWF together (0.425%) on the first $44,800, and disability (0.19%) and family leave (0.23%) on the first $171,100. They show on the W-2 in box 14.
+- ⚠️ Employer UI and disability rates are per employer: enter yours from the NJDOL rate notice (new employers pay 2.6825% and 0.5%). The 0.1175% WF/SWF share is the same for everyone. Rates run July to June; update them each July.
+- ⚠️ Withholding is paid monthly by the 15th (NJ-500), or weekly for $10,000 or more withheld last year. The NJ-927 and WR-30 are due the 30th after the quarter, and New Jersey doesn't extend that for weekends, so TrailBook moves the date back to the business day before.
+- ⚠️ Minimum wage: pick "Seasonal or fewer than 6 employees" as the work area for those employers ($15.23). Farm and tipped rates aren't modelled.
+- ⚠️ Pennsylvania residents who file an NJ-165 are withheld for Pennsylvania instead; TrailBook doesn't handle the reciprocal agreement yet.
+- ⚠️ Sales tax: TrailBook doesn't work out New Jersey sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: NJ Division of Taxation, NJ-WT (September 2025), Which Rate Table to Use and the allowance value table (Rate A for NJ-W4 boxes 1 and 3, Rate B for boxes 2, 4 and 5, or the table chosen on line 3; $1,000 a year per allowance); NJ Division of Taxation, New Jersey Gross Income Tax Withholding Rate Tables, annual payroll period, Rates A to E (the bracket rates from 1.5% to 11.8%); NJ Division of Taxation, NJ-WT, payment schedules (monthly NJ-500 payments by the 15th; NJ-927 each quarter; weekly payments for $10,000 or more withheld in the prior year); NJDOL, Employer Services rate information (nj.gov/labor), 2026 (worker UI 0.3825%, WF/SWF 0.0425%, DI 0.19%, FLI 0.23%; new employer UI 2.6825%, DI 0.5%, WF/SWF 0.1175%; $44,800 wage base (UI, WF/SWF and employer DI), $171,100 for worker DI and FLI; NJ-927 and WR-30 due the 30th after the quarter with no weekend extension); NJDOL press release, October 1, 2025 ($15.92 minimum wage from January 1, 2026; $15.23 for seasonal employers and those with fewer than 6 employees); N.J.S.A. 34:11D (Earned Sick Leave Law) (1 hour per 30 worked, up to 40 hours a year); N.J.S.A. 2A:17-56.61 (new hire reporting) (report new hires within 20 days).
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
@@ -152,6 +745,10 @@ A worksheet for the business's own CDTFA-401, built on the sales tax report. Tra
 
 Tax-line codes for Schedule C, 1065, 1120S and 1120 are from working knowledge and need checking against the current forms and against each Intuit product's trial-balance import layout.
 
+## Adding a state
+
+Each state is one file in `src/rules` with a `StateRulePack`, added to the registry in `src/rules/index.ts` and to `LIVE` in `src/rules/jurisdictions.ts`. New packs start as `draft`: a business can be set up there and preview payroll, but saved pay runs are refused until Greg reviews the figures here and the pack is `released`. Each new state gets its own section in this file, and its agencies are added to the daily rule watch below.
+
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), the Illinois Department of Revenue (IL-700-T, IL-941) and IDES (UI), the Colorado Department of Revenue (DR 1098, DR 0004), CDLE (UI, minimum wage, COMPS Order) and the FAMLI Division, the North Carolina Department of Revenue (NC-30) and DES, the Georgia Department of Revenue (Employer's Tax Guide) and Department of Labor, the Utah State Tax Commission (Publication 14) and Department of Workforce Services, the Idaho State Tax Commission (EPB00744 and EPB00745) and Department of Labor, Michigan Treasury (Form 446, calendar-year withholding figures), UIA and LEO (minimum wage, Earned Sick Time Act), Virginia Tax (Employer Withholding Instructions), the VEC and DOLI (minimum wage), Massachusetts DOR (Circular M, M-941), DUA (UI, EMAC, Workforce Training Fund) and DFML (PFML rates), the New Jersey Division of Taxation (NJ-WT and rate tables) and NJDOL (UI, disability, family leave, WF/SWF rates each July, minimum wage), the Chicago and Cook County minimum wage notices, and Denver, Edgewater and Boulder minimum wages, plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

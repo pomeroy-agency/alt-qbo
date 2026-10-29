@@ -1,5 +1,5 @@
 import { D, type Dec } from "../core/money.js";
-import type { CaliforniaPayrollRules } from "../rules/types.js";
+import type { CaliforniaPitTables } from "../rules/types.js";
 import { applyBrackets } from "./federal.js";
 
 export interface DE4 {
@@ -15,7 +15,7 @@ export interface DE4 {
 
 /** California PIT withholding for one pay period, EDD Method B (exact calculation). */
 export function californiaWithholding(
-  rules: CaliforniaPayrollRules["pit"],
+  rules: CaliforniaPitTables,
   de4: DE4,
   wagesThisPeriod: Dec,
   periodsPerYear: number,

@@ -699,6 +699,17 @@ describe("prepared payroll forms", () => {
     const approver = await join(s, `approver${Date.now()}${n++}@example.com`, "approver");
     expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { caEmployerAccount: "123-4567" } })).status).toBe(400);
     expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { caEmployerAccount: "123-4567-8" } })).status).toBe(200);
+    const formList = (await call(`${base}/payroll-forms?year=2026`, { cookie: s.cookie })).data;
+    expect(formList.stateEmployerAccount).toBe("12345678");
+    expect(formList.forms.filter((f: any) => f.quarter === 2).map((f: any) => f.slug)).toEqual(["941", "de9"]);
+    // The state's assigned rates go in by tax code; a tax without one is refused.
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { stateRatesPercent: { CA_UI: "6.2" } } })).status).toBe(200);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { stateRatesPercent: { CA_SDI: "1" } } })).status).toBe(422);
+    const emps = (await call(`${base}/employees`, { cookie: s.cookie })).data;
+    expect(emps.stateRates).toEqual({ CA_UI: "0.062" });
+    expect(emps.state).toMatchObject({ code: "CA", name: "California", incomeTax: { method: "ca_method_b", certificate: "DE 4" }, forms: ["DE 9"] });
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { stateRatesPercent: { CA_UI: "" } } })).status).toBe(200);
+    expect((await call(`/api/orgs/${s.orgId}`, { cookie: s.cookie })).data.countries.map((c: any) => c.code)).toEqual(["US", "CA"]);
     await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "12-3456789" } });
     const m = (await call(`${base}/employees`, { cookie: s.cookie, body: {
       ...maya, ssn: "123-45-6789", address: { line1: "1 Main St", city: "Oakland", zip: "94607" },

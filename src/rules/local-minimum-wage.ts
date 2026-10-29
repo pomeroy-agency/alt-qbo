@@ -118,8 +118,14 @@ export function localMinimumWage(city: string | null | undefined, date: string, 
   return out;
 }
 
+/** States whose local minimum wages are listed here; elsewhere no local rate is checked yet. */
+export const LOCAL_MINIMUM_WAGE_STATES: readonly string[] = ["CA"];
+
 /** The local rate if it's above the state's, else null. */
-export function localMinimumAbove(stateMinimum: string, city: string | null | undefined, date: string, employeeCount: number) {
+export function localMinimumAbove(
+  place: { country: string; region?: string | null }, stateMinimum: string, city: string | null | undefined, date: string, employeeCount: number,
+) {
+  if (place.country !== "US" || !LOCAL_MINIMUM_WAGE_STATES.includes(place.region ?? "")) return null;
   const local = localMinimumWage(city, date, employeeCount);
   return local && new D(local.rate).gt(stateMinimum) ? local : null;
 }

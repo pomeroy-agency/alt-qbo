@@ -3,7 +3,7 @@ import { appendAudit } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { getEntry, postJournal, type Actor, type LineInput, type PostedEntry, type Role } from "../core/ledger.js";
 import { resolveRules, type Place } from "../rules/index.js";
-import { calculatePaycheck, type EmployeePayInput, type EmployerSettings, type Paycheck, type TaxLine } from "./gross-to-net.js";
+import { calculatePaycheck, type EmployeePayInput, type EmployerSettings, type Paycheck } from "./gross-to-net.js";
 
 export interface PayRunInput {
   payRunId: string;
@@ -25,6 +25,8 @@ export interface PayRun {
   periodEnd: string;
   payDate: string;
   rulePacks: string[];
+  /** The liability account for each tax code, from the rule packs. */
+  taxAccounts: Record<string, string>;
   paychecks: Paycheck[];
   totals: {
     grossMinor: bigint;
@@ -41,7 +43,11 @@ export interface PayRun {
 /** Preview: computes every paycheck under the rules in force on the pay date. */
 export function calculatePayRun(input: PayRunInput): PayRun {
   const rules = resolveRules(input.place, input.payDate, { requireReleased: input.live });
-  const paychecks = input.employees.map((e) => calculatePaycheck(e, rules, input.employer));
+  const paychecks = input.employees.map((e) => calculatePaycheck(e, rules, input.employer, input.periodEnd));
+  const st = rules.state.payroll;
+  const taxAccounts: Record<string, string> = { ...FEDERAL_TAX_ACCOUNT };
+  if (st.incomeTaxAgency) taxAccounts[st.incomeTaxAgency.code] = st.incomeTaxAgency.account;
+  for (const t of [...(st.localIncomeTaxes ?? []), ...st.taxes]) taxAccounts[t.code] = t.account;
   const byTax: Record<string, bigint> = {};
   const byDeduction: Record<string, bigint> = {};
   for (const p of paychecks) {
@@ -56,6 +62,7 @@ export function calculatePayRun(input: PayRunInput): PayRun {
     periodEnd: input.periodEnd,
     payDate: input.payDate,
     rulePacks: rules.provenance,
+    taxAccounts,
     paychecks,
     totals: {
       grossMinor: sum((p) => p.grossMinor),
@@ -70,7 +77,7 @@ export function calculatePayRun(input: PayRunInput): PayRun {
   };
 }
 
-const TAX_ACCOUNT: Record<TaxLine["code"], string> = {
+const FEDERAL_TAX_ACCOUNT: Record<string, string> = {
   FIT: "fit_payable",
   SS_EE: "fica_payable",
   MEDICARE_EE: "fica_payable",
@@ -78,10 +85,6 @@ const TAX_ACCOUNT: Record<TaxLine["code"], string> = {
   SS_ER: "fica_payable",
   MEDICARE_ER: "fica_payable",
   FUTA: "futa_payable",
-  CA_PIT: "ca_pit_payable",
-  CA_SDI: "ca_sdi_payable",
-  CA_UI: "ca_ui_payable",
-  CA_ETT: "ca_ett_payable",
 };
 
 const DEDUCTION_ACCOUNT: Record<string, string> = {
@@ -106,7 +109,11 @@ export function payRunJournalLines(run: PayRun): LineInput[] {
     debit.push({ account: "reimbursements_payable", debit: run.totals.reimbursementMinor, description: "Expense reimbursements paid with payroll" });
   }
   addCredit("net_pay_clearing", run.totals.netPayMinor);
-  for (const [code, amount] of Object.entries(run.totals.byTax)) addCredit(TAX_ACCOUNT[code as TaxLine["code"]], amount);
+  for (const [code, amount] of Object.entries(run.totals.byTax)) {
+    const account = run.taxAccounts[code];
+    if (!account) throw new LedgerError("INVALID", `no liability account for tax ${code}`);
+    addCredit(account, amount);
+  }
   for (const [kind, amount] of Object.entries(run.totals.byDeduction)) addCredit(DEDUCTION_ACCOUNT[kind]!, amount);
   return [
     ...debit,
