@@ -2376,7 +2376,7 @@ async function billingView() {
       <div class="row" style="justify-content:space-between"><h2>Plan</h2>
         <div class="row seg"><button class="${interval === "month" ? "" : "secondary"}" data-action="bill-interval" data-v="month">Monthly</button><button class="${interval === "year" ? "" : "secondary"}" data-action="bill-interval" data-v="year">Yearly, 2 months free</button></div></div>
       <form data-form="bill-plan" data-interval="${interval}">
-        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, California sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: California overtime, pay stubs, direct-deposit file, prepared 941, DE 9 and W-2 forms.")}</div>
+        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: state and city overtime and minimum-wage checks, pay stubs, direct-deposit file, prepared 941, W-2 and state quarterly forms.")}</div>
         <p class="muted">${b.businesses ? `You have ${b.businesses} business${b.businesses === 1 ? "" : "es"} here.` : "No businesses added yet; the plan price covers the first one."} ${b.status === "trialing" ? "Changes apply right away." : "Moving up to Books + Payroll applies now, charged for the days left; anything else applies at the next renewal."}</p>
         <button type="submit">Save plan</button>
       </form>
