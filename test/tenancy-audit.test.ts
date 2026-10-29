@@ -39,7 +39,7 @@ describe("entity setup from principal place of business", () => {
       withTenant(pool, org.id, (tx) =>
         createEntity(tx, {
           orgId: org.id, legalName: "Gem State LLC", entityType: "llc_single",
-          place: { country: "US", region: "MT" }, firstFiscalYear: 2026, actor: owner,
+          place: { country: "US", region: "NE" }, firstFiscalYear: 2026, actor: owner,
         }),
       ),
     ).rejects.toBeInstanceOf(JurisdictionError);
