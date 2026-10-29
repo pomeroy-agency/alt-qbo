@@ -166,10 +166,13 @@ export function canadaDeductions(federal: CanadaFederalRulePack, province: Provi
   const periodIncome = gross.sub(input.retirementContributions ?? 0).sub(input.unionDues ?? 0).sub(f5);
   const a = clamp0(periodIncome.mul(p).sub(input.northernDeduction ?? 0).sub(input.annualDeductions ?? 0));
 
-  // Credits for CPP/QPP base contributions and EI (and QPIP in Quebec), annualized and capped at the year's maximums.
-  const baseAnnual = D.min(pension.first.mul(plan.baseRate).div(plan.rate).mul(p), pension.maxBase);
-  const eiAnnual = D.min(ei.mul(p), maxEi);
-  const qpipAnnual = quebec ? D.min(qpip.mul(p), new D(federal.qpip.maxInsurableEarnings).mul(federal.qpip.employeeRate)) : zero;
+  // Credits for CPP/QPP base contributions and EI (and QPIP in Quebec): annualized, or the year to date if that's more
+  // (so the year's maximum is used once it's reached, as T4127 recommends), capped at the year's maximums.
+  const baseRatio = new D(plan.baseRate).div(plan.rate);
+  const annualized = (period: Dec, ytd: string | undefined, max: Dec) => D.min(max, D.max(period.mul(p), period.add(ytd ?? 0)));
+  const baseAnnual = annualized(pension.first, input.ytd?.pension, pension.maxBase.div(baseRatio)).mul(baseRatio);
+  const eiAnnual = annualized(ei, input.ytd?.ei, maxEi);
+  const qpipAnnual = quebec ? annualized(qpip, input.ytd?.qpip, new D(federal.qpip.maxInsurableEarnings).mul(federal.qpip.employeeRate)) : zero;
   const contributionCredits = baseAnnual.add(eiAnnual).add(qpipAnnual);
 
   // Step 3: basic federal tax T3 and annual federal tax T1.
@@ -178,7 +181,9 @@ export function canadaDeductions(federal: CanadaFederalRulePack, province: Provi
   const tc = input.federalClaim != null ? new D(input.federalClaim) : federalBasicPersonalAmount(federal, a.add(input.northernDeduction ?? 0));
   const k1 = tc.mul(fRate);
   const k2 = contributionCredits.mul(fRate);
-  const k4 = D.min(a, ft.canadaEmploymentAmount).mul(fRate);
+  // K4: the Canada employment amount, up to the year's employment income before deductions.
+  const employmentIncome = gross.mul(p);
+  const k4 = D.min(employmentIncome, ft.canadaEmploymentAmount).mul(fRate);
   const t3 = clamp0(bracketTax(ft.brackets, a).sub(k1).sub(k2).sub(k4));
   const t1 = quebec ? t3.sub(t3.mul(ft.quebecAbatement)) : t3;
   const federalTax = cents(t1.div(p).add(input.extraFederalTax ?? 0));
@@ -187,7 +192,7 @@ export function canadaDeductions(federal: CanadaFederalRulePack, province: Provi
   const tax = province.incomeTax;
   const t2 = tax.method === "quebec"
     ? quebecAnnualTax(tax, input, gross, pension, plan)
-    : provincialAnnualTax(tax, federal, input, a, contributionCredits);
+    : provincialAnnualTax(tax, federal, input, a, contributionCredits, employmentIncome);
   const provincialTax = cents(clamp0(t2).div(p).add(input.extraProvincialTax ?? 0));
 
   const employerEi = cents(ei.mul(federal.ei.employerMultiple));
@@ -209,20 +214,22 @@ export function canadaDeductions(federal: CanadaFederalRulePack, province: Provi
 }
 
 /** T2: annual provincial tax by T4127 (every province and territory but Quebec). */
-function provincialAnnualTax(tax: T4127ProvincialTax, federal: CanadaFederalRulePack, input: CanadaPayInput, a: Dec, contributionCredits: Dec): Dec {
+function provincialAnnualTax(tax: T4127ProvincialTax, federal: CanadaFederalRulePack, input: CanadaPayInput, a: Dec, contributionCredits: Dec, employmentIncome: Dec): Dec {
   const rate = tax.creditRate;
+  const ni = a.add(input.northernDeduction ?? 0);
   const bpa = tax.basicPersonalAmount === "federal"
-    ? federalBasicPersonalAmount(federal, a.add(input.northernDeduction ?? 0))
+    ? federalBasicPersonalAmount(federal, ni)
     : tax.bpaPhaseOut
-      ? cents(phased(new D(tax.basicPersonalAmount), new D(tax.bpaPhaseOut.min), tax.bpaPhaseOut.from, tax.bpaPhaseOut.to, a))
+      ? cents(phased(new D(tax.basicPersonalAmount), new D(tax.bpaPhaseOut.min), tax.bpaPhaseOut.from, tax.bpaPhaseOut.to, ni))
       : new D(tax.basicPersonalAmount);
   let tcp = input.provincialClaim != null ? new D(input.provincialClaim) : bpa;
   if (tax.claimReplaced && tcp.eq(tax.claimReplaced.old)) tcp = new D(tax.claimReplaced.now);
   const k1p = tcp.mul(rate);
   const k2p = contributionCredits.mul(rate);
-  const k4p = tax.canadaEmploymentAmount ? D.min(a, federal.incomeTax.canadaEmploymentAmount).mul(rate) : zero;
+  const k4p = tax.canadaEmploymentAmount ? D.min(employmentIncome, federal.incomeTax.canadaEmploymentAmount).mul(rate) : zero;
+  // K5P (Alberta): a share of the credits K1P + K2P above a set amount.
   const k5p = tax.supplementalCredit
-    ? clamp0(tcp.add(contributionCredits).sub(tax.supplementalCredit.over)).mul(tax.supplementalCredit.rate)
+    ? clamp0(k1p.add(k2p).sub(tax.supplementalCredit.over)).mul(tax.supplementalCredit.rate)
     : zero;
   const t4 = clamp0(bracketTax(tax.brackets, a).sub(k1p).sub(k2p).sub(k4p).sub(k5p));
 

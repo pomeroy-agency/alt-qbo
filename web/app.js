@@ -237,9 +237,11 @@ async function authView(mode, error = "", notice = "") {
           <label>Password<input name="password" type="password" required minlength="${signup ? 10 : 1}" autocomplete="${signup ? "new-password" : "current-password"}"></label>
           ${signup ? `
             <label>Business or firm name<input name="orgName" required></label>
-            <label>Invite code <span class="muted">(optional, only if someone gave you one)</span><input name="inviteCode" autocomplete="off"></label>
-            <label class="check"><input type="checkbox" name="acceptTerms" required> I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</label>
-            <label class="check"><input type="checkbox" name="adOptOut"> Don't share my sign-up with Google or Meta for ad measurement.</label>` : ""}
+            <label><span>Invite code <span class="hint">(optional, only if someone gave you one)</span></span><input name="inviteCode" autocomplete="off"></label>
+            <div class="consent">
+              <label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+              <label class="check multi muted"><input type="checkbox" name="adOptOut"><span>Don't share my sign-up with Google or Meta for ad measurement.</span></label>
+            </div>` : ""}
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>
         ${!signup && email ? `<p style="margin-top:12px"><a href="#/magic">Email me a sign-in link instead</a> · <a href="#/forgot">Forgot your password?</a></p>` : ""}
@@ -345,10 +347,18 @@ function regionOptions(country) {
     (later.length ? `<optgroup label="Coming soon">${later.map((r) => `<option value="${esc(r.code)}" disabled>${esc(r.name)}</option>`).join("")}</optgroup>` : "");
 }
 
+// How each country reads once all of its regions are covered.
+const EVERY_REGION = { US: "all 50 US states and DC", CA: "all Canadian provinces and territories" };
+
 function liveSummary() {
-  const live = (state.org?.countries ?? []).flatMap((c) => c.regions.filter((r) => r.status === "live").map((r) => r.name));
-  if (!live.length) return "";
-  return live.length === 1 ? `${live[0]} is the only state live so far.` : `Live so far: ${live.join(", ")}.`;
+  const live = [], soon = [];
+  for (const c of state.org?.countries ?? []) {
+    const names = c.regions.filter((r) => r.status === "live").map((r) => r.name);
+    const all = EVERY_REGION[c.code] ?? `all of ${c.name}`;
+    if (c.status !== "live" || !names.length) soon.push(all);
+    else live.push(names.length === c.regions.length ? all : `${names.join(", ")} (${c.name})`);
+  }
+  return [live.length ? `Live in ${live.join(" and ")}.` : "", soon.length ? `Coming soon: ${soon.join(" and ")}.` : ""].filter(Boolean).join(" ");
 }
 
 async function loadEntity(id) {
