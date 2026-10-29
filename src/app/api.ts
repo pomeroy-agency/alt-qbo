@@ -1548,7 +1548,7 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms/prepared", async (re
   return new Response(toJson(form), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
 });
 
-/** The business's own sales tax: its seller's permit, filing frequency and return periods. */
+/** The business's own sales tax: its seller's permit, CDTFA account, filing frequency, start date and return periods. */
 route("GET", "/api/orgs/:org/entities/:entity/sales-tax", async (req, p, ctx) => {
   const today = pacificToday();
   const year = Number(new URL(req.url).searchParams.get("year") ?? today.slice(0, 4));
@@ -1556,17 +1556,20 @@ route("GET", "/api/orgs/:org/entities/:entity/sales-tax", async (req, p, ctx) =>
   return tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
     const settings = await salesTaxSettings(tx, p.entity!);
-    const periods = settings.filingFrequency ? returnPeriods(settings.filingFrequency, year, today) : [];
+    const periods = settings.filingFrequency ? returnPeriods(settings.filingFrequency, year, today, settings.startDate) : [];
     return json({ year, today, ...settings, frequencies: FILING_FREQUENCIES, periods });
   });
 });
 
 route("POST", "/api/orgs/:org/entities/:entity/sales-tax-settings", async (req, p, ctx) => {
   const b = await body(req);
-  for (const k of ["sellerPermit", "filingFrequency"]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
+  for (const k of ["sellerPermit", "cdtfaAccount", "filingFrequency", "startDate"]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
   const saved = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    return setSalesTaxSettings(tx, { orgId: ctx.orgId, entityId: p.entity!, sellerPermit: b.sellerPermit, filingFrequency: b.filingFrequency as FilingFrequency | null | undefined, actor: ctx.actor });
+    return setSalesTaxSettings(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, sellerPermit: b.sellerPermit, cdtfaAccount: b.cdtfaAccount,
+      filingFrequency: b.filingFrequency as FilingFrequency | null | undefined, startDate: b.startDate, actor: ctx.actor,
+    });
   });
   return json(saved);
 });

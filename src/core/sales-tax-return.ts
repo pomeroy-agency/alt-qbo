@@ -24,7 +24,11 @@ const CAN_SET: Role[] = ["owner", "admin", "accountant", "system"];
 
 export interface SalesTaxSettings {
   sellerPermit: string | null;
+  /** The CDTFA account number, which online services and the return ask for. */
+  cdtfaAccount: string | null;
   filingFrequency: FilingFrequency | null;
+  /** The day the seller's permit takes effect. No return is due for a period that ends before it. */
+  startDate: string | null;
 }
 
 export interface ReturnPeriod {
@@ -50,7 +54,7 @@ export interface SalesTaxReturn {
   form: "CDTFA-401";
   title: string;
   period: ReturnPeriod;
-  seller: { name: string; sellerPermit: string | null; address: string | null; filingFrequency: FilingFrequency | null };
+  seller: { name: string; sellerPermit: string | null; cdtfaAccount: string | null; address: string | null; filingFrequency: FilingFrequency | null; startDate: string | null };
   lines: ReturnLine[];
   /** District taxes by place, for Schedule A. */
   districts: { jurisdiction: string; rate: string; taxableMinor: bigint; taxMinor: bigint; districtTaxMinor: bigint }[];
@@ -104,27 +108,38 @@ export function returnPeriod(key: string): ReturnPeriod {
   throw new LedgerError("INVALID", "the period should look like 2027-Q1, 2027-M01, 2027 or FY2027");
 }
 
-/** The return periods that have started in a calendar year, newest first. */
-export function returnPeriods(frequency: FilingFrequency, year: number, today: string): ReturnPeriod[] {
+/**
+ * The return periods that have started in a calendar year, newest first.
+ * With the permit's start date, periods that ended before it are left out:
+ * the first return covers the period the permit starts in.
+ */
+export function returnPeriods(frequency: FilingFrequency, year: number, today: string, startDate?: string | null): ReturnPeriod[] {
   const keys =
     frequency === "monthly" ? Array.from({ length: 12 }, (_, i) => `${year}-M${String(i + 1).padStart(2, "0")}`)
     : frequency === "quarterly" ? [1, 2, 3, 4].map((q) => `${year}-Q${q}`)
     : frequency === "quarterly_prepay" ? [1, 2, 3, 4].map((q) => `${year}-Q${q}P`)
     : frequency === "yearly" ? [String(year)]
     : [`FY${year}`, `FY${year + 1}`];
-  return keys.map(returnPeriod).filter((p) => p.from <= today && p.from.slice(0, 4) <= String(year)).reverse();
+  return keys.map(returnPeriod)
+    .filter((p) => p.from <= today && p.from.slice(0, 4) <= String(year) && (!startDate || p.to >= startDate))
+    .reverse();
 }
 
 export async function salesTaxSettings(tx: Tx, entityId: string): Promise<SalesTaxSettings> {
-  const r = (await tx.query("SELECT seller_permit, sales_tax_filing FROM entities WHERE id = $1", [entityId])).rows[0];
+  const r = (await tx.query(
+    "SELECT seller_permit, cdtfa_account, sales_tax_filing, sales_tax_start::text FROM entities WHERE id = $1", [entityId],
+  )).rows[0];
   if (!r) throw new LedgerError("INVALID", "entity not found");
-  return { sellerPermit: r.seller_permit, filingFrequency: r.sales_tax_filing };
+  return { sellerPermit: r.seller_permit, cdtfaAccount: r.cdtfa_account, filingFrequency: r.sales_tax_filing, startDate: r.sales_tax_start };
 }
 
-/** Records the business's seller's permit and filing frequency, as on the CDTFA's permit letter. */
+/** Records the business's seller's permit, CDTFA account, filing frequency and start date, as the CDTFA issued them. */
 export async function setSalesTaxSettings(
   tx: Tx,
-  input: { orgId: string; entityId: string; sellerPermit?: string | null; filingFrequency?: string | null; actor: Actor },
+  input: {
+    orgId: string; entityId: string; sellerPermit?: string | null; cdtfaAccount?: string | null;
+    filingFrequency?: string | null; startDate?: string | null; actor: Actor;
+  },
 ): Promise<SalesTaxSettings> {
   if (!CAN_SET.includes(input.actor.role)) throw new LedgerError("FORBIDDEN", `role ${input.actor.role} cannot change sales tax settings`);
   const before = await salesTaxSettings(tx, input.entityId);
@@ -136,12 +151,29 @@ export async function setSalesTaxSettings(
     }
     after.sellerPermit = permit || null;
   }
+  if (input.cdtfaAccount !== undefined) {
+    const account = (input.cdtfaAccount ?? "").replace(/\s+/g, "");
+    if (account && !/^[0-9][0-9-]{5,19}$/.test(account)) {
+      throw new LedgerError("INVALID", "enter the CDTFA account number as the CDTFA shows it, digits and dashes only");
+    }
+    after.cdtfaAccount = account || null;
+  }
   if (input.filingFrequency !== undefined) {
     const f = input.filingFrequency || null;
     if (f !== null && !(f in FILING_FREQUENCIES)) throw new LedgerError("INVALID", "pick how often the CDTFA has you file");
     after.filingFrequency = f as FilingFrequency | null;
   }
-  await tx.query("UPDATE entities SET seller_permit = $2, sales_tax_filing = $3 WHERE id = $1", [input.entityId, after.sellerPermit, after.filingFrequency]);
+  if (input.startDate !== undefined) {
+    const d = (input.startDate ?? "").trim() || null;
+    if (d !== null && !(/^\d{4}-\d{2}-\d{2}$/.test(d) && new Date(`${d}T12:00:00Z`).toISOString().slice(0, 10) === d)) {
+      throw new LedgerError("INVALID", "enter the date your seller's permit takes effect, like 2026-12-01");
+    }
+    after.startDate = d;
+  }
+  await tx.query(
+    "UPDATE entities SET seller_permit = $2, cdtfa_account = $3, sales_tax_filing = $4, sales_tax_start = $5 WHERE id = $1",
+    [input.entityId, after.sellerPermit, after.cdtfaAccount, after.filingFrequency, after.startDate],
+  );
   await appendAudit(tx, {
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "entity.sales_tax_settings_set",
     objectType: "entity", objectId: input.entityId, before: { ...before }, after: { ...after }, context: { role: input.actor.role },
@@ -161,7 +193,7 @@ const money = (line: string, label: string, value: bigint | null, note?: string)
 export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey: string): Promise<SalesTaxReturn> {
   const period = returnPeriod(periodKey);
   const ent = (await tx.query(
-    "SELECT legal_name, region, seller_permit, sales_tax_filing, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1",
+    "SELECT legal_name, region, seller_permit, cdtfa_account, sales_tax_filing, sales_tax_start::text, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1",
     [entityId],
   )).rows[0];
   if (!ent) throw new LedgerError("INVALID", "entity not found");
@@ -198,7 +230,16 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
 
   const warnings: string[] = [];
   if (!ent.seller_permit) warnings.push("Record your seller's permit number on this page's settings. It goes at the top of every return");
-  if (!ent.sales_tax_filing) warnings.push("Record how often the CDTFA has you file (it's on your permit), so TrailBook shows the right periods and due dates");
+  if (!ent.cdtfa_account) warnings.push("Record your CDTFA account number on this page's settings. Online services asks for it when you file");
+  if (!ent.sales_tax_filing) warnings.push("Record how often the CDTFA has you file (it's on your account in CDTFA online services), so TrailBook shows the right periods and due dates");
+  const start: string | null = ent.sales_tax_start;
+  if (!start) {
+    warnings.push("Record the date your seller's permit takes effect, so TrailBook knows which return is your first");
+  } else if (start > period.to) {
+    warnings.push(`Your seller's permit takes effect on ${start}, after this period ends, so no return is due for it`);
+  } else if (start > period.from) {
+    warnings.push(`This is your first return. Your permit took effect on ${start}, so it covers ${start} to ${period.to}. Invoices dated earlier in the period are included below; check that none of them charged tax before the permit started`);
+  }
   if (charged > computed) {
     warnings.push(`Your invoices charged ${usdText(charged - computed)} more tax than the return computes, from per-invoice rounding or a rate set by hand. Tax collected from customers is owed to the state even when it is more than the tax due, so pay the extra with this return (Rev. & Tax. Code §6901.5)`);
   }
@@ -246,13 +287,13 @@ export async function prepareSalesTaxReturn(tx: Tx, entityId: string, periodKey:
     title: "California sales and use tax return worksheet",
     period,
     seller: {
-      name: ent.legal_name, sellerPermit: ent.seller_permit, filingFrequency: ent.sales_tax_filing,
+      name: ent.legal_name, sellerPermit: ent.seller_permit, cdtfaAccount: ent.cdtfa_account, filingFrequency: ent.sales_tax_filing, startDate: start,
       address: ent.address_line1 ? `${ent.address_line1}, ${ent.address_city}, ${ent.address_state} ${ent.address_zip}` : null,
     },
     lines,
     districts,
     warnings,
-    fileAt: "File and pay in CDTFA online services by the due date",
+    fileAt: "File and pay in CDTFA online services by the due date, even if you had no sales. A payment made on the due date must be finished before midnight Pacific time (3 p.m. if your account pays by EFT)",
   };
 }
 
