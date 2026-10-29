@@ -43,7 +43,7 @@ const CANADA_REGIONS: [string, string][] = [
 ];
 
 /** Regions launched so far, by country. */
-const LIVE: Record<string, string[]> = { US: ["CA", "TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA", "AZ", "OR", "NY", "IL", "CO", "NC", "GA", "UT", "ID", "MI", "VA", "MA", "NJ", "PA", "OH", "IN", "MD", "MO", "WI", "MN", "SC", "AL", "LA", "KY", "OK", "CT", "IA", "AR", "DE", "KS", "MS", "ND", "MT", "NM", "RI", "VT", "WV", "HI", "NE"] };
+const LIVE: Record<string, string[]> = { US: ["CA", "TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA", "AZ", "OR", "NY", "IL", "CO", "NC", "GA", "UT", "ID", "MI", "VA", "MA", "NJ", "PA", "OH", "IN", "MD", "MO", "WI", "MN", "SC", "AL", "LA", "KY", "OK", "CT", "IA", "AR", "DE", "KS", "MS", "ND", "MT", "NM", "RI", "VT", "WV", "HI", "NE", "ME", "DC"] };
 
 export const COUNTRIES: readonly Country[] = ([
   { code: "US", name: "United States", currency: "USD", regionLabel: "State", status: "live", regions: planned(US_REGIONS) },
