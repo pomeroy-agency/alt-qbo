@@ -6,7 +6,7 @@ import type { StateRulePack } from "./types.js";
 // National Finance Center and payroll publishers on 2026-10-29
 // (www.tax.newmexico.gov isn't reachable from here): nothing up to $8,050
 // single or $16,100 married, then 1.5% rising to 5.9%. Every figure is marked
-// for checking. Drafted 2026-10-29 for Greg's review
+// for checking. Released 2026-10-29 after Greg's review
 // (docs/rule-pack-review.md).
 export const usNewMexico2026: StateRulePack = {
   kind: "state",
@@ -16,7 +16,7 @@ export const usNewMexico2026: StateRulePack = {
   place: { country: "US", region: "NM" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "NM Taxation and Revenue Department, FYI-104 (Rev. 11/2025, for wages paid from January 1, 2026), as reproduced in the USDA NFC bulletin and payroll publishers (not read directly)", covers: "single: nothing to $8,050, 1.5% to $13,550, 3.2% to $24,550, 4.3% to $41,550, 4.7% to $74,550, 4.9% to $218,050, 5.9% above; married: $16,100, $24,100, $41,100, $66,100, $116,100, $331,100; head of household from $12,075 (1.5% to $20,075, $1,739 plus 4.7% from $62,075)", basis: "working-knowledge" },

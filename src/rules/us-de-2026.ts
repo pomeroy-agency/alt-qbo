@@ -3,11 +3,11 @@ import type { StateRulePack } from "./types.js";
 // Delaware 2026. Withholding follows the Division of Revenue's Employer's
 // Guide (Withholding Regulations and Employer's Duties), read from it on
 // 2026-10-29: the year's wages less the $3,250 standard deduction ($6,500
-// married filing jointly), 0% to $2,000 then 2.2% rising to 6.6% over
-// $60,000, less a $110 personal credit for each exemption. Wilmington's
-// 1.25% earned income tax is withheld for employees who live or work there.
-// Delaware Paid Leave contributions started in 2025. Drafted 2026-10-29 for
-// Greg's review (docs/rule-pack-review.md).
+// married filing jointly), 0% to $2,000 then 2.2% rising to 6.6% over $60,000,
+// less a $110 personal credit for each exemption. Wilmington's 1.25% earned
+// income tax is withheld for employees who live or work there. Delaware Paid
+// Leave contributions started in 2025. Released 2026-10-29 after Greg's review
+// (docs/rule-pack-review.md).
 export const usDelaware2026: StateRulePack = {
   kind: "state",
   id: "us-de",
@@ -16,7 +16,7 @@ export const usDelaware2026: StateRulePack = {
   place: { country: "US", region: "DE" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Delaware Division of Revenue, Employer's Guide (Withholding Regulations and Employer's Duties), revenue.delaware.gov", covers: "annualized wages less $3,250 (single or married filing separately) or $6,500 (married filing jointly); the supplemental wage examples ($884 tax on $22,750, $1,153.63 on $27,750, $717 on $19,500 married) that fix the 0% / 2.2% / 3.9% / 4.8% / 5.2% / 5.55% / 6.6% brackets; $110 credit per allowance; quarterly up to $6,020 withheld in the July-June lookback, monthly by the 15th to $33,460, eighth-monthly above", basis: "published" },

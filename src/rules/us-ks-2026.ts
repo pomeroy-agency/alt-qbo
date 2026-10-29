@@ -6,7 +6,7 @@ import type { StateRulePack } from "./types.js";
 // on 2026-10-29: the year's wages less the K-4 allowances ($9,160 for each
 // personal allowance, one at the Single rate and two at the Joint rate, and
 // $2,320 for each other allowance) and the $3,605 / $8,240 zero bracket,
-// then 5.2% and 5.58%. Drafted 2026-10-29 for Greg's review
+// then 5.2% and 5.58%. Released 2026-10-29 after Greg's review
 // (docs/rule-pack-review.md).
 export const usKansas2026: StateRulePack = {
   kind: "state",
@@ -16,7 +16,7 @@ export const usKansas2026: StateRulePack = {
   place: { country: "US", region: "KS" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Kansas Department of Revenue, KW-100 Withholding Tax Guide (Rev. 10-24) and Tables for Percentage Method of Kansas Withholding (wages paid on and after July 1, 2024)", covers: "allowances $9,160 (single), $18,320 (joint), $2,320 per dependent or head of household allowance; zero bracket and 5.2% / 5.58% per payroll period (annual: single $3,605 then $23,000 of 5.2%, married $8,240 then $46,000); the $2,000 semi-monthly married example ($41.44); may round to the dollar; no K-4 means Single with no allowances", basis: "published" },

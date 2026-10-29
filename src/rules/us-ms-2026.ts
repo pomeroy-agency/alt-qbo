@@ -4,8 +4,8 @@ import type { StateRulePack } from "./types.js";
 // Payroll Accounting flowchart for periods in 2026 and Pub 89-700 (revised
 // January 13, 2026), read from them on 2026-10-29: the year's wages less the
 // Form 89-350 exemption and the standard deduction for the status, 0% on the
-// first $10,000 and 4% above, rounded to the dollar each paycheck. Drafted
-// 2026-10-29 for Greg's review (docs/rule-pack-review.md).
+// first $10,000 and 4% above, rounded to the dollar each paycheck. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usMississippi2026: StateRulePack = {
   kind: "state",
   id: "us-ms",
@@ -14,7 +14,7 @@ export const usMississippi2026: StateRulePack = {
   place: { country: "US", region: "MS" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Mississippi DOR, Computer Payroll Accounting - For Periods In 2026 (revised 8/13/25)", covers: "standard deduction $2,300 single or married with both spouses employed, $3,400 head of family, $4,600 married with one spouse employed; taxable income less the 89-350 line 6 exemption; 0% on the first $10,000 and 4% above; round to whole dollars", basis: "published" },

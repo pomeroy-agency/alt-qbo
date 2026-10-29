@@ -1,13 +1,13 @@
 import type { StateRulePack } from "./types.js";
 
 // North Dakota 2026. Withholding follows the Office of State Tax
-// Commissioner's 2026 Income Tax Withholding Rates and Instructions,
-// Section 2 (Forms W-4 for 2020 and after), read from it on 2026-10-29:
-// there's no state certificate; the year's wages through the annual table
-// for the federal W-4 filing status (nothing up to $57,625 single, $57,500
-// married filing jointly or $78,475 head of household, then 1.95% and
-// 2.5%), divided by the paychecks and rounded to the dollar. Drafted
-// 2026-10-29 for Greg's review (docs/rule-pack-review.md).
+// Commissioner's 2026 Income Tax Withholding Rates and Instructions, Section 2
+// (Forms W-4 for 2020 and after), read from it on 2026-10-29: there's no state
+// certificate; the year's wages through the annual table for the federal W-4
+// filing status (nothing up to $57,625 single, $57,500 married filing jointly
+// or $78,475 head of household, then 1.95% and 2.5%), divided by the paychecks
+// and rounded to the dollar. Released 2026-10-29 after Greg's review
+// (docs/rule-pack-review.md).
 export const usNorthDakota2026: StateRulePack = {
   kind: "state",
   id: "us-nd",
@@ -16,7 +16,7 @@ export const usNorthDakota2026: StateRulePack = {
   place: { country: "US", region: "ND" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "North Dakota Office of State Tax Commissioner, 2026 Income Tax Withholding Rates and Instructions, Section 2 (Annual Percentage Method Tables and weekly wage bracket table, Forms W-4 for 2020 and after)", covers: "single 0% to $57,625, 1.95% to $258,450 ($3,916.09), 2.5% above; married filing jointly $57,500 and $168,525 ($2,164.99); head of household $78,475 and $289,675 ($4,118.40); filing status from the federal W-4 Step 1(c), single with no W-4; round to the nearest dollar", basis: "published" },

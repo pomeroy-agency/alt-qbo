@@ -6,8 +6,8 @@ import type { StateRulePack } from "./types.js";
 // Center on 2026-10-29 (tax.wv.gov isn't reachable from here): the year's
 // wages less $2,000 for each IT-104 exemption, through the two-earner table
 // unless the employee claims the one-earner table, 2.11% rising to 4.58%,
-// rounded to the dollar. Every figure is marked for checking. Drafted
-// 2026-10-29 for Greg's review (docs/rule-pack-review.md).
+// rounded to the dollar. Every figure is marked for checking. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usWestVirginia2026: StateRulePack = {
   kind: "state",
   id: "us-wv",
@@ -16,7 +16,7 @@ export const usWestVirginia2026: StateRulePack = {
   place: { country: "US", region: "WV" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "WV Tax Division, IT-100.2A Tables for Percentage Method of Withholding (March 2026), as quoted in search results and the USDA NFC bulletin (not read directly)", covers: "$2,000 per exemption; one-earner: 2.11% to $10,000, 2.81% to $25,000, 3.16% to $40,000, 4.22% to $60,000, 4.58% above; two-earner: 2.11% to $7,500 ($158.25), then 2.81%, 3.16% and 4.22%, 4.58% above $45,000; the two-earner table unless IT-104 line 5 is checked; round to the dollar", basis: "working-knowledge" },

@@ -9,7 +9,7 @@ const topRows = Array.from({ length: 30 }, (_, k) => ({ over: String(94701 + 100
 // year's wages less the $2,470 standard deduction, looked up at the $50
 // midpoint of each $100 below $100,001, times the bracket rate less its
 // adjustment, rounded to the dollar, less $29 for each AR4EC exemption.
-// Drafted 2026-10-29 for Greg's review (docs/rule-pack-review.md).
+// Released 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usArkansas2026: StateRulePack = {
   kind: "state",
   id: "us-ar",
@@ -18,7 +18,7 @@ export const usArkansas2026: StateRulePack = {
   place: { country: "US", region: "AR" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Arkansas DFA, Withholding Tax Formula Method, effective 01/01/2026 (revised May 2026)", covers: "$2,470 standard deduction; $50 midrange lookup below $100,001; 0% to $5,599, 2% less $111.98, 3% less $223.97, 3.4% less $287.97, 3.7% less $367.16 from $26,400, then the adjustment falls $10 for each $100 from $94,701 ($369.90) to $97,601 ($79.90); round the year's tax; $29 credit per AR4EC exemption; the $2,127 monthly example ($36.50)", basis: "published" },

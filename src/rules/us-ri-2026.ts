@@ -6,8 +6,8 @@ import type { StateRulePack } from "./types.js";
 // (tax.ri.gov isn't reachable from here): the year's wages less $1,000 for
 // each RI W-4 exemption (none once wages pass $290,800), 3.75% to $82,050,
 // 4.75% to $186,450 and 5.99% above, one table for every status. TDI comes
-// from the employee. Every figure is marked for checking. Drafted 2026-10-29
-// for Greg's review (docs/rule-pack-review.md).
+// from the employee. Every figure is marked for checking. Released 2026-10-29
+// after Greg's review (docs/rule-pack-review.md).
 export const usRhodeIsland2026: StateRulePack = {
   kind: "state",
   id: "us-ri",
@@ -16,7 +16,7 @@ export const usRhodeIsland2026: StateRulePack = {
   place: { country: "US", region: "RI" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "RI Division of Taxation, 2026 Employer's Income Tax Withholding Tables (percentage method, pages 9 and 10), as quoted in search results and the USDA NFC bulletin (not read directly)", covers: "$1,000 per exemption, none when annual wages are over $290,800; 3.75% to $82,050, 4.75% to $186,450, 5.99% above; one table for all statuses", basis: "working-knowledge" },

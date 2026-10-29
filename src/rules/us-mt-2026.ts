@@ -4,10 +4,10 @@ import type { StateRulePack } from "./types.js";
 // withholding changes (HB 337: 4.7% on taxable income up to $47,500, $95,000
 // joint or $71,250 head of household, 5.65% above) with the federal standard
 // deduction as the zero band, as described in the Department's 2026
-// withholding update and payroll publishers on 2026-10-29
-// (revenue.mt.gov isn't reachable from here, so the Employer's Guide wasn't
-// read). Every figure is marked for checking. Drafted 2026-10-29 for Greg's
-// review (docs/rule-pack-review.md).
+// withholding update and payroll publishers on 2026-10-29 (revenue.mt.gov
+// isn't reachable from here, so the Employer's Guide wasn't read). Every
+// figure is marked for checking. Released 2026-10-29 after Greg's review
+// (docs/rule-pack-review.md).
 export const usMontana2026: StateRulePack = {
   kind: "state",
   id: "us-mt",
@@ -16,7 +16,7 @@ export const usMontana2026: StateRulePack = {
   place: { country: "US", region: "MT" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Montana Department of Revenue, 2026 Withholding Updates news release, as quoted in search results (not read directly)", covers: "tables, Employer's Guide and MW-4 updated December 2025; top rate 5.65% from January 1, 2026; 4.7% on income up to $95,000 joint, $71,250 head of household, $47,500 other; the method now resembles the federal one", basis: "working-knowledge" },

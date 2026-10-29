@@ -7,7 +7,7 @@ import type { StateRulePack } from "./types.js";
 // for each W-4VT allowance, then nothing up to $3,925 single or $11,775
 // married, 3.35%, 6.6%, 7.6% and 8.75%. The Child Care Contribution is
 // shared between employer and employee. Every figure is marked for checking.
-// Drafted 2026-10-29 for Greg's review (docs/rule-pack-review.md).
+// Released 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usVermont2026: StateRulePack = {
   kind: "state",
   id: "us-vt",
@@ -16,7 +16,7 @@ export const usVermont2026: StateRulePack = {
   place: { country: "US", region: "VT" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Vermont Department of Taxes, GB-1210 (2026) percentage method tables, as quoted in search results and the USDA NFC bulletin (not read directly)", covers: "$5,400 per allowance ($103.85 weekly), no standard deduction; single: 3.35% from $3,925, 6.6% from $54,675, 7.6% from $126,775, 8.75% from $260,225; married: $11,775, $96,475, $216,525, $323,825; no W-4VT means single with no allowances", basis: "working-knowledge" },
