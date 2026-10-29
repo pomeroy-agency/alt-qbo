@@ -17,7 +17,7 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "CO", "FL", "GA", "ID", "IL", "MA", "MI", "NC", "NH", "NJ", "NV", "NY", "OH", "OR", "PA", "SD", "TN", "TX", "UT", "VA", "WA", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "CO", "FL", "GA", "ID", "IL", "IN", "MA", "MD", "MI", "MN", "MO", "NC", "NH", "NJ", "NV", "NY", "OH", "OR", "PA", "SC", "SD", "TN", "TX", "UT", "VA", "WA", "WI", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
@@ -515,5 +515,75 @@ describe("Pennsylvania and Ohio, with entered local taxes", () => {
     expect(due("PA_WH", "pa_wh", { PA_WH: 1000000n })).toEqual([["2026-07-20", 30000n], ["2026-08-05", 30000n]]);
     expect(due("PA_WH", "pa_wh", { PA_WH: 3000000n })).toEqual([["2026-07-15", 30000n], ["2026-07-29", 30000n]]);
     expect(due("PA_EIT", "pa_local", {})).toEqual([["2026-10-30", 60000n]]);
+  });
+});
+
+describe("Indiana, Maryland, Missouri, Wisconsin, Minnesota and South Carolina", () => {
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number) =>
+    stateWithholding(pack(region).payroll.incomeTax, { state }, new D(wages), periods).toFixed(2);
+  const lw = (region: string, id: string, state: Parameters<typeof localWithholding>[2], wages: number, periods: number) =>
+    localWithholding(pack(region).payroll.localIncomeTaxes!.find((l) => l.id === id)!, pack(region).payroll.incomeTax, state, new D(wages), periods).toFixed(2);
+
+  it("matches Indiana's Departmental Notice #1 example, county tax included", () => {
+    // $800 a week; 5 personal, 4 dependent and 2 adopted child exemptions; taxable $473.08; county 1%.
+    const state = { allowances: 5, allowances2: 4, allowances3: 2, localities: ["in_county"], localRates: { in_county: "0.01" } };
+    expect(w("IN", state, 800, 52)).toBe("13.96");
+    expect(lw("IN", "in_county", state, 800, 52)).toBe("4.73");
+  });
+
+  it("matches the South Carolina WH-1603F example and drops the deduction with no allowances", () => {
+    expect(w("SC", { allowances: 3 }, 750, 52)).toBe("10.58");
+    expect(w("SC", null, 750, 52)).toBe(new D(39000 - 18230).mul("0.06").add("437.70").div(52).toFixed(2));
+    // The 10% deduction stops at $7,500.
+    expect(w("SC", { allowances: 1 }, 100000, 1)).toBe(new D(100000 - 5000 - 7500 - 18230).mul("0.06").add("437.70").toFixed(2));
+  });
+
+  it("matches Wisconsin's three W-166 examples", () => {
+    expect(w("WI", { filingStatus: "single", allowances: 1 }, 350, 52)).toBe("7.59");
+    expect(w("WI", { filingStatus: "single", allowances: 3 }, 500, 52)).toBe("14.34");
+    expect(w("WI", { filingStatus: "married", allowances: 3 }, 1000, 26)).toBe("22.08");
+    // No deduction left at $73,630 or more (single).
+    expect(w("WI", null, 80000, 1)).toBe(new D(80000 - 25520).mul("0.053").add("1045.04").toFixed(2));
+  });
+
+  it("works Minnesota's computer formula for single and married", () => {
+    expect(w("MN", { filingStatus: "single", allowances: 1 }, 1000, 52)).toBe(new D(46700 - 38010).mul("0.068").add("1782.09").div(52).toFixed(2));
+    expect(w("MN", { filingStatus: "married", allowances: 2 }, 2000, 26)).toBe(new D(52000 - 10600 - 14700).mul("0.0535").div(26).toFixed(2));
+    expect(w("MN", null, 80, 52)).toBe("0.00");
+  });
+
+  it("rounds Missouri to the dollar and takes the Kansas City earnings tax", () => {
+    // $1,000 a week single: $35,900 taxable; $262.86 through 4.5%, then 4.7% over $9,436.
+    expect(w("MO", null, 1000, 52)).toBe("29.00");
+    expect(w("MO", { filingStatus: "married_one_income" }, 1000, 52)).toBe(new D(52000 - 32200 - 9436).mul("0.047").add("262.86").div(52).toDecimalPlaces(0).toFixed(2));
+    expect(lw("MO", "kc", { localities: ["kc"] }, 1000, 52)).toBe("10.00");
+    expect(lw("MO", "stl", {}, 1000, 52)).toBe("0.00");
+  });
+
+  it("adds Maryland's county rate on the state's taxable wages, as in the 3.30% table", () => {
+    const state = { filingStatus: "single", allowances: 1, localities: ["md_county"], localRates: { md_county: "0.033" } };
+    // Weekly: $1,000 less $65.38 standard deduction and $61.54 exemption, at 8.05% combined.
+    const combined = new D(w("MD", state, 1000, 52)).add(lw("MD", "md_county", state, 1000, 52));
+    expect(combined.toFixed(2)).toBe(new D(1000).sub("65.38").sub("61.54").mul("0.0805").toFixed(2));
+    expect(w("MD", { filingStatus: "married" }, 160000, 1)).toBe(new D(150000).mul("0.0475").add(new D(160000 - 3400 - 150000).mul("0.05")).toFixed(2));
+  });
+
+  it("takes Minnesota Paid Leave from the employee and the employer", () => {
+    const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+    const p = calculatePaycheck({ employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "25.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } },
+      { federal, state: pack("MN"), provenance: [] }, {}, "2026-09-04");
+    const amount = (code: string) => p.taxes.find((t) => t.code === code)?.amountMinor;
+    expect([amount("MN_PFL_EE"), amount("MN_PFL_ER"), amount("MN_UI"), amount("MN_WEF")]).toEqual([440n, 440n, 1690n, 100n]);
+  });
+
+  it("dates Indiana's WH-1 on the 20th and Maryland's MW506 on the 15th", () => {
+    const run = (code: string): RunTaxes => ({ payRunId: "r1", payDate: "2026-07-10", byTax: { [code]: 30000n, FIT: 10000n } });
+    const due = (region: string, code: string, kind: string) =>
+      depositSchedule([run(code)], "monthly", { country: "US", region }, {}).filter((d) => d.kind === kind).map((d) => d.dueDate);
+    expect(due("IN", "IN_COUNTY", "in_wh")).toEqual(["2026-08-20"]);
+    expect(due("MD", "MD_WH", "md_wh")).toEqual(["2026-08-17"]);
+    expect(due("WI", "WI_WH", "wi_wh")).toEqual(["2026-08-31"]);
+    expect(due("SC", "SC_WH", "sc_wh")).toEqual(["2026-08-17"]);
   });
 });
