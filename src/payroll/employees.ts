@@ -173,14 +173,19 @@ function cleanStateWithholding(w: EmployeeFields["stateWithholding"]): StateWith
   if (extra && !new D(extra).isZero()) out.additionalWithholding = extra;
   if (w.exempt) out.exempt = true;
   if (w.filingStatus !== undefined && w.filingStatus !== null && w.filingStatus !== "") {
-    if (!["single", "married", "married_single_rate"].includes(w.filingStatus as string)) invalid("pick single or married for state withholding");
-    out.filingStatus = w.filingStatus as StateWithholding["filingStatus"];
+    // The state's own statuses are checked against its pack when the paycheck is worked out; an unknown one falls back to its default.
+    if (typeof w.filingStatus !== "string" || !/^[a-z_]{2,30}$/.test(w.filingStatus)) invalid("pick a filing status for state withholding");
+    out.filingStatus = w.filingStatus as string;
   }
-  if (w.allowances !== undefined && w.allowances !== null && (w.allowances as unknown) !== "") {
-    const n = Number(w.allowances);
+  for (const key of ["allowances", "allowances2"] as const) {
+    const v = w[key];
+    if (v === undefined || v === null || (v as unknown) === "") continue;
+    const n = Number(v);
     if (!Number.isInteger(n) || n < 0 || n > 99) invalid("state allowances should be a whole number from 0 to 99");
-    out.allowances = n;
+    out[key] = n;
   }
+  const dollars = amount(w.allowanceAmount, "the state withholding allowance", { optional: true });
+  if (dollars !== undefined) out.allowanceAmount = dollars;
   if (w.localities !== undefined && w.localities !== null) {
     if (!Array.isArray(w.localities) || w.localities.length > 5 || !w.localities.every((l) => typeof l === "string" && /^[a-z_]{2,20}$/.test(l))) {
       invalid("pick the city taxes from the list");

@@ -16,13 +16,13 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "FL", "NH", "NV", "NY", "OR", "SD", "TN", "TX", "WA", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "CO", "FL", "GA", "ID", "IL", "NC", "NH", "NV", "NY", "OR", "SD", "TN", "TX", "UT", "WA", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
     expect(isLive("US", "CA")).toBe(true);
     expect(isLive("CA", "ON")).toBe(false);
-    expect(isSupportedPlace({ country: "US", region: "ID" })).toBe(false);
+    expect(isSupportedPlace({ country: "US", region: "MT" })).toBe(false);
     expect(() => resolveRules({ country: "CA", region: "BC" }, "2026-06-01")).toThrow(/not launched/);
   });
 
@@ -319,5 +319,68 @@ describe("New York", () => {
     expect(nyc.paidBy).toBe("employee");
     expect(depositAccounts("ny_wh", ny)).toMatchObject({ NY_WH: "ny_wh_payable", NYC_WH: "ny_wh_payable", YON_WH: "ny_wh_payable" });
     expect(ny.version).toBe("2026.2");
+  });
+});
+
+describe("annual-formula states (Illinois, Colorado, North Carolina, Georgia, Utah, Idaho)", () => {
+  const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number, w4Status?: "single_or_mfs" | "mfj" | "hoh") =>
+    stateWithholding(pack(region).payroll.incomeTax, { state, w4Status }, new D(wages), periods).toFixed(2);
+
+  it("matches each publication's own example", () => {
+    // IL-700-T: $800 a week, 2 allowances on line 1 and 2 on line 2.
+    expect(w("IL", { allowances: 2, allowances2: 2 }, 800, 52)).toBe("32.13");
+    // NC-30: single, $450 a week, 2 allowances, rounded to the dollar.
+    expect(w("NC", { filingStatus: "single", allowances: 2 }, 450, 52)).toBe("4.00");
+    // Georgia's guide: married, one income, $2,000 semimonthly, one dependent.
+    expect(w("GA", { filingStatus: "mfj_one", allowances: 1 }, 2000, 24)).toBe("27.03");
+  });
+
+  it("uses the defaults each state sets without its certificate", () => {
+    // Illinois: no allowances. North Carolina and Georgia: single, none.
+    expect(w("IL", null, 1000, 52)).toBe("49.50");
+    expect(w("NC", null, 1000, 52)).toBe(String(Math.round((52000 - 12750) * 0.0409 / 52)) + ".00");
+    expect(w("GA", null, 1000, 52)).toBe(new D(52000 - 15000).mul("0.0499").div(52).toFixed(2));
+    // Colorado: the W-4 status picks $5,500 or $11,000; a DR 0004 amount replaces it, even zero.
+    expect(w("CO", null, 1000, 52, "single_or_mfs")).toBe("39.35");
+    expect(w("CO", null, 1000, 52, "mfj")).toBe("34.69");
+    expect(w("CO", { allowanceAmount: "0" }, 1000, 52, "mfj")).toBe("44.00");
+    // Idaho: 5.3% over $16,100 or $32,200 a year.
+    expect(w("ID", null, 3000, 12)).toBe(new D(36000 - 16100).mul("0.053").div(12).toFixed(2));
+    expect(w("ID", { filingStatus: "married" }, 3000, 12)).toBe(new D(36000 - 32200).mul("0.053").div(12).toFixed(2));
+  });
+
+  it("takes Utah's base allowance off and phases it out by 1.3% of wages over the threshold", () => {
+    expect(w("UT", null, 3000, 12, "single_or_mfs")).toBe("121.96");
+    expect(w("UT", null, 3000, 12, "mfj")).toBe("71.41");
+    // Low wages: the allowance covers all of it.
+    expect(w("UT", null, 700, 12, "single_or_mfs")).toBe("0.00");
+  });
+
+  it("charges Colorado FAMLI to the employee and adds extra withholding and exemptions", () => {
+    const rules: ResolvedRules = { federal, state: pack("CO"), provenance: [] };
+    const weekly: EmployeePayInput = { employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "25.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } };
+    const p = calculatePaycheck(weekly, rules, {}, "2026-09-04");
+    expect(p.taxes.find((t) => t.code === "CO_FAMLI_EE")!.amountMinor).toBe(440n);
+    expect(p.taxes.find((t) => t.code === "CO_WH")!.amountMinor).toBe(3935n);
+    expect(w("CO", { additionalWithholding: "10" }, 1000, 52, "single_or_mfs")).toBe("49.35");
+    expect(w("CO", { exempt: true }, 1000, 52, "single_or_mfs")).toBe("0.00");
+  });
+
+  it("pays withholding monthly, on the federal dates or weekly once last year's withholding was large", () => {
+    const run = (id: string, payDate: string, code: string, amount: number): RunTaxes => ({ payRunId: id, payDate, byTax: { [code]: BigInt(amount * 100), FIT: 10000n } });
+    const due = (region: string, code: string, prior?: number) =>
+      depositSchedule([run("r1", "2026-07-08", code, 300), run("r2", "2026-07-22", code, 300)], "semiweekly", { country: "US", region },
+        prior === undefined ? {} : { priorQuarterlyAverageMinor: BigInt(prior * 100) / 4n })
+        .filter((d) => d.kind === `${region.toLowerCase()}_wh`).map((d) => [d.dueDate, d.amountMinor]);
+    // Monthly by the 15th (August 15, 2026 is a Saturday), the 20th, or the end of the next month.
+    expect(due("IL", "IL_WH")).toEqual([["2026-08-17", 60000n]]);
+    expect(due("ID", "ID_WH")).toEqual([["2026-08-20", 60000n]]);
+    expect(due("UT", "UT_WH")).toEqual([["2026-08-31", 60000n]]);
+    // Illinois over $12,000 last year: the federal semiweekly dates.
+    expect(due("IL", "IL_WH", 20000)).toEqual([["2026-07-15", 30000n], ["2026-07-29", 30000n]]);
+    // Colorado over $50,000: the third business day after the payday's Friday.
+    expect(due("CO", "CO_WH", 60000)).toEqual([["2026-07-15", 30000n], ["2026-07-29", 30000n]]);
   });
 });

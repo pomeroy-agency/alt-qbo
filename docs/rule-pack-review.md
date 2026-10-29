@@ -430,6 +430,170 @@ Sources (2026.2): NYS-50-T-NYC (1/26), New York City Withholding Tax Tables and 
 
 Sources: NYS-50-T-NYS (1/26), New York State Withholding Tax Tables and Methods, pages 14 to 22 (tables A to C (deduction and exemption allowances), Method II tables II-A to II-D, Method III top rates); NYS-50 (Employer's Guide); Tax Law 674 (withholding paid within 3 business days once $700 or more is withheld; otherwise with the NY-45; no IT-2104 means single with no allowances); NYS DOL, Current 2026 Employer Contribution Rate ($17,600 UI wage base; new employers 4.1% (4.025% UI plus 0.075% Re-employment Service Fund)); DFS, 2026 Paid Family Leave rate decision; paidfamilyleave.ny.gov/2026 (0.432% of wages, at most $411.91 a year); Workers' Compensation Law 209 (disability (DBL) employee contribution 0.5% of wages, at most $0.60 a week); Labor Law 652; 12 NYCRR 142 (Proskauer and Seyfarth summaries) ($17.00 minimum wage in NYC, Long Island and Westchester, $16.00 elsewhere; exempt salary $1,275 / $1,199.10 a week); Labor Law 196-b (paid sick leave) (1 hour per 30 worked; 56 hours for 100+ employees, 40 for fewer).
 
+## Second round of states: us-il, us-co, us-nc, us-ga, us-ut, us-id 2026.1 (draft, added 2026-10-29, awaiting Greg's review)
+
+Chosen by market size and nearness to the states already live. All six use the new `annual_formula` withholding method (the year's wages less a standard deduction or allowances, through the rates, less any credit, divided by the pay periods) and the new `monthly_or_larger` deposit rule. A business can be set up in these states and keep its books there; pay runs (previews included) wait until these packs are released.
+
+Where a state changed its rate part-way through 2026 (Georgia from May 11, Utah from June 1, Idaho from July 31), the pack has only the current figures, because a business starting now pays under them. Tested against each publication's own example where it gives one: Illinois $800 a week with 2 + 2 allowances is $32.13, North Carolina single $450 a week with 2 allowances is $4, Georgia married (one income) $2,000 semimonthly with one dependent is $27.03.
+
+### Illinois (us-il 2026.1, `src/rules/us-il-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.95% of wages less $2,925 for each IL-W-4 line 1 allowance and $1,000 for each line 2 allowance, worked out for the year and divided by the pay periods; no IL-W-4 means no allowances | ⚠️ check |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $12,000; IL-941 | ⚠️ check |
+| Illinois UI (IL_UI, employer, IDES) | 3.35% default; employer enters its own rate, on the first $14,250 | ⚠️ check |
+| Quarterly report | Illinois Withholding Income Tax Return (IL-941) | ⚠️ check |
+| Quarterly report | Employer's Contribution and Wage Report (UI-3/40) | ⚠️ check |
+| Minimum wage | $15.00 | ⚠️ check |
+| Minimum wage, Chicago | $16.60; $17.05 from 2026-07-01 | ⚠️ check |
+| Minimum wage, Cook County, outside Chicago | $15.00; $15.40 from 2026-07-01 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | 1 hour per 40 worked, up to 40 hours a year | ⚠️ check |
+| New-hire report | Within 20 days to Illinois Department of Employment Security (New Hire Directory) | ⚠️ check |
+
+- ⚠️ No IL-W-4 on file: no allowances (4.95% of all wages). IL-W-4 line 1 is the basic allowance count, line 2 the additional allowances for age 65 or blindness.
+- ⚠️ The payroll period formula is computed for the year and divided by the pay periods; amounts can differ from the wage-bracket tables by a few cents.
+- ⚠️ Withholding is paid monthly by the 15th of the next month, or semi-weekly on the federal dates once more than $12,000 was withheld in the look-back period. TrailBook uses last calendar year's withholding to decide; IDOR's notice of your payment schedule controls.
+- ⚠️ UI rates are per employer: enter yours from the IDES rate notice. New employers pay 3.35% (3.45% in NAICS sector 56).
+- ⚠️ Minimum wage depends on where the employee works: Chicago and the rest of Cook County have higher rates. Other local rates (Evanston, Oak Park and so on) aren't checked yet.
+- ⚠️ Chicago's own paid leave and paid sick leave ordinance (40 hours each) replaces the state law there; TrailBook tracks the state's 40 hours.
+- ⚠️ Paid leave carries over under the state law but use can be capped at 40 hours a year; TrailBook sets no balance cap.
+- ⚠️ Sales tax: TrailBook doesn't work out Illinois sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: IDOR Booklet IL-700-T (R-12/25), Illinois Withholding Tax Tables, effective January 1, 2026, page 3 (4.95% rate; $2,925 per line 1 allowance and $1,000 per line 2 allowance; automated payroll method and its $32.13 example); IDOR, Form IL-941 instructions (tax.illinois.gov) (monthly payments for $12,000 or less withheld in the look-back period (July to June); semi-weekly above it; IL-941 filed quarterly); IDES 2026 contribution rates, as reported by Bloomberg Tax ($14,250 wage base; 3.35% new-employer rate including the 0.55% fund-building surtax (3.45% for NAICS sector 56)); 820 ILCS 105/4 (Minimum Wage Law); Chicago and Cook County minimum wage notices (July 1, 2026, as reported by ABC7 Chicago) ($15.00 statewide; Chicago $16.60 to June 30 and $17.05 from July 1, 2026; Cook County $15.00 then $15.40); 820 ILCS 192 (Paid Leave for All Workers Act) (1 hour of paid leave per 40 worked, up to 40 hours a year); 820 ILCS 405/1801.1 (new hire reporting) (report new hires to IDES within 20 days).
+
+### Colorado (us-co 2026.1, `src/rules/us-co-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.4% of the year's wages less the DR 0004 line 2 allowance, or without one $11,000 (married filing jointly on the W-4) or $5,500; DR 0004 line 3 extra | ⚠️ check |
+| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $50,000; DR 1094 | ⚠️ check |
+| Colorado FAMLI (employee) (CO_FAMLI_EE, employee, FAMLI) | 0.44%, on the first $184,500 | ⚠️ check |
+| Colorado UI (CO_UI, employer, CDLE) | 3.05% default; employer enters its own rate, on the first $30,600 | ⚠️ check |
+| Colorado FAMLI (employer) (CO_FAMLI_ER, employer, FAMLI) | 0% default; employer enters its own rate, on the first $184,500 | ⚠️ check |
+| Quarterly report | Colorado Wage Withholding Tax Return (DR 1094) | ⚠️ check |
+| Quarterly report | Colorado UI Premium and Wage Report (UITR-1) | ⚠️ check |
+| Quarterly report | Colorado FAMLI Quarterly Wage Report | ⚠️ check |
+| Minimum wage | $15.16 | ⚠️ check |
+| Minimum wage, Denver | $19.29 | ⚠️ check |
+| Minimum wage, Edgewater | $18.17 | ⚠️ check |
+| Minimum wage, City of Boulder or unincorporated Boulder County | $16.82 | ⚠️ check |
+| Exempt salary floor (a year) | $57,784 | ⚠️ check |
+| Overtime | After 40 hours a week or 12 hours a day | ⚠️ check |
+| Paid sick leave | 1 hour per 30 worked, up to 48 hours a year | ⚠️ check |
+| New-hire report | Within 20 days to Colorado State Directory of New Hires | ⚠️ check |
+
+- ⚠️ An employee who files a DR 0004 has their line 2 allowance used as is, including zero. Without one, the allowance follows the federal W-4 status: $11,000 for married filing jointly, $5,500 otherwise; with neither form, single.
+- ⚠️ Deposits: monthly by the 15th; weekly (third business day after the Friday of the payroll week) if more than $50,000 was withheld last year. Quarterly filers (under $7,000 a year) may pay monthly instead. CDOR's assigned frequency controls.
+- ⚠️ UI rates are per employer: enter yours from the CDLE rate notice. New employers pay 3.05%.
+- ⚠️ FAMLI: the employee pays 0.44% (half of 0.88%); employers with 10 or more employees pay the other 0.44% (enter it in payroll settings). TrailBook stops both at the Social Security wage base.
+- ⚠️ Local occupational privilege taxes (Denver $5.75 a month from the employee and $4 from the employer; Aurora, Glendale, Greenwood Village, Sheridan) aren't calculated.
+- ⚠️ Minimum wage depends on where the employee works: Denver, Edgewater and Boulder have higher rates. Choose the area on each employee.
+- ⚠️ Daily overtime: TrailBook pays overtime after 12 hours a day as well as 40 a week; the 12-consecutive-hours rule isn't checked.
+- ⚠️ Sales tax: TrailBook doesn't work out Colorado sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: CDOR, DR 1098 (10/21/25), 2026 Colorado Withholding Worksheet for Employers (4.40% of annualized wages less the DR 0004 line 2 allowance, or $11,000 married filing jointly / $5,500 otherwise from the W-4; single when no certificate; DR 0004 line 3 extra withholding); CDOR, Colorado Wage Withholding Tax Guide (FYI Withholding) (deposits: quarterly under $7,000 a year, monthly by the 15th, weekly over $50,000 (third business day after the Friday of the payroll week); DR 1094 return); CDLE 2026 UI premiums, as summarised by payroll publishers (Eddy, December 2025) ($30,600 wage base; 3.05% new-employer rate including the support surcharge); SB 25-144; FAMLI Division (as summarised by Ogletree and Fisher Phillips) (0.88% FAMLI premium for 2026, up to half from the employee; employers with fewer than 10 employees don't pay the employer half; up to the Social Security wage base); CDLE, 2026 minimum wage; Denver, Boulder and Edgewater ordinances (as reported in January 2026) ($15.16 statewide; Denver $19.29; Edgewater $18.17; City of Boulder and unincorporated Boulder County $16.82); COMPS Order #39 (as summarised by payroll publishers) ($57,784 exempt salary for 2026; overtime after 40 hours a week or 12 hours a day); C.R.S. 8-13.3-401 to 8-13.3-418 (Healthy Families and Workplaces Act) (1 hour of paid sick leave per 30 worked, up to 48 hours a year).
+
+### North Carolina (us-nc 2026.1, `src/rules/us-nc-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.09% of the year's wages less $12,750 (single, married, surviving spouse) or $19,125 (head of household) and $2,500 an NC-4 allowance, per pay period rounded to the dollar; no NC-4 means single, no allowances | ⚠️ check |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $24,000; NC-5 | ⚠️ check |
+| North Carolina UI (NC_UI, employer, DES) | 1% default; employer enters its own rate, on the first $34,200 | ⚠️ check |
+| Quarterly report | North Carolina Quarterly Income Tax Withholding Return (NC-5 / NC-5Q) | ⚠️ check |
+| Quarterly report | Employer's Quarterly Tax and Wage Report (NCUI 101) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to North Carolina New Hire Reporting Program | ⚠️ check |
+
+- ⚠️ No NC-4 on file: single with no allowances.
+- ⚠️ Withholding is rounded to the whole dollar each paycheck, as NC-30 asks, before any extra withholding.
+- ⚠️ Deposits: monthly by the 15th (December's by January 31; TrailBook shows January 15, which is early but safe), or on the federal semiweekly dates once you average $2,000 a month. TrailBook decides from last year's withholding; quarterly filers (under $250 a month) may pay monthly. NCDOR's assigned frequency controls.
+- ⚠️ UI rates are per employer: enter yours from the DES rate notice. New employers pay 1.0%.
+- ⚠️ Sales tax: TrailBook doesn't work out North Carolina sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: NCDOR, NC-30 Income Tax Withholding Tables and Instructions for Employers (2026), sections 15, 16 and 27 and pages 17 to 20 (4.09% withholding rate; $12,750 standard deduction (single, married, surviving spouse) and $19,125 (head of household); $2,500 an allowance; round to the whole dollar; no NC-4 means single with no allowances; monthly NC-5 by the 15th for $250 to $2,000 a month, semiweekly with federal deposits from $2,000 a month); NC DES 2026 UI rates, as summarised by payroll publishers ($34,200 wage base; 1.0% new-employer rate); G.S. 95-25.3 (minimum wage follows the federal $7.25) ($7.25 minimum wage; no state paid sick leave law); G.S. 110-129.2 (new hire reporting) (report new hires within 20 days).
+
+### Georgia (us-ga 2026.1, `src/rules/us-ga-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.99% of the year's wages less $15,000 ($30,000 married filing jointly with one income) and $5,000 a G-4 dependent allowance; no G-4 means single, zero allowances | ⚠️ check |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $50,000; G-7 | ⚠️ check |
+| Georgia UI (GA_UI, employer, GDOL) | 2.7% default; employer enters its own rate, on the first $9,500 | ⚠️ check |
+| Quarterly report | Georgia Quarterly Return for Monthly Payer (G-7) | ⚠️ check |
+| Quarterly report | Employer's Quarterly Tax and Wage Report (DOL-4N) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 10 days to Georgia New Hire Reporting Program | ⚠️ check |
+
+- ⚠️ Pay runs before May 11, 2026 may have used 5.19% and the old deductions; TrailBook uses the current figures for the whole year.
+- ⚠️ G-4 statuses: single (A), married filing jointly with both spouses working (B), married filing jointly with one income (C, the only one with the $30,000 deduction), married filing separately (D), head of household (E).
+- ⚠️ Only dependent allowances are modelled, at $5,000 each. The G-4's additional allowances for itemized deductions aren't, so an employee who claims them is over-withheld; adjust with fewer extra dollars if needed.
+- ⚠️ No G-4 on file: single with zero allowances.
+- ⚠️ Deposits: monthly by the 15th, or semi-weekly on the federal dates above $50,000 in the lookback period. Quarterly and annual payers (under $200 a month) may pay monthly. TrailBook decides from last year's withholding.
+- ⚠️ UI rates are per employer: enter yours (including the 0.06% administrative assessment) from the GDOL rate notice. New employers pay 2.7%.
+- ⚠️ Georgia wants new hires reported within 10 days, faster than most states.
+- ⚠️ Sales tax: TrailBook doesn't work out Georgia sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Georgia DOR, 2026 Employer's Tax Guide (updated June 2026), What's New and Percentage Method (Table E) (4.99% from May 11, 2026 (5.19% before); $30,000 standard deduction married filing jointly with one income, $15,000 for every other status; $5,000 a dependent allowance; no G-4 means single with zero allowances); Georgia DOR, 2026 Employer's Tax Guide, payment schedules (monthly by the 15th for $50,000 or less in the lookback period; semi-weekly above it; G-7 quarterly); GDOL 2026 UI rates, as summarised by payroll publishers ($9,500 wage base; 2.7% new-employer rate (2.64% plus the 0.06% administrative assessment)); O.C.G.A. 34-4-3 (federal $7.25 minimum wage applies to covered employers) ($7.25 minimum wage; no state paid sick leave law); O.C.G.A. 49-5-121 (new hire reporting) (report new hires within 10 days).
+
+### Utah (us-ut 2026.1, `src/rules/us-ut-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 4.45% of wages less a base allowance of $485 single / $970 married a year, which shrinks by 1.3% of wages over $9,348 / $18,696; status from the federal W-4 | ⚠️ check |
+| Withholding deposits | Monthly by the last day of the next month; TC-941 | ⚠️ check |
+| Utah UI (UT_UI, employer, DWS) | 1.2% default; employer enters its own rate, on the first $50,700 | ⚠️ check |
+| Quarterly report | Utah Withholding Return (TC-941) | ⚠️ check |
+| Quarterly report | Employer Quarterly Contribution Report (Form 3) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Utah Department of Workforce Services (New Hire Registry) | ⚠️ check |
+
+- ⚠️ Check against Publication 14 itself: TrailBook's build machines couldn't open it (files.tax.utah.gov is blocked to them), so these figures are from payroll publishers.
+- ⚠️ Payroll periods before June 1, 2026 used 4.5% and a $450 / $900 base allowance; TrailBook uses the current figures for the whole year.
+- ⚠️ Status comes from the federal W-4: married filing jointly uses the married figures; single, married filing separately and head of household use the single ones. W-4 allowances and extra withholding don't change Utah withholding.
+- ⚠️ The base allowance is worked out on the year's wages and divided by the pay periods; Publication 14's per-period figures are rounded, so amounts can differ by a few cents.
+- ⚠️ Deposits: monthly by the end of the next month. Quarterly filers (under $1,000 a month) may pay monthly. The Tax Commission's assigned frequency controls.
+- ⚠️ UI rates are per employer and new-employer rates depend on the industry: enter yours from the DWS rate notice.
+- ⚠️ Sales tax: TrailBook doesn't work out Utah sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Utah Publication 14 (revised for S.B. 60, payroll periods from June 1, 2026), as reported by EY Tax News (May 11, 2026), Bloomberg Tax and the USDA National Finance Center (4.45% rate; base allowance $485 single / $970 married a year; reduced by 1.3% of wages above $9,348 single / $18,696 married; status from the federal W-4 (married only for married filing jointly); no subtraction for W-4 allowances); Utah Tax Commission, withholding filing frequency (monthly payments for $1,000 or more a month, due the last day of the next month; quarterly otherwise; TC-941); Utah DWS 2026 UI rates, as summarised by payroll publishers ($50,700 wage base; new-employer rate by industry (about 1.2%)); Utah Code 34-40-103 (minimum wage follows the federal $7.25) ($7.25 minimum wage; no state paid sick leave law); Utah Code 35A-7-103 (new hire reporting) (report new hires within 20 days).
+
+### Idaho (us-id 2026.1, `src/rules/us-id-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | 5.3% of the year's wages over $16,100 (single, head of household, married at the single rate) or $32,200 (married); no ID W-4 means single | ⚠️ check |
+| Withholding deposits | Monthly by the 20th of the next month; Form 910 | ⚠️ check |
+| Idaho UI (ID_UI, employer, IDOL) | 1% default; employer enters its own rate, on the first $58,300 | ⚠️ check |
+| Quarterly report | Idaho Withholding Payment Voucher (Form 910) | ⚠️ check |
+| Quarterly report | Idaho Quarterly Unemployment Insurance Tax Report | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Idaho Department of Labor (New Hire Reporting) | ⚠️ check |
+
+- ⚠️ Pay runs before July 31, 2026 used tables that subtracted child tax credit allowances; TrailBook uses the current tables for the whole year.
+- ⚠️ No ID W-4 on file: single. Married withholding at the single rate uses the single figures.
+- ⚠️ Deposits: monthly by the 20th of the next month. Semimonthly filers (the 20th and the 5th) and quarterly or annual filers have other dates; the Tax Commission's assigned frequency controls.
+- ⚠️ UI rates are per employer: enter yours from the Idaho Department of Labor rate notice. New employers pay 1.0%.
+- ⚠️ Sales tax: TrailBook doesn't work out Idaho sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Idaho State Tax Commission, EPB00744 (07-23-2026), Table for Percentage Computation Method of Withholding; press release July 31, 2026 (5.3% over $16,100 single / $32,200 married a year ($1,342 / $2,683 monthly); child tax credit allowances no longer apply (Idaho Code 63-3029L)); Idaho State Tax Commission, Withholding Due Dates (monthly filers pay by the 20th of the next month; semimonthly, quarterly and annual filers on their own dates; Form 910); Idaho Department of Labor 2026 UI rates, as summarised by payroll publishers ($58,300 wage base; 1.0% new-employer rate); Idaho Code 44-1502 (minimum wage) ($7.25 minimum wage; no state paid sick leave law); Idaho Code 72-1601 (new hire reporting) (report new hires within 20 days).
+
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
@@ -468,4 +632,4 @@ Each state is one file in `src/rules` with a `StateRulePack`, added to the regis
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), the Illinois Department of Revenue (IL-700-T, IL-941) and IDES (UI), the Colorado Department of Revenue (DR 1098, DR 0004), CDLE (UI, minimum wage, COMPS Order) and the FAMLI Division, the North Carolina Department of Revenue (NC-30) and DES, the Georgia Department of Revenue (Employer's Tax Guide) and Department of Labor, the Utah State Tax Commission (Publication 14) and Department of Workforce Services, the Idaho State Tax Commission (EPB00744 and EPB00745) and Department of Labor, the Chicago and Cook County minimum wage notices, and Denver, Edgewater and Boulder minimum wages, plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

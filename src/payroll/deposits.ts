@@ -248,6 +248,36 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
             quarterly(run, `Quarterly: $${rule.federalTimingAverageOver} or less a quarter withheld on average last year, due with the ${rule.report}`);
           }
         }
+      } else if (rule.schedule === "monthly_or_larger") {
+        // Monthly by default; larger filers (by last year's withholding) on the federal dates or weekly.
+        const large = rule.lookbackOver !== null && (opts.priorQuarterlyAverageMinor ?? 0n) * 4n > minor(rule.lookbackOver);
+        const dueMonthly = (date: string) => onOrNextBusinessDay(rule.dueDay === "last" ? endOfNextMonth(date)
+          : `${endOfNextMonth(date).slice(0, 8)}${String(rule.dueDay).padStart(2, "0")}`, cal);
+        const dueText = rule.dueDay === "last" ? "the end of the next month" : `the ${rule.dueDay}th of the next month`;
+        for (let i = 0; i < sorted.length; i++) {
+          const run = sorted[i]!;
+          bucket.add(run, rule.codes);
+          const next = sorted[i + 1];
+          if (large && rule.largeFiler === "weekly") {
+            const friday = addDays(run.payDate, (5 - weekday(run.payDate) + 7) % 7);
+            if (!next || addDays(next.payDate, (5 - weekday(next.payDate) + 7) % 7) !== friday) {
+              push(bucket.take(rule.kind, `${rule.kind}:w:${friday}`, `Week ending ${friday}`, businessDaysAfter(friday, 3, cal),
+                `Weekly filer (more than $${rule.lookbackOver} withheld last year): by the third business day after the week's Friday`));
+            }
+          } else if (large) {
+            const fed = out.find((d) => d.kind === "federal_941" && d.payRunIds.includes(run.payRunId));
+            const periodEnds = !next || out.find((d) => d.kind === "federal_941" && d.payRunIds.includes(next.payRunId))?.key !== fed?.key;
+            if (fed && periodEnds) {
+              push(bucket.take(rule.kind, `${rule.kind}:${fed.key.replace(/^federal_941:/, "")}`, fed.period, fed.dueDate,
+                `More than $${rule.lookbackOver} withheld last year: due with your federal deposits`));
+            } else if (!fed && (!next || next.payDate.slice(0, 7) !== run.payDate.slice(0, 7))) {
+              push(bucket.take(rule.kind, `${rule.kind}:m:${run.payDate.slice(0, 7)}`, monthName(run.payDate), dueMonthly(run.payDate), `Monthly: by ${dueText}`));
+            }
+          } else if (!next || next.payDate.slice(0, 7) !== run.payDate.slice(0, 7)) {
+            push(bucket.take(rule.kind, `${rule.kind}:m:${run.payDate.slice(0, 7)}`, monthName(run.payDate), dueMonthly(run.payDate),
+              `Monthly: by ${dueText}, with or before the ${rule.report}`));
+          }
+        }
       } else if (rule.schedule === "accumulated_threshold") {
         // New York: once the withholding not yet paid reaches the threshold, it's due within a few business days.
         for (let i = 0; i < sorted.length; i++) {

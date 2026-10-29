@@ -241,7 +241,7 @@ export function calculatePaycheck(
 
   // State income tax, then the state's other wage taxes (SDI, UI, ETT...), all on wages less section 125.
   if (st.incomeTaxAgency) {
-    const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding }, toMajor(incomeTaxWages), periods, fit);
+    const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding, w4Status: input.w4.filingStatus }, toMajor(incomeTaxWages), periods, fit);
     if (st.incomeTax.method === "or_formula" && !input.stateWithholding) {
       warnings.push(`no ${st.incomeTax.certificate} on file: ${stateName} income tax withheld at the flat ${new D(st.incomeTax.noCertificateRate).mul(100)}%`);
     }

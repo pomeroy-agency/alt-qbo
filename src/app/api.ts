@@ -1363,6 +1363,10 @@ function payrollProfile(pack: StateRulePack, today: string) {
     incomeTax: it.method === "none" ? { method: "none" as const }
       : it.method === "elected_percent" ? { method: it.method, certificate: it.certificate, choices: it.choices, defaultRate: it.defaultRate, zeroAllowed: it.zeroAllowed }
       : it.method === "or_formula" ? { method: it.method, certificate: it.certificate, noCertificateRate: it.noCertificateRate }
+      : it.method === "annual_formula" ? {
+        method: it.method, certificate: it.certificate, statuses: it.statuses.map((s) => ({ id: s.id, label: s.label })), noCertificateStatus: it.noCertificateStatus,
+        statusFromW4: Boolean(it.statusFromW4), allowances: it.allowances.map((a) => a.label), dollarAllowance: it.dollarAllowance?.label ?? null,
+      }
       : { method: it.method, certificate: it.certificate },
     localIncomeTaxes: (pack.payroll.localIncomeTaxes ?? []).map((t) => ({ id: t.id, label: t.label })),
     taxLabels: taxLabels(pack),

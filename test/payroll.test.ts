@@ -46,9 +46,11 @@ describe("rule packs", () => {
     expect(() => resolveRules(CA, "2027-01-01")).toThrow(JurisdictionError);
     // Greg signed off the 2026 packs on 2026-10-27.
     expect(resolveRules(CA, "2026-06-15", { requireReleased: true }).federal.status).toBe("released");
+    // Packs added since then stay drafts until Greg signs them off.
+    const drafts = ["us-il", "us-co", "us-nc", "us-ga", "us-ut", "us-id"];
     for (const p of allRulePacks()) {
       expect(p.sources.length).toBeGreaterThan(0);
-      expect(p.status).toBe("released");
+      expect(p.status).toBe(drafts.includes(p.id) ? "draft" : "released");
     }
   });
 
