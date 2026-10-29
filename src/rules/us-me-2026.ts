@@ -13,7 +13,7 @@ function table(rows: [over: number, base: number, rate: number][]) {
 // single, $28,550 married, shrinking to nothing between $102,250 and
 // $177,250 single or $204,550 and $354,550 married), 5.8% rising to 7.15%,
 // plus the 2% surcharge over $1,000,000 ($1,500,000 married), divided by the
-// pay periods and rounded to the dollar. Drafted 2026-10-29 for Greg's
+// pay periods and rounded to the dollar. Released 2026-10-29 after Greg's
 // review (docs/rule-pack-review.md).
 export const usMaine2026: StateRulePack = {
   kind: "state",
@@ -23,7 +23,7 @@ export const usMaine2026: StateRulePack = {
   place: { country: "US", region: "ME" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Maine Revenue Services, 2026 Withholding Tables for Individual Income Tax (revised August 2026), Maine Income Tax Withholding — Percentage Method — 2026", covers: "$5,300 per W-4ME allowance; withholding standard deduction $12,850 single to $102,250 of annual wages and $28,550 married to $204,550, then $12,850 × ($177,250 − wages) / $75,000 and $28,550 × ($354,550 − wages) / $150,000, nothing above; single 5.8% to $27,400, $1,589 + 6.75% to $64,850, $4,117 + 7.15% above; married $54,850 ($3,181) and $129,750 ($8,237); 2% surcharge on annualized income over $1,000,000 single or $1,500,000 married; round to the dollar; Examples 1 to 3 ($0, $32 and $256 a week)", basis: "published" },

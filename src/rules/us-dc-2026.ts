@@ -8,7 +8,7 @@ import type { StateRulePack } from "./types.js";
 // OTR's own withholding instructions aren't reachable from here: the year's
 // wages less $4,150 for each D-4 allowance, through the rate schedule (4%
 // rising to 10.75%), one schedule for every filing status, divided by the
-// pay periods. Drafted 2026-10-29 for Greg's review
+// pay periods. Released 2026-10-29 after Greg's review
 // (docs/rule-pack-review.md).
 export const usDistrictOfColumbia2026: StateRulePack = {
   kind: "state",
@@ -18,7 +18,7 @@ export const usDistrictOfColumbia2026: StateRulePack = {
   place: { country: "US", region: "DC" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "DC Office of Tax and Revenue, DC Individual and Fiduciary Income Tax Rates (tax years beginning after 12/31/2021), otr.cfo.dc.gov, as uploaded", covers: "4% to $10,000; $400 + 6% to $40,000; $2,200 + 6.5% to $60,000; $3,500 + 8.5% to $250,000; $19,650 + 9.25% to $500,000; $42,775 + 9.75% to $1,000,000; $91,525 + 10.75% above", basis: "published" },
