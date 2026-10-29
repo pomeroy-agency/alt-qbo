@@ -6,8 +6,8 @@ import type { StateRulePack } from "./types.js";
 // exemption, at 1.6% to $26,050, 2.99% to $100,000 and 3.4% above. Pay
 // runs before August used the older tables; this pack has only the current
 // formula. City and school district taxes are entered for each employee,
-// since they depend on where the employee works and lives. Draft until Greg
-// reviews it (docs/rule-pack-review.md).
+// since they depend on where the employee works and lives. Released 2026-10-29
+// after Greg's review (docs/rule-pack-review.md).
 export const usOhio2026: StateRulePack = {
   kind: "state",
   id: "us-oh",
@@ -16,7 +16,7 @@ export const usOhio2026: StateRulePack = {
   place: { country: "US", region: "OH" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Ohio Department of Taxation, Employer Withholding Taxes: Optional Computer Formula (Rev. 07/26, effective August 1, 2026)", covers: "$650 an exemption; 1.6% up to $26,050; $416.80 plus 2.99% to $100,000; $2,627.91 plus 3.4% above", basis: "published" },

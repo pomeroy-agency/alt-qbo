@@ -713,9 +713,9 @@ Sources: Massachusetts DOR, Circular M (Rev. 12/25), Income Tax Withholding Tabl
 
 Sources: NJ Division of Taxation, NJ-WT (September 2025), Which Rate Table to Use and the allowance value table (Rate A for NJ-W4 boxes 1 and 3, Rate B for boxes 2, 4 and 5, or the table chosen on line 3; $1,000 a year per allowance); NJ Division of Taxation, New Jersey Gross Income Tax Withholding Rate Tables, annual payroll period, Rates A to E (the bracket rates from 1.5% to 11.8%); NJ Division of Taxation, NJ-WT, payment schedules (monthly NJ-500 payments by the 15th; NJ-927 each quarter; weekly payments for $10,000 or more withheld in the prior year); NJDOL, Employer Services rate information (nj.gov/labor), 2026 (worker UI 0.3825%, WF/SWF 0.0425%, DI 0.19%, FLI 0.23%; new employer UI 2.6825%, DI 0.5%, WF/SWF 0.1175%; $44,800 wage base (UI, WF/SWF and employer DI), $171,100 for worker DI and FLI; NJ-927 and WR-30 due the 30th after the quarter with no weekend extension); NJDOL press release, October 1, 2025 ($15.92 minimum wage from January 1, 2026; $15.23 for seasonal employers and those with fewer than 6 employees); N.J.S.A. 34:11D (Earned Sick Leave Law) (1 hour per 30 worked, up to 40 hours a year); N.J.S.A. 2A:17-56.61 (new hire reporting) (report new hires within 20 days).
 
-## Fourth round of states: us-pa, us-oh 2026.1 (draft, added 2026-10-29, awaiting Greg's review)
+## Fourth round of states: us-pa, us-oh 2026.1, released 2026-10-29
 
-Pennsylvania and Ohio, the first states with local income taxes on most paychecks. Local taxes there depend on where each employee lives and works, across thousands of municipalities and school districts, so TrailBook doesn't hold the rates: the employer ticks each local tax for the employee and enters the rate (Pennsylvania earned income tax, Ohio city and school district taxes) or the yearly amount (Pennsylvania Local Services Tax), and the place, which goes in W-2 box 20. Philadelphia's wage tax has set rates, which drop on July 1, 2026. Three new local methods carry this (`flat_rate`, `employee_rate`, `annual_amount`), and `monthly_or_larger` deposits gain a semi-monthly tier (Pennsylvania, $1,000 to $4,999.99 a quarter) and look back at their own taxes (Philadelphia). Pay runs (previews included) wait until these packs are released.
+Pennsylvania and Ohio, the first states with local income taxes on most paychecks. Local taxes there depend on where each employee lives and works, across thousands of municipalities and school districts, so TrailBook doesn't hold the rates: the employer ticks each local tax for the employee and enters the rate (Pennsylvania earned income tax, Ohio city and school district taxes) or the yearly amount (Pennsylvania Local Services Tax), and the place, which goes in W-2 box 20. Philadelphia's wage tax has set rates, which drop on July 1, 2026. Three new local methods carry this (`flat_rate`, `employee_rate`, `annual_amount`), and `monthly_or_larger` deposits gain a semi-monthly tier (Pennsylvania, $1,000 to $4,999.99 a quarter) and look back at their own taxes (Philadelphia). Greg approved both packs on 2026-10-29 and they are `released`; the ⚠️ notes below stay as the known limits to watch.
 
 Read from the agencies' own pages on 2026-10-29: Pennsylvania's 3.07% and deposit tiers (Department of Revenue), Pennsylvania UC (L&I 2026 highlights), Ohio's August 2026 formula and filing guidelines (Department of Taxation). From payroll publishers: Philadelphia's rates (phila.gov can't be opened from TrailBook's build machines), Ohio UI and the Ohio minimum wage.
 
@@ -723,25 +723,25 @@ Read from the agencies' own pages on 2026-10-29: Pennsylvania's 3.07% and deposi
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | Flat 3.07% of all compensation; no certificate or exemptions | ⚠️ check |
-| Pennsylvania withholding deposits | Monthly by the 15th of the next month; semi-monthly (third business day after the 15th and the month's end) over $3,999.99 last year; on the federal semiweekly dates when last year's withholding was over $19,999.99; W-3 | ⚠️ check |
-| Philadelphia wage tax deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $192,000; Philadelphia wage tax return | ⚠️ check |
-| Pennsylvania local earned income tax (Act 32) (PA_EIT, Local tax collector) | Rate entered for each employee (up to 5%) on wages | ⚠️ check |
-| Pennsylvania Local Services Tax (PA_LST, Local tax collector) | Yearly amount entered for each employee (up to $52.00), spread evenly over the paychecks | ⚠️ check |
-| Lives in Philadelphia (wage tax, resident rate) (PHL_WAGE_R, Philadelphia Revenue) | 3.74%; 3.735% from 2026-07-01 | ⚠️ check |
-| Works in Philadelphia but lives elsewhere (wage tax, nonresident rate) (PHL_WAGE_NR, Philadelphia Revenue) | 3.43%; 3.425% from 2026-07-01 | ⚠️ check |
-| Pennsylvania UC (employee) (PA_UC_EE, employee, L&I) | 0.07%, no wage base | ⚠️ check |
-| Pennsylvania UC (PA_UC, employer, L&I) | 3.822% default; employer enters its own rate, on the first $10,000 | ⚠️ check |
-| Local earned income and services taxes deposits | Quarterly by the 30th of the month after the quarter; Quarterly local tax return | ⚠️ check |
-| Quarterly report | Employer Quarterly Reconciliation Worksheet (PA W-3) | ⚠️ check |
-| Quarterly report | Employer's Report for Unemployment Compensation (UC-2/UC-2A) | ⚠️ check |
-| Quarterly report | Quarterly local earned income and services tax return | ⚠️ check |
-| Quarterly report | Philadelphia Wage Tax quarterly return | ⚠️ check |
-| Minimum wage | $7.25 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | No state law | ⚠️ check |
-| New-hire report | Within 20 days to Pennsylvania New Hire Reporting Program | ⚠️ check |
+| State income tax on wages | Flat 3.07% of all compensation; no certificate or exemptions | ✅ |
+| Pennsylvania withholding deposits | Monthly by the 15th of the next month; semi-monthly (third business day after the 15th and the month's end) over $3,999.99 last year; on the federal semiweekly dates when last year's withholding was over $19,999.99; W-3 | ✅ |
+| Philadelphia wage tax deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $192,000; Philadelphia wage tax return | ✅ |
+| Pennsylvania local earned income tax (Act 32) (PA_EIT, Local tax collector) | Rate entered for each employee (up to 5%) on wages | ✅ |
+| Pennsylvania Local Services Tax (PA_LST, Local tax collector) | Yearly amount entered for each employee (up to $52.00), spread evenly over the paychecks | ✅ |
+| Lives in Philadelphia (wage tax, resident rate) (PHL_WAGE_R, Philadelphia Revenue) | 3.74%; 3.735% from 2026-07-01 | ✅ |
+| Works in Philadelphia but lives elsewhere (wage tax, nonresident rate) (PHL_WAGE_NR, Philadelphia Revenue) | 3.43%; 3.425% from 2026-07-01 | ✅ |
+| Pennsylvania UC (employee) (PA_UC_EE, employee, L&I) | 0.07%, no wage base | ✅ |
+| Pennsylvania UC (PA_UC, employer, L&I) | 3.822% default; employer enters its own rate, on the first $10,000 | ✅ |
+| Local earned income and services taxes deposits | Quarterly by the 30th of the month after the quarter; Quarterly local tax return | ✅ |
+| Quarterly report | Employer Quarterly Reconciliation Worksheet (PA W-3) | ✅ |
+| Quarterly report | Employer's Report for Unemployment Compensation (UC-2/UC-2A) | ✅ |
+| Quarterly report | Quarterly local earned income and services tax return | ✅ |
+| Quarterly report | Philadelphia Wage Tax quarterly return | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Pennsylvania New Hire Reporting Program | ✅ |
 
 - ⚠️ State withholding needs no certificate: 3.07% of all compensation. Residents of New Jersey, Ohio, Indiana, Maryland, Virginia and West Virginia who file a REV-419 are exempt under reciprocity; TrailBook doesn't handle that yet and withholds Pennsylvania tax for them.
 - ⚠️ Local earned income tax (Act 32): for each employee, enter the higher of their home municipality's total resident rate and the work location's nonresident rate (DCED's Municipal Statistics site lists both by PSD code), and their PSD code. Philadelphia residents pay Philadelphia's wage tax instead and have no EIT.
@@ -759,23 +759,23 @@ Sources: PA Department of Revenue, Employer Withholding (pa.gov/agencies/revenue
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | The year's wages less $650 an IT 4 exemption, at 1.6% to $26,050, then $416.80 plus 2.99% to $100,000, then $2,627.91 plus 3.4% (formula effective August 1, 2026); no IT 4 means no exemptions | ⚠️ check |
-| Ohio withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $83,999.99; IT 501 | ⚠️ check |
-| Ohio school district withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $83,999.99; SD 101 | ⚠️ check |
-| Ohio city income tax deposits | Monthly by the 15th of the next month; City withholding return | ⚠️ check |
-| Ohio city tax where they work (OH_CITY, City tax administrator) | Rate entered for each employee (up to 3%) on wages | ⚠️ check |
-| Also withhold for the city they live in (OH_CITY_RES, City tax administrator) | Rate entered for each employee (up to 3%) on wages | ⚠️ check |
-| School district income tax (traditional base) (OH_SD, Ohio Taxation) | Rate entered for each employee (up to 3%) on wages less the state exemptions | ⚠️ check |
-| School district income tax (earned income base) (OH_SD_EI, Ohio Taxation) | Rate entered for each employee (up to 3%) on wages | ⚠️ check |
-| Ohio UI (OH_UI, employer, ODJFS) | 2.85% default; employer enters its own rate, on the first $9,000 | ⚠️ check |
-| Quarterly report | Employer's Contribution Report (JFS-20125) | ⚠️ check |
-| Quarterly report | Ohio municipal withholding return | ⚠️ check |
-| Minimum wage | $11.00 | ⚠️ check |
-| Minimum wage, Gross receipts $405,000 or less | $7.25 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | No state law | ⚠️ check |
-| New-hire report | Within 20 days to Ohio New Hire Reporting Center | ⚠️ check |
+| State income tax on wages | The year's wages less $650 an IT 4 exemption, at 1.6% to $26,050, then $416.80 plus 2.99% to $100,000, then $2,627.91 plus 3.4% (formula effective August 1, 2026); no IT 4 means no exemptions | ✅ |
+| Ohio withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $83,999.99; IT 501 | ✅ |
+| Ohio school district withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $83,999.99; SD 101 | ✅ |
+| Ohio city income tax deposits | Monthly by the 15th of the next month; City withholding return | ✅ |
+| Ohio city tax where they work (OH_CITY, City tax administrator) | Rate entered for each employee (up to 3%) on wages | ✅ |
+| Also withhold for the city they live in (OH_CITY_RES, City tax administrator) | Rate entered for each employee (up to 3%) on wages | ✅ |
+| School district income tax (traditional base) (OH_SD, Ohio Taxation) | Rate entered for each employee (up to 3%) on wages less the state exemptions | ✅ |
+| School district income tax (earned income base) (OH_SD_EI, Ohio Taxation) | Rate entered for each employee (up to 3%) on wages | ✅ |
+| Ohio UI (OH_UI, employer, ODJFS) | 2.85% default; employer enters its own rate, on the first $9,000 | ✅ |
+| Quarterly report | Employer's Contribution Report (JFS-20125) | ✅ |
+| Quarterly report | Ohio municipal withholding return | ✅ |
+| Minimum wage | $11.00 | ✅ |
+| Minimum wage, Gross receipts $405,000 or less | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Ohio New Hire Reporting Center | ✅ |
 
 - ⚠️ Ohio cut its withholding rates from August 1, 2026. Pay runs before then used the older tables; TrailBook uses the current formula for the whole year, so it slightly under-withholds against the old tables for January to July pay dates.
 - ⚠️ IT 4 exemptions are $650 each. No IT 4 on file: no exemptions.

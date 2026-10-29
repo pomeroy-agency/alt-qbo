@@ -6,7 +6,7 @@ import type { StateRulePack } from "./types.js";
 // L&I's 2026 tax highlights. Local taxes: the Act 32 earned income tax and
 // Local Services Tax are entered for each employee, since they depend on
 // where the employee lives and works; Philadelphia's wage tax has its own
-// rates. Draft until Greg reviews it (docs/rule-pack-review.md).
+// rates. Released 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usPennsylvania2026: StateRulePack = {
   kind: "state",
   id: "us-pa",
@@ -15,7 +15,7 @@ export const usPennsylvania2026: StateRulePack = {
   place: { country: "US", region: "PA" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "PA Department of Revenue, Employer Withholding (pa.gov/agencies/revenue)", covers: "flat 3.07% of compensation for resident and nonresident employees; quarterly under $300 a quarter, monthly by the 15th from $300 to $999, semi-monthly within 3 banking days from $1,000 to $4,999.99, semi-weekly on the federal-style Wednesday/Friday dates from $5,000 a quarter ($20,000 a year); W-3 quarterly reconciliation", basis: "published" },
