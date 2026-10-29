@@ -345,10 +345,18 @@ function regionOptions(country) {
     (later.length ? `<optgroup label="Coming soon">${later.map((r) => `<option value="${esc(r.code)}" disabled>${esc(r.name)}</option>`).join("")}</optgroup>` : "");
 }
 
+// How each country reads once all of its regions are covered.
+const EVERY_REGION = { US: "all 50 US states and DC", CA: "all Canadian provinces and territories" };
+
 function liveSummary() {
-  const live = (state.org?.countries ?? []).flatMap((c) => c.regions.filter((r) => r.status === "live").map((r) => r.name));
-  if (!live.length) return "";
-  return live.length === 1 ? `${live[0]} is the only state live so far.` : `Live so far: ${live.join(", ")}.`;
+  const live = [], soon = [];
+  for (const c of state.org?.countries ?? []) {
+    const names = c.regions.filter((r) => r.status === "live").map((r) => r.name);
+    const all = EVERY_REGION[c.code] ?? `all of ${c.name}`;
+    if (c.status !== "live" || !names.length) soon.push(all);
+    else live.push(names.length === c.regions.length ? all : `${names.join(", ")} (${c.name})`);
+  }
+  return [live.length ? `Live in ${live.join(" and ")}.` : "", soon.length ? `Coming soon: ${soon.join(" and ")}.` : ""].filter(Boolean).join(" ");
 }
 
 async function loadEntity(id) {
