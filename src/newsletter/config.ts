@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Mailer } from "../app/mail.js";
 import { claudeNewsletterAI } from "./ai.js";
-import { brevoCampaigns } from "./brevo.js";
+import { brevoCampaigns, brevoDoubleOptIn } from "./brevo.js";
 import type { NewsletterConfig } from "./newsletter.js";
 
 /**
@@ -15,12 +15,15 @@ import type { NewsletterConfig } from "./newsletter.js";
  *   NEWSLETTER_POSTAL_ADDRESS  the address in every footer.
  *   NEWSLETTER_REVIEWER_EMAIL  who hears a draft is ready (default OPS_EMAIL).
  *   NEWSLETTER_REPLY_TO        where replies go (default: the sender).
+ *   NEWSLETTER_OPTIN_TEMPLATE_ID  the Brevo double opt-in email (tagged "optin"); turns on sign-up.
  */
 export function newsletterFromEnv(env: Record<string, string | undefined> = process.env, mailer?: Mailer, appUrl?: string): NewsletterConfig | undefined {
   const orgId = env.NEWSLETTER_ORG_ID?.trim();
   if (!orgId) return undefined;
   const senderId = Number(env.NEWSLETTER_SENDER_ID);
   const listId = Number(env.NEWSLETTER_LIST_ID);
+  const optinTemplate = Number(env.NEWSLETTER_OPTIN_TEMPLATE_ID);
+  const site = (appUrl || "https://app.pomeroyagency.com").replace(/\/+$/, "");
   return {
     orgId,
     ai: env.ANTHROPIC_API_KEY ? claudeNewsletterAI(env.ANTHROPIC_API_KEY.trim()) : undefined,
@@ -30,6 +33,8 @@ export function newsletterFromEnv(env: Record<string, string | undefined> = proc
     reviewerEmail: env.NEWSLETTER_REVIEWER_EMAIL?.trim() || env.OPS_EMAIL?.trim() || undefined,
     mailer,
     appUrl,
+    doubleOptIn: env.BREVO_API_KEY && listId > 0 && optinTemplate > 0
+      ? brevoDoubleOptIn(env.BREVO_API_KEY.trim(), listId, optinTemplate, `${site}/subscribe-done.html`) : undefined,
   };
 }
 

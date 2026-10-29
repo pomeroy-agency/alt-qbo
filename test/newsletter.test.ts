@@ -279,3 +279,39 @@ describe("newsletter settings and access", () => {
     expect((await call(`/api/orgs/${greg.orgId}/newsletter/notes`, { cookie: greg.cookie, body: { kind: "tip", title: "x", body: "y", link: "javascript:alert(1)" } })).status).toBe(400);
   });
 });
+
+describe("newsletter sign-up", () => {
+  const BASE = "https://alt-qbo.test";
+  const post = (body: string | object, type: string, opts: any) => handleApi(new Request(`${BASE}/api/newsletter/subscribe`, {
+    method: "POST", headers: { "content-type": type, origin: "https://www.pomeroyagency.com" }, body: typeof body === "string" ? body : JSON.stringify(body),
+  }), pool, opts);
+
+  it("asks Brevo to confirm, at most once an hour per address, and answers forms with a redirect", async () => {
+    await withSystem(pool, (tx) => tx.query("DELETE FROM newsletter_signups"));
+    const asked: string[] = [];
+    const opts = { appUrl: "https://app.example.com", newsletter: { orgId: "x", doubleOptIn: async (e: string) => { asked.push(e); } } };
+    const form = await post("email=Pat%40Example.com&website=", "application/x-www-form-urlencoded", opts);
+    expect(form.status).toBe(303);
+    expect(form.headers.get("location")).toBe("https://app.example.com/subscribe-check.html");
+    expect((await post({ email: "pat@example.com" }, "application/json", opts)).status).toBe(200);
+    expect(asked).toEqual(["pat@example.com"]);
+    // A bot filling the hidden field is thanked and ignored.
+    expect((await post("email=bot%40example.com&website=spam.example", "application/x-www-form-urlencoded", opts)).status).toBe(303);
+    expect(asked).toEqual(["pat@example.com"]);
+    expect((await post("email=nope", "application/x-www-form-urlencoded", opts)).status).toBe(400);
+    expect((await post({ email: "a@example.com" }, "application/json", { newsletter: { orgId: "x" } })).status).toBe(503);
+  });
+
+  it("subscribes from account sign-up only when the box is ticked", async () => {
+    const asked: string[] = [];
+    const opts: any = { newsletter: { orgId: "x", doubleOptIn: async (e: string) => { asked.push(e); } } };
+    const signup = (email: string, newsletter: boolean) => handleApi(new Request(`${BASE}/api/auth/signup`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ acceptTerms: true, name: "N", email, password: "long-enough-pw", orgName: "Org", newsletter }),
+    }), pool, opts);
+    const a = `nl-yes-${Date.now()}@example.com`, b = `nl-no-${Date.now()}@example.com`;
+    expect((await signup(a, true)).status).toBe(201);
+    expect((await signup(b, false)).status).toBe(201);
+    expect(asked).toEqual([a]);
+  });
+});

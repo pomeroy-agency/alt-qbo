@@ -241,6 +241,7 @@ async function authView(mode, error = "", notice = "") {
             <div class="consent">
               <label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
               <label class="check multi muted"><input type="checkbox" name="adOptOut"><span>Don't share my sign-up with Google or Meta for ad measurement.</span></label>
+              <label class="check multi muted"><input type="checkbox" name="newsletter"><span>Send me TrailBook News: one short email a week on tax, payroll and labor changes, plus a sales tip. We'll email you to confirm; unsubscribe any time.</span></label>
             </div>` : ""}
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>
@@ -3152,7 +3153,7 @@ document.addEventListener("submit", async (ev) => {
     } else if (kind === "login" || kind === "signup") {
       let r;
       try {
-        r = await api(`/api/auth/${kind}`, { body: kind === "signup" ? { ...d, acceptTerms: d.acceptTerms === "on", adOptOut: d.adOptOut === "on", attribution: attribution() } : d });
+        r = await api(`/api/auth/${kind}`, { body: kind === "signup" ? { ...d, acceptTerms: d.acceptTerms === "on", adOptOut: d.adOptOut === "on", newsletter: d.newsletter === "on", attribution: attribution() } : d });
       } catch (err) {
         return authView(kind, err.message);
       }
