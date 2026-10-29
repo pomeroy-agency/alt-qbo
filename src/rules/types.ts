@@ -215,7 +215,19 @@ export type LocalIncomeTaxRules =
   /** Yonkers residents: a share of the state withholding worked out before any extra withholding. */
   | { method: "share_of_state"; share: string }
   /** Yonkers nonresidents: a rate on wages less an exclusion by wage level; no tax where the exclusion is null. */
-  | { method: "exclusion_percent"; rate: string; exclusions: Record<PayPeriodKey, { from: string; exclusion: string | null }[]> };
+  | { method: "exclusion_percent"; rate: string; exclusions: Record<PayPeriodKey, { from: string; exclusion: string | null }[]> }
+  /** A set rate on wages, which can change part-way through the year (Philadelphia wage tax). */
+  | { method: "flat_rate"; rate: string; rateChanges?: { from: string; rate: string }[] }
+  /**
+   * A rate the employer looks up for each employee and enters (Pennsylvania
+   * earned income tax, Ohio city and school district taxes), on wages or on
+   * the year's wages less the state's exemptions spread over the pay periods
+   * (Ohio traditional-base school districts). `placeLabel` asks for the
+   * place's name or code, which goes in W-2 box 20.
+   */
+  | { method: "employee_rate"; base: "wages" | "less_state_exemptions"; maxRate: string; rateLabel: string; placeLabel: string; hint: string }
+  /** A yearly amount the employer enters, withheld evenly over the pay periods (Pennsylvania Local Services Tax, up to $52). */
+  | { method: "annual_amount"; maxAnnual: string; amountLabel: string; placeLabel: string; hint: string };
 
 /** A city income tax withheld for employees who live (or work) there; each employee says which apply. */
 export interface LocalIncomeTax {
@@ -309,7 +321,11 @@ export type StateDepositRule =
    * semiweekly dates, or for "weekly" by the third business day after the
    * Friday of the payday's week (Colorado). Null: always monthly.
    */
-  | (DepositRuleBase & { schedule: "monthly_or_larger"; lookbackOver: string | null; largeFiler: "federal" | "weekly"; dueDay: number | "last"; report: string });
+  | (DepositRuleBase & {
+      schedule: "monthly_or_larger"; lookbackOver: string | null; largeFiler: "federal" | "weekly"; dueDay: number | "last"; report: string;
+      /** Between this and `lookbackOver`, half-monthly: due the third business day after the 15th and the month's end (Pennsylvania, Philadelphia). */
+      semimonthlyOver?: string;
+    });
 
 /** A quarterly return or wage report the state wants. */
 export interface StateQuarterlyForm {
