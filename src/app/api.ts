@@ -1424,7 +1424,7 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
     const pack = statePackFor({ country: ent.country, region: ent.region }, pacificToday());
     for (const [code, v] of Object.entries(rates)) {
       const percent = typeof v === "string" && v.trim() ? v.trim() : null;
-      if (percent !== null && !/^\d{1,2}(\.\d{1,3})?$/.test(percent)) throw new HttpError(400, "the rate should be a percentage like 3.4");
+      if (percent !== null && !/^\d{1,2}(\.\d{1,4})?$/.test(percent)) throw new HttpError(400, "the rate should be a percentage like 3.4");
       await setStateTaxRate(tx, { orgId: ctx.orgId, entityId: p.entity!, code, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
     }
     if (account !== undefined) {

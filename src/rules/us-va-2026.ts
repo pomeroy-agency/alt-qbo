@@ -1,11 +1,11 @@
 import type { StateRulePack } from "./types.js";
 
 // Virginia 2026. Withholding follows the formula in Virginia Tax's Employer
-// Withholding Instructions (2614086 Rev. 10/26), read from the booklet itself
-// on 2026-10-29: the year's wages less $8,750, $930 for each personal
+// Withholding Instructions (2614086 Rev. 10/26), read from the booklet
+// itself on 2026-10-29: the year's wages less $8,750, $930 for each personal
 // exemption and $800 for each age 65 or blind exemption, through the 2% to
-// 5.75% rates, rounded to the dollar and divided by the pay periods. Draft
-// until Greg reviews it (docs/rule-pack-review.md).
+// 5.75% rates, rounded to the dollar and divided by the pay periods.
+// Released 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usVirginia2026: StateRulePack = {
   kind: "state",
   id: "us-va",
@@ -14,7 +14,7 @@ export const usVirginia2026: StateRulePack = {
   place: { country: "US", region: "VA" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Virginia Tax, Employer Withholding Instructions (2614086 Rev. 10/26), formula for taxable year 2025 and after", covers: "$8,750 deduction; $930 per personal exemption (E1) and $800 per age 65 or blind exemption (E2); 2%, 3%, 5%, 5.75% brackets; the $109.50 example", basis: "published" },
@@ -54,7 +54,7 @@ export const usVirginia2026: StateRulePack = {
       },
       { kind: "va_ui", codes: ["VA_UI"], agency: "VEC", what: "Virginia UI", where: "VEC Employer Services", schedule: "quarterly", report: "VEC-FC-20/21" },
     ],
-    employerAccount: { label: "VEC employer account number", hint: "The number on your VEC notices. It goes on the VEC-FC-20. Withholding uses your Virginia Tax account number.", pattern: "^[0-9 -]{6,12}$" },
+    employerAccount: { label: "VEC employer account number", hint: "The number on your VEC notices. It goes on the VEC-FC-20. Withholding uses your Virginia Tax account number.", pattern: "^[0-9]{6,10}$" },
     accounts: [
       { code: "2340", name: "Virginia income tax payable", systemKey: "va_wh_payable" },
       { code: "2350", name: "Virginia UI payable", systemKey: "va_ui_payable" },

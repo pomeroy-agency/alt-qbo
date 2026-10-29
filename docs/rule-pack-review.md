@@ -430,9 +430,9 @@ Sources (2026.2): NYS-50-T-NYC (1/26), New York City Withholding Tax Tables and 
 
 Sources: NYS-50-T-NYS (1/26), New York State Withholding Tax Tables and Methods, pages 14 to 22 (tables A to C (deduction and exemption allowances), Method II tables II-A to II-D, Method III top rates); NYS-50 (Employer's Guide); Tax Law 674 (withholding paid within 3 business days once $700 or more is withheld; otherwise with the NY-45; no IT-2104 means single with no allowances); NYS DOL, Current 2026 Employer Contribution Rate ($17,600 UI wage base; new employers 4.1% (4.025% UI plus 0.075% Re-employment Service Fund)); DFS, 2026 Paid Family Leave rate decision; paidfamilyleave.ny.gov/2026 (0.432% of wages, at most $411.91 a year); Workers' Compensation Law 209 (disability (DBL) employee contribution 0.5% of wages, at most $0.60 a week); Labor Law 652; 12 NYCRR 142 (Proskauer and Seyfarth summaries) ($17.00 minimum wage in NYC, Long Island and Westchester, $16.00 elsewhere; exempt salary $1,275 / $1,199.10 a week); Labor Law 196-b (paid sick leave) (1 hour per 30 worked; 56 hours for 100+ employees, 40 for fewer).
 
-## Second round of states: us-il, us-co, us-nc, us-ga, us-ut, us-id 2026.1 (draft, added 2026-10-29, awaiting Greg's review)
+## Second round of states: us-il, us-co, us-nc, us-ga, us-ut, us-id 2026.1, released 2026-10-29
 
-Chosen by market size and nearness to the states already live. All six use the new `annual_formula` withholding method (the year's wages less a standard deduction or allowances, through the rates, less any credit, divided by the pay periods) and the new `monthly_or_larger` deposit rule. A business can be set up in these states and keep its books there; pay runs (previews included) wait until these packs are released.
+Chosen by market size and nearness to the states already live. All six use the new `annual_formula` withholding method (the year's wages less a standard deduction or allowances, through the rates, less any credit, divided by the pay periods) and the new `monthly_or_larger` deposit rule. Greg approved every pack on 2026-10-29 and they are `released`; the ⚠️ notes below stay as the known limits to watch.
 
 Where a state changed its rate part-way through 2026 (Georgia from May 11, Utah from June 1, Idaho from July 31), the pack has only the current figures, because a business starting now pays under them. Tested against each publication's own example where it gives one: Illinois $800 a week with 2 + 2 allowances is $32.13, North Carolina single $450 a week with 2 allowances is $4, Georgia married (one income) $2,000 semimonthly with one dependent is $27.03.
 
@@ -440,18 +440,18 @@ Where a state changed its rate part-way through 2026 (Georgia from May 11, Utah 
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | 4.95% of wages less $2,925 for each IL-W-4 line 1 allowance and $1,000 for each line 2 allowance, worked out for the year and divided by the pay periods; no IL-W-4 means no allowances | ⚠️ check |
-| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $12,000; IL-941 | ⚠️ check |
-| Illinois UI (IL_UI, employer, IDES) | 3.35% default; employer enters its own rate, on the first $14,250 | ⚠️ check |
-| Quarterly report | Illinois Withholding Income Tax Return (IL-941) | ⚠️ check |
-| Quarterly report | Employer's Contribution and Wage Report (UI-3/40) | ⚠️ check |
-| Minimum wage | $15.00 | ⚠️ check |
-| Minimum wage, Chicago | $16.60; $17.05 from 2026-07-01 | ⚠️ check |
-| Minimum wage, Cook County, outside Chicago | $15.00; $15.40 from 2026-07-01 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | 1 hour per 40 worked, up to 40 hours a year | ⚠️ check |
-| New-hire report | Within 20 days to Illinois Department of Employment Security (New Hire Directory) | ⚠️ check |
+| State income tax on wages | 4.95% of wages less $2,925 for each IL-W-4 line 1 allowance and $1,000 for each line 2 allowance, worked out for the year and divided by the pay periods; no IL-W-4 means no allowances | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $12,000; IL-941 | ✅ |
+| Illinois UI (IL_UI, employer, IDES) | 3.35% default; employer enters its own rate, on the first $14,250 | ✅ |
+| Quarterly report | Illinois Withholding Income Tax Return (IL-941) | ✅ |
+| Quarterly report | Employer's Contribution and Wage Report (UI-3/40) | ✅ |
+| Minimum wage | $15.00 | ✅ |
+| Minimum wage, Chicago | $16.60; $17.05 from 2026-07-01 | ✅ |
+| Minimum wage, Cook County, outside Chicago | $15.00; $15.40 from 2026-07-01 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 40 worked, up to 40 hours a year | ✅ |
+| New-hire report | Within 20 days to Illinois Department of Employment Security (New Hire Directory) | ✅ |
 
 - ⚠️ No IL-W-4 on file: no allowances (4.95% of all wages). IL-W-4 line 1 is the basic allowance count, line 2 the additional allowances for age 65 or blindness.
 - ⚠️ The payroll period formula is computed for the year and divided by the pay periods; amounts can differ from the wage-bracket tables by a few cents.
@@ -468,22 +468,22 @@ Sources: IDOR Booklet IL-700-T (R-12/25), Illinois Withholding Tax Tables, effec
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | 4.4% of the year's wages less the DR 0004 line 2 allowance, or without one $11,000 (married filing jointly on the W-4) or $5,500; DR 0004 line 3 extra | ⚠️ check |
-| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $50,000; DR 1094 | ⚠️ check |
-| Colorado FAMLI (employee) (CO_FAMLI_EE, employee, FAMLI) | 0.44%, on the first $184,500 | ⚠️ check |
-| Colorado UI (CO_UI, employer, CDLE) | 3.05% default; employer enters its own rate, on the first $30,600 | ⚠️ check |
-| Colorado FAMLI (employer) (CO_FAMLI_ER, employer, FAMLI) | 0% default; employer enters its own rate, on the first $184,500 | ⚠️ check |
-| Quarterly report | Colorado Wage Withholding Tax Return (DR 1094) | ⚠️ check |
-| Quarterly report | Colorado UI Premium and Wage Report (UITR-1) | ⚠️ check |
-| Quarterly report | Colorado FAMLI Quarterly Wage Report | ⚠️ check |
-| Minimum wage | $15.16 | ⚠️ check |
-| Minimum wage, Denver | $19.29 | ⚠️ check |
-| Minimum wage, Edgewater | $18.17 | ⚠️ check |
-| Minimum wage, City of Boulder or unincorporated Boulder County | $16.82 | ⚠️ check |
-| Exempt salary floor (a year) | $57,784 | ⚠️ check |
-| Overtime | After 40 hours a week or 12 hours a day | ⚠️ check |
-| Paid sick leave | 1 hour per 30 worked, up to 48 hours a year | ⚠️ check |
-| New-hire report | Within 20 days to Colorado State Directory of New Hires | ⚠️ check |
+| State income tax on wages | 4.4% of the year's wages less the DR 0004 line 2 allowance, or without one $11,000 (married filing jointly on the W-4) or $5,500; DR 0004 line 3 extra | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $50,000; DR 1094 | ✅ |
+| Colorado FAMLI (employee) (CO_FAMLI_EE, employee, FAMLI) | 0.44%, on the first $184,500 | ✅ |
+| Colorado UI (CO_UI, employer, CDLE) | 3.05% default; employer enters its own rate, on the first $30,600 | ✅ |
+| Colorado FAMLI (employer) (CO_FAMLI_ER, employer, FAMLI) | 0% default; employer enters its own rate, on the first $184,500 | ✅ |
+| Quarterly report | Colorado Wage Withholding Tax Return (DR 1094) | ✅ |
+| Quarterly report | Colorado UI Premium and Wage Report (UITR-1) | ✅ |
+| Quarterly report | Colorado FAMLI Quarterly Wage Report | ✅ |
+| Minimum wage | $15.16 | ✅ |
+| Minimum wage, Denver | $19.29 | ✅ |
+| Minimum wage, Edgewater | $18.17 | ✅ |
+| Minimum wage, City of Boulder or unincorporated Boulder County | $16.82 | ✅ |
+| Exempt salary floor (a year) | $57,784 | ✅ |
+| Overtime | After 40 hours a week or 12 hours a day | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 48 hours a year | ✅ |
+| New-hire report | Within 20 days to Colorado State Directory of New Hires | ✅ |
 
 - ⚠️ An employee who files a DR 0004 has their line 2 allowance used as is, including zero. Without one, the allowance follows the federal W-4 status: $11,000 for married filing jointly, $5,500 otherwise; with neither form, single.
 - ⚠️ Deposits: monthly by the 15th; weekly (third business day after the Friday of the payroll week) if more than $50,000 was withheld last year. Quarterly filers (under $7,000 a year) may pay monthly instead. CDOR's assigned frequency controls.
@@ -500,16 +500,16 @@ Sources: CDOR, DR 1098 (10/21/25), 2026 Colorado Withholding Worksheet for Emplo
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | 4.09% of the year's wages less $12,750 (single, married, surviving spouse) or $19,125 (head of household) and $2,500 an NC-4 allowance, per pay period rounded to the dollar; no NC-4 means single, no allowances | ⚠️ check |
-| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $24,000; NC-5 | ⚠️ check |
-| North Carolina UI (NC_UI, employer, DES) | 1% default; employer enters its own rate, on the first $34,200 | ⚠️ check |
-| Quarterly report | North Carolina Quarterly Income Tax Withholding Return (NC-5 / NC-5Q) | ⚠️ check |
-| Quarterly report | Employer's Quarterly Tax and Wage Report (NCUI 101) | ⚠️ check |
-| Minimum wage | $7.25 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | No state law | ⚠️ check |
-| New-hire report | Within 20 days to North Carolina New Hire Reporting Program | ⚠️ check |
+| State income tax on wages | 4.09% of the year's wages less $12,750 (single, married, surviving spouse) or $19,125 (head of household) and $2,500 an NC-4 allowance, per pay period rounded to the dollar; no NC-4 means single, no allowances | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $24,000; NC-5 | ✅ |
+| North Carolina UI (NC_UI, employer, DES) | 1% default; employer enters its own rate, on the first $34,200 | ✅ |
+| Quarterly report | North Carolina Quarterly Income Tax Withholding Return (NC-5 / NC-5Q) | ✅ |
+| Quarterly report | Employer's Quarterly Tax and Wage Report (NCUI 101) | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to North Carolina New Hire Reporting Program | ✅ |
 
 - ⚠️ No NC-4 on file: single with no allowances.
 - ⚠️ Withholding is rounded to the whole dollar each paycheck, as NC-30 asks, before any extra withholding.
@@ -523,16 +523,16 @@ Sources: NCDOR, NC-30 Income Tax Withholding Tables and Instructions for Employe
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | 4.99% of the year's wages less $15,000 ($30,000 married filing jointly with one income) and $5,000 a G-4 dependent allowance; no G-4 means single, zero allowances | ⚠️ check |
-| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $50,000; G-7 | ⚠️ check |
-| Georgia UI (GA_UI, employer, GDOL) | 2.7% default; employer enters its own rate, on the first $9,500 | ⚠️ check |
-| Quarterly report | Georgia Quarterly Return for Monthly Payer (G-7) | ⚠️ check |
-| Quarterly report | Employer's Quarterly Tax and Wage Report (DOL-4N) | ⚠️ check |
-| Minimum wage | $7.25 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | No state law | ⚠️ check |
-| New-hire report | Within 10 days to Georgia New Hire Reporting Program | ⚠️ check |
+| State income tax on wages | 4.99% of the year's wages less $15,000 ($30,000 married filing jointly with one income) and $5,000 a G-4 dependent allowance; no G-4 means single, zero allowances | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $50,000; G-7 | ✅ |
+| Georgia UI (GA_UI, employer, GDOL) | 2.7% default; employer enters its own rate, on the first $9,500 | ✅ |
+| Quarterly report | Georgia Quarterly Return for Monthly Payer (G-7) | ✅ |
+| Quarterly report | Employer's Quarterly Tax and Wage Report (DOL-4N) | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 10 days to Georgia New Hire Reporting Program | ✅ |
 
 - ⚠️ Pay runs before May 11, 2026 may have used 5.19% and the old deductions; TrailBook uses the current figures for the whole year.
 - ⚠️ G-4 statuses: single (A), married filing jointly with both spouses working (B), married filing jointly with one income (C, the only one with the $30,000 deduction), married filing separately (D), head of household (E).
@@ -549,16 +549,16 @@ Sources: Georgia DOR, 2026 Employer's Tax Guide (updated June 2026), What's New 
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | 4.45% of wages less a base allowance of $485 single / $970 married a year, which shrinks by 1.3% of wages over $9,348 / $18,696; status from the federal W-4 | ⚠️ check |
-| Withholding deposits | Monthly by the last day of the next month; TC-941 | ⚠️ check |
-| Utah UI (UT_UI, employer, DWS) | 1.2% default; employer enters its own rate, on the first $50,700 | ⚠️ check |
-| Quarterly report | Utah Withholding Return (TC-941) | ⚠️ check |
-| Quarterly report | Employer Quarterly Contribution Report (Form 3) | ⚠️ check |
-| Minimum wage | $7.25 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | No state law | ⚠️ check |
-| New-hire report | Within 20 days to Utah Department of Workforce Services (New Hire Registry) | ⚠️ check |
+| State income tax on wages | 4.45% of wages less a base allowance of $485 single / $970 married a year, which shrinks by 1.3% of wages over $9,348 / $18,696; status from the federal W-4 | ✅ |
+| Withholding deposits | Monthly by the last day of the next month; TC-941 | ✅ |
+| Utah UI (UT_UI, employer, DWS) | 1.2% default; employer enters its own rate, on the first $50,700 | ✅ |
+| Quarterly report | Utah Withholding Return (TC-941) | ✅ |
+| Quarterly report | Employer Quarterly Contribution Report (Form 3) | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Utah Department of Workforce Services (New Hire Registry) | ✅ |
 
 - ⚠️ Check against Publication 14 itself: TrailBook's build machines couldn't open it (files.tax.utah.gov is blocked to them), so these figures are from payroll publishers.
 - ⚠️ Payroll periods before June 1, 2026 used 4.5% and a $450 / $900 base allowance; TrailBook uses the current figures for the whole year.
@@ -574,16 +574,16 @@ Sources: Utah Publication 14 (revised for S.B. 60, payroll periods from June 1, 
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | 5.3% of the year's wages over $16,100 (single, head of household, married at the single rate) or $32,200 (married); no ID W-4 means single | ⚠️ check |
-| Withholding deposits | Monthly by the 20th of the next month; Form 910 | ⚠️ check |
-| Idaho UI (ID_UI, employer, IDOL) | 1% default; employer enters its own rate, on the first $58,300 | ⚠️ check |
-| Quarterly report | Idaho Withholding Payment Voucher (Form 910) | ⚠️ check |
-| Quarterly report | Idaho Quarterly Unemployment Insurance Tax Report | ⚠️ check |
-| Minimum wage | $7.25 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | No state law | ⚠️ check |
-| New-hire report | Within 20 days to Idaho Department of Labor (New Hire Reporting) | ⚠️ check |
+| State income tax on wages | 5.3% of the year's wages over $16,100 (single, head of household, married at the single rate) or $32,200 (married); no ID W-4 means single | ✅ |
+| Withholding deposits | Monthly by the 20th of the next month; Form 910 | ✅ |
+| Idaho UI (ID_UI, employer, IDOL) | 1% default; employer enters its own rate, on the first $58,300 | ✅ |
+| Quarterly report | Idaho Withholding Payment Voucher (Form 910) | ✅ |
+| Quarterly report | Idaho Quarterly Unemployment Insurance Tax Report | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Idaho Department of Labor (New Hire Reporting) | ✅ |
 
 - ⚠️ Pay runs before July 31, 2026 used tables that subtracted child tax credit allowances; TrailBook uses the current tables for the whole year.
 - ⚠️ No ID W-4 on file: single. Married withholding at the single rate uses the single figures.
@@ -594,9 +594,9 @@ Sources: Utah Publication 14 (revised for S.B. 60, payroll periods from June 1, 
 Sources: Idaho State Tax Commission, EPB00744 (07-23-2026), Table for Percentage Computation Method of Withholding; press release July 31, 2026 (5.3% over $16,100 single / $32,200 married a year ($1,342 / $2,683 monthly); child tax credit allowances no longer apply (Idaho Code 63-3029L)); Idaho State Tax Commission, Withholding Due Dates (monthly filers pay by the 20th of the next month; semimonthly, quarterly and annual filers on their own dates; Form 910); Idaho Department of Labor 2026 UI rates, as summarised by payroll publishers ($58,300 wage base; 1.0% new-employer rate); Idaho Code 44-1502 (minimum wage) ($7.25 minimum wage; no state paid sick leave law); Idaho Code 72-1601 (new hire reporting) (report new hires within 20 days).
 
 
-## Third round of states: us-mi, us-va, us-ma, us-nj 2026.1 (draft, added 2026-10-29, awaiting Greg's review)
+## Third round of states: us-mi, us-va, us-ma, us-nj 2026.1, released 2026-10-29
 
-The next four by market size and nearness. All four use the `annual_formula` method from the second round, which gained four options for them: a year's tax rounded to the dollar before dividing (Virginia), allowances that are credits off the tax rather than deductions (Massachusetts blindness), a one-time exemption base once any exemption is claimed (Massachusetts $3,400), the employee's Social Security and Medicare coming off wages first up to a yearly cap (Massachusetts $2,000), and a no-tax floor on low annual wages (Massachusetts $8,000). Quarterly deposits and forms can now name a due day and skip the weekend extension (New Jersey's NJ-927, due the 30th with no extension). Pay runs (previews included) wait until these packs are released.
+The next four by market size and nearness. All four use the `annual_formula` method from the second round, which gained four options for them: a year's tax rounded to the dollar before dividing (Virginia), allowances that are credits off the tax rather than deductions (Massachusetts blindness), a one-time exemption base once any exemption is claimed (Massachusetts $3,400), the employee's Social Security and Medicare coming off wages first up to a yearly cap (Massachusetts $2,000), and a no-tax floor on low annual wages (Massachusetts $8,000). Quarterly deposits and forms can now name a due day and skip the weekend extension (New Jersey's NJ-927, due the 30th with no extension). Greg approved every pack on 2026-10-29 and they are `released`; the ⚠️ notes below stay as the known limits to watch.
 
 Tested against the publications' examples where they give one: Virginia $2,649 semimonthly with 5 exemptions is $109.50. Massachusetts, New Jersey and Michigan were checked by hand against their formulas (for example Massachusetts $1,000 a week, 1 exemption, $76.50 of FICA is $41.94; New Jersey Rate A $1,000 a week with 2 allowances is $27.02).
 
@@ -606,15 +606,15 @@ Michigan city income taxes (Detroit and about 23 other cities) are the main gap:
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | 4.25% of the year's wages less $5,900 an MI-W4 exemption, divided by the pay periods; no MI-W4 means no exemptions | ⚠️ check |
-| Withholding deposits | Monthly by the 20th of the next month; Form 5080 | ⚠️ check |
-| Michigan UI (MI_UI, employer, UIA) | 2.7% default; employer enters its own rate, on the first $9,000 | ⚠️ check |
-| Quarterly report | Employer's Quarterly Wage/Tax Report (UIA 1028) | ⚠️ check |
-| Minimum wage | $13.73 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | 1 hour per 30 worked, up to 72 hours a year (40 under 11 employees) | ⚠️ check |
-| New-hire report | Within 20 days to Michigan New Hire Operations Center | ⚠️ check |
+| State income tax on wages | 4.25% of the year's wages less $5,900 an MI-W4 exemption, divided by the pay periods; no MI-W4 means no exemptions | ✅ |
+| Withholding deposits | Monthly by the 20th of the next month; Form 5080 | ✅ |
+| Michigan UI (MI_UI, employer, UIA) | 2.7% default; employer enters its own rate, on the first $9,000 | ✅ |
+| Quarterly report | Employer's Quarterly Wage/Tax Report (UIA 1028) | ✅ |
+| Minimum wage | $13.73 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 72 hours a year (40 under 11 employees) | ✅ |
+| New-hire report | Within 20 days to Michigan New Hire Operations Center | ✅ |
 
 - ⚠️ michigan.gov answered our requests with 403, so the rate and exemption come from Treasury's figures as reported by Bloomberg Tax and the USDA payroll bulletin, not the Form 446 itself. Worth a look at Form 446 before release.
 - ⚠️ No MI-W4 on file: no exemptions (4.25% of all wages).
@@ -630,15 +630,15 @@ Sources: Michigan Treasury, Withholding Tax Information by Calendar Year (2026),
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | The year's wages less $8,750, $930 a VA-4 personal exemption and $800 an age 65 or blind exemption, at 2% / 3% / 5% / 5.75% (over $3,000 / $5,000 / $17,000), the year's tax rounded to the dollar, divided by the pay periods | ⚠️ check |
-| Withholding deposits | Monthly by the 25th of the next month; on the federal semiweekly dates when last year's withholding was over $12,000; VA-5 | ⚠️ check |
-| Virginia UI (VA_UI, employer, VEC) | 2.5% default; employer enters its own rate, on the first $8,000 | ⚠️ check |
-| Quarterly report | Employer's Quarterly Tax and Payroll Report (VEC-FC-20/21) | ⚠️ check |
-| Minimum wage | $12.77 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | No state law | ⚠️ check |
-| New-hire report | Within 20 days to Virginia New Hire Reporting Center | ⚠️ check |
+| State income tax on wages | The year's wages less $8,750, $930 a VA-4 personal exemption and $800 an age 65 or blind exemption, at 2% / 3% / 5% / 5.75% (over $3,000 / $5,000 / $17,000), the year's tax rounded to the dollar, divided by the pay periods | ✅ |
+| Withholding deposits | Monthly by the 25th of the next month; on the federal semiweekly dates when last year's withholding was over $12,000; VA-5 | ✅ |
+| Virginia UI (VA_UI, employer, VEC) | 2.5% default; employer enters its own rate, on the first $8,000 | ✅ |
+| Quarterly report | Employer's Quarterly Tax and Payroll Report (VEC-FC-20/21) | ✅ |
+| Minimum wage | $12.77 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Virginia New Hire Reporting Center | ✅ |
 
 - ⚠️ The annual tax is rounded to the whole dollar before dividing, as in Virginia's own example ($2,628 / 24 = $109.50).
 - ⚠️ VA-4 line 1 is personal exemptions (E1, $930 each); line 2 is exemptions for age 65 or blindness (E2, $800 each). No VA-4 on file: no exemptions.
@@ -653,21 +653,21 @@ Sources: Virginia Tax, Employer Withholding Instructions (2614086 Rev. 10/26), f
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | Wages less this paycheck's Social Security and Medicare (until $2,000 a year), for the year, less $3,400 plus $1,000 an M-4 exemption (when at least one), at 5% (9% over $1,107,750), less $120 for head of household and $110 a blind person; nothing when an exemption is claimed and the year's wages are under $8,000 | ⚠️ check |
-| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $25,000; M-941 | ⚠️ check |
-| Massachusetts PFML (employee) (MA_PFML_EE, employee, DFML) | 0.46%, on the first $184,500 | ⚠️ check |
-| Massachusetts PFML (employer) (MA_PFML_ER, employer, DFML) | 0% default; employer enters its own rate, on the first $184,500 | ⚠️ check |
-| Massachusetts UI (MA_UI, employer, DUA) | 2.42% default; employer enters its own rate, on the first $15,000 | ⚠️ check |
-| Massachusetts Workforce Training Fund (MA_WTF, employer, DUA) | 0.056%, on the first $15,000 | ⚠️ check |
-| Massachusetts EMAC (MA_EMAC, employer, DUA) | 0% default; employer enters its own rate, on the first $15,000 | ⚠️ check |
-| Quarterly report | Employer's Return of Income Taxes Withheld (M-941) | ⚠️ check |
-| Quarterly report | Massachusetts Employment and Wage Detail Report | ⚠️ check |
-| Quarterly report | Massachusetts PFML Quarterly Contribution Return | ⚠️ check |
-| Minimum wage | $15.00 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | 1 hour per 30 worked, up to 40 hours a year | ⚠️ check |
-| New-hire report | Within 14 days to Massachusetts DOR New Hire Reporting | ⚠️ check |
+| State income tax on wages | Wages less this paycheck's Social Security and Medicare (until $2,000 a year), for the year, less $3,400 plus $1,000 an M-4 exemption (when at least one), at 5% (9% over $1,107,750), less $120 for head of household and $110 a blind person; nothing when an exemption is claimed and the year's wages are under $8,000 | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $25,000; M-941 | ✅ |
+| Massachusetts PFML (employee) (MA_PFML_EE, employee, DFML) | 0.46%, on the first $184,500 | ✅ |
+| Massachusetts PFML (employer) (MA_PFML_ER, employer, DFML) | 0% default; employer enters its own rate, on the first $184,500 | ✅ |
+| Massachusetts UI (MA_UI, employer, DUA) | 2.42% default; employer enters its own rate, on the first $15,000 | ✅ |
+| Massachusetts Workforce Training Fund (MA_WTF, employer, DUA) | 0.056%, on the first $15,000 | ✅ |
+| Massachusetts EMAC (MA_EMAC, employer, DUA) | 0% default; employer enters its own rate, on the first $15,000 | ✅ |
+| Quarterly report | Employer's Return of Income Taxes Withheld (M-941) | ✅ |
+| Quarterly report | Massachusetts Employment and Wage Detail Report | ✅ |
+| Quarterly report | Massachusetts PFML Quarterly Contribution Return | ✅ |
+| Minimum wage | $15.00 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours a year | ✅ |
+| New-hire report | Within 14 days to Massachusetts DOR New Hire Reporting | ✅ |
 
 - ⚠️ The Social Security and Medicare subtraction uses this paycheck's amounts until the year's total reaches $2,000. Earlier pay this year is counted from the year-to-date wages, so an employee hired after other payroll in the year starts from the wages TrailBook has.
 - ⚠️ M-4 line 1 is the exemption count. One exemption gives $4,400; each further one $1,000 more. No M-4 on file: no exemptions. Full-time students under $8,000 a year can be marked exempt.
@@ -685,22 +685,22 @@ Sources: Massachusetts DOR, Circular M (Rev. 12/25), Income Tax Withholding Tabl
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | The year's wages less $1,000 an NJ-W4 allowance, through Rate table A (single or filing separately) or B (joint, head of household, surviving spouse), or C, D or E chosen on line 3: 1.5% up to 11.8% over $1 million; no NJ-W4 means Rate A, no allowances | ⚠️ check |
-| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $9,999.99; NJ-500 | ⚠️ check |
-| New Jersey UI/WF (employee) (NJ_UIWF_EE, employee, NJDOL) | 0.425%, on the first $44,800 | ⚠️ check |
-| New Jersey disability (employee) (NJ_DI_EE, employee, NJDOL) | 0.19%, on the first $171,100 | ⚠️ check |
-| New Jersey family leave (employee) (NJ_FLI_EE, employee, NJDOL) | 0.23%, on the first $171,100 | ⚠️ check |
-| New Jersey UI (NJ_UI_ER, employer, NJDOL) | 2.6825% default; employer enters its own rate, on the first $44,800 | ⚠️ check |
-| New Jersey WF/SWF (employer) (NJ_WF_ER, employer, NJDOL) | 0.1175%, on the first $44,800 | ⚠️ check |
-| New Jersey disability (employer) (NJ_DI_ER, employer, NJDOL) | 0.5% default; employer enters its own rate, on the first $44,800 | ⚠️ check |
-| New Jersey UI, disability and family leave deposits | Quarterly by the 30th of the month after the quarter, the business day before when that's a weekend or holiday; NJ-927 | ⚠️ check |
-| Quarterly report | Employer's Quarterly Report (NJ-927) and WR-30 | ⚠️ check |
-| Minimum wage | $15.92 | ⚠️ check |
-| Minimum wage, Seasonal or fewer than 6 employees | $15.23 | ⚠️ check |
-| Exempt salary floor (a year) | $35,568 | ⚠️ check |
-| Overtime | After 40 hours a week | ⚠️ check |
-| Paid sick leave | 1 hour per 30 worked, up to 40 hours a year | ⚠️ check |
-| New-hire report | Within 20 days to New Jersey New Hire Reporting Center | ⚠️ check |
+| State income tax on wages | The year's wages less $1,000 an NJ-W4 allowance, through Rate table A (single or filing separately) or B (joint, head of household, surviving spouse), or C, D or E chosen on line 3: 1.5% up to 11.8% over $1 million; no NJ-W4 means Rate A, no allowances | ✅ |
+| Withholding deposits | Monthly by the 15th of the next month; weekly (third business day after the payroll week's Friday) when last year's withholding was over $9,999.99; NJ-500 | ✅ |
+| New Jersey UI/WF (employee) (NJ_UIWF_EE, employee, NJDOL) | 0.425%, on the first $44,800 | ✅ |
+| New Jersey disability (employee) (NJ_DI_EE, employee, NJDOL) | 0.19%, on the first $171,100 | ✅ |
+| New Jersey family leave (employee) (NJ_FLI_EE, employee, NJDOL) | 0.23%, on the first $171,100 | ✅ |
+| New Jersey UI (NJ_UI_ER, employer, NJDOL) | 2.6825% default; employer enters its own rate, on the first $44,800 | ✅ |
+| New Jersey WF/SWF (employer) (NJ_WF_ER, employer, NJDOL) | 0.1175%, on the first $44,800 | ✅ |
+| New Jersey disability (employer) (NJ_DI_ER, employer, NJDOL) | 0.5% default; employer enters its own rate, on the first $44,800 | ✅ |
+| New Jersey UI, disability and family leave deposits | Quarterly by the 30th of the month after the quarter, the business day before when that's a weekend or holiday; NJ-927 | ✅ |
+| Quarterly report | Employer's Quarterly Report (NJ-927) and WR-30 | ✅ |
+| Minimum wage | $15.92 | ✅ |
+| Minimum wage, Seasonal or fewer than 6 employees | $15.23 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours a year | ✅ |
+| New-hire report | Within 20 days to New Jersey New Hire Reporting Center | ✅ |
 
 - ⚠️ No NJ-W4 on file: Rate A with no allowances. NJ-WT says only that tax must be withheld; Rate A with none is the usual reading.
 - ⚠️ TrailBook works the rate tables over the year, so amounts can differ from the weekly or biweekly tables by a few cents.

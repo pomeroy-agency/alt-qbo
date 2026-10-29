@@ -5,7 +5,7 @@ import type { StateRulePack } from "./types.js";
 // wages less the employee's Social Security and Medicare (up to $2,000 a
 // year), annualized, less the exemption factor ($3,400 plus $1,000 an
 // exemption), at 5% (9% above $1,107,750), less $120 for head of household
-// and $110 for each blind person. Draft until Greg reviews it
+// and $110 for each blind person. Released 2026-10-29 after Greg's review
 // (docs/rule-pack-review.md).
 export const usMassachusetts2026: StateRulePack = {
   kind: "state",
@@ -15,7 +15,7 @@ export const usMassachusetts2026: StateRulePack = {
   place: { country: "US", region: "MA" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Massachusetts DOR, Circular M (Rev. 12/25), Income Tax Withholding Tables and percentage method from January 1, 2026", covers: "FICA subtraction up to $2,000; exemption factor $4,400 for one, $3,400 plus $1,000 each for more; 5% and 9% above $1,107,750; head of household $120 and blindness $110 a year; no withholding under $8,000 a year when an exemption is claimed", basis: "published" },
@@ -77,7 +77,7 @@ export const usMassachusetts2026: StateRulePack = {
       { kind: "ma_ui", codes: ["MA_UI", "MA_WTF", "MA_EMAC"], agency: "DUA", what: "Massachusetts UI", where: "UI Online for employers", schedule: "quarterly", report: "Employment and Wage Detail Report" },
       { kind: "ma_pfml", codes: ["MA_PFML_EE", "MA_PFML_ER"], agency: "DFML", what: "PFML contributions", where: "MassTaxConnect", schedule: "quarterly", report: "PFML quarterly return" },
     ],
-    employerAccount: { label: "Massachusetts DUA employer account number", hint: "The number on your DUA notices. It goes on the wage detail report. Withholding and PFML use your MassTaxConnect account.", pattern: "^[0-9 -]{6,12}$" },
+    employerAccount: { label: "Massachusetts DUA employer account number", hint: "The number on your DUA notices. It goes on the wage detail report. Withholding and PFML use your MassTaxConnect account.", pattern: "^[0-9]{6,10}$" },
     accounts: [
       { code: "2340", name: "Massachusetts income tax payable", systemKey: "ma_wh_payable" },
       { code: "2350", name: "Massachusetts UI payable", systemKey: "ma_ui_payable" },

@@ -4,8 +4,8 @@ import type { StateRulePack } from "./types.js";
 // Employer's Tax Guide (updated June 2026), read from the guide itself on
 // 2026-10-29: 4.99% of wages less the standard deduction and $5,000 a
 // dependent allowance (HB 463). Employers withheld 5.19% until they switched
-// (from May 11, 2026); this pack has only the current figures. Draft until
-// Greg reviews it (docs/rule-pack-review.md).
+// (from May 11, 2026); this pack has only the current figures. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usGeorgia2026: StateRulePack = {
   kind: "state",
   id: "us-ga",
@@ -14,7 +14,7 @@ export const usGeorgia2026: StateRulePack = {
   place: { country: "US", region: "GA" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Georgia DOR, 2026 Employer's Tax Guide (updated June 2026), What's New and Percentage Method (Table E)", covers: "4.99% from May 11, 2026 (5.19% before); $30,000 standard deduction married filing jointly with one income, $15,000 for every other status; $5,000 a dependent allowance; no G-4 means single with zero allowances", basis: "published" },

@@ -419,7 +419,7 @@ export async function setSickLeavePolicy(tx: Tx, input: { orgId: string; entityI
 /** A rate the state assigned the employer (its UI rate, from the agency's notice), as a fraction; null goes back to the new-employer rate. */
 export async function setStateTaxRate(tx: Tx, input: { orgId: string; entityId: string; code: string; rate: string | null; actor: Actor }) {
   requireWriter(input.actor, "change payroll settings");
-  if (input.rate !== null && (!/^\d(\.\d{1,5})?$/.test(input.rate) || new D(input.rate).gt("0.2"))) {
+  if (input.rate !== null && (!/^\d(\.\d{1,6})?$/.test(input.rate) || new D(input.rate).gt("0.2"))) {
     invalid("the rate should be a percentage between 0 and 20");
   }
   const e = (await tx.query("SELECT country, region, state_tax_rates FROM entities WHERE id = $1", [input.entityId])).rows[0];

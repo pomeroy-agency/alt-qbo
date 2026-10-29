@@ -3,8 +3,8 @@ import type { StateRulePack } from "./types.js";
 // Colorado 2026. Withholding follows the 2026 Colorado Withholding Worksheet
 // for Employers (DR 1098, 10/21/25), read from the worksheet itself on
 // 2026-10-29: 4.4% of the year's wages less the DR 0004 line 2 allowance, or
-// without one $11,000 (married filing jointly on the W-4) or $5,500. Draft
-// until Greg reviews it (docs/rule-pack-review.md).
+// without one $11,000 (married filing jointly on the W-4) or $5,500.
+// Released 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usColorado2026: StateRulePack = {
   kind: "state",
   id: "us-co",
@@ -13,7 +13,7 @@ export const usColorado2026: StateRulePack = {
   place: { country: "US", region: "CO" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "CDOR, DR 1098 (10/21/25), 2026 Colorado Withholding Worksheet for Employers", covers: "4.40% of annualized wages less the DR 0004 line 2 allowance, or $11,000 married filing jointly / $5,500 otherwise from the W-4; single when no certificate; DR 0004 line 3 extra withholding", basis: "published" },

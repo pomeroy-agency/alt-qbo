@@ -4,7 +4,7 @@ import type { StateRulePack } from "./types.js";
 // NC-30 (2026), read from the publication itself on 2026-10-29: 4.09% (the
 // 3.99% tax rate plus 0.1%) of the year's wages less the standard deduction
 // and $2,500 an allowance, per pay period, rounded to the whole dollar.
-// Draft until Greg reviews it (docs/rule-pack-review.md).
+// Released 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usNorthCarolina2026: StateRulePack = {
   kind: "state",
   id: "us-nc",
@@ -13,7 +13,7 @@ export const usNorthCarolina2026: StateRulePack = {
   place: { country: "US", region: "NC" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "NCDOR, NC-30 Income Tax Withholding Tables and Instructions for Employers (2026), sections 15, 16 and 27 and pages 17 to 20", covers: "4.09% withholding rate; $12,750 standard deduction (single, married, surviving spouse) and $19,125 (head of household); $2,500 an allowance; round to the whole dollar; no NC-4 means single with no allowances; monthly NC-5 by the 15th for $250 to $2,000 a month, semiweekly with federal deposits from $2,000 a month", basis: "published" },

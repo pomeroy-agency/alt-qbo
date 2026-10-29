@@ -1,12 +1,12 @@
 import type { StateRulePack } from "./types.js";
 
 // Utah 2026. Utah has no state certificate: withholding uses the federal W-4
-// filing status. It's 4.45% of wages less a base allowance credit that shrinks
-// by 1.3% of wages above a threshold (Publication 14, revised for S.B. 60, for
-// payroll periods from June 1, 2026). Publication 14 itself couldn't be
-// opened from TrailBook's build machines; the figures come from payroll
-// publishers and are marked for checking. Draft until Greg reviews it
-// (docs/rule-pack-review.md).
+// filing status. It's 4.45% of wages less a base allowance credit that
+// shrinks by 1.3% of wages above a threshold (Publication 14, revised for
+// S.B. 60, for payroll periods from June 1, 2026). Publication 14 itself
+// couldn't be opened from TrailBook's build machines; the figures come from
+// payroll publishers and are marked for checking. Released 2026-10-29 after
+// Greg's review (docs/rule-pack-review.md).
 export const usUtah2026: StateRulePack = {
   kind: "state",
   id: "us-ut",
@@ -15,7 +15,7 @@ export const usUtah2026: StateRulePack = {
   place: { country: "US", region: "UT" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Utah Publication 14 (revised for S.B. 60, payroll periods from June 1, 2026), as reported by EY Tax News (May 11, 2026), Bloomberg Tax and the USDA National Finance Center", covers: "4.45% rate; base allowance $485 single / $970 married a year; reduced by 1.3% of wages above $9,348 single / $18,696 married; status from the federal W-4 (married only for married filing jointly); no subtraction for W-4 allowances", basis: "published" },

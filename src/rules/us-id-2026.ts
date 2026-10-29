@@ -3,9 +3,10 @@ import type { StateRulePack } from "./types.js";
 // Idaho 2026. Withholding follows the percentage computation tables
 // (EPB00744, 07-23-2026), read from the table itself on 2026-10-29: 5.3% of
 // wages above $16,100 a year (single and head of household) or $32,200
-// (married). The Idaho child tax credit ended, so ID W-4 allowances no longer
-// reduce withholding from July 31, 2026; this pack has only the current
-// figures. Draft until Greg reviews it (docs/rule-pack-review.md).
+// (married). The Idaho child tax credit ended, so ID W-4 allowances no
+// longer reduce withholding from July 31, 2026; this pack has only the
+// current figures. Released 2026-10-29 after Greg's review (docs/rule-pack-
+// review.md).
 export const usIdaho2026: StateRulePack = {
   kind: "state",
   id: "us-id",
@@ -14,7 +15,7 @@ export const usIdaho2026: StateRulePack = {
   place: { country: "US", region: "ID" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Idaho State Tax Commission, EPB00744 (07-23-2026), Table for Percentage Computation Method of Withholding; press release July 31, 2026", covers: "5.3% over $16,100 single / $32,200 married a year ($1,342 / $2,683 monthly); child tax credit allowances no longer apply (Idaho Code 63-3029L)", basis: "published" },

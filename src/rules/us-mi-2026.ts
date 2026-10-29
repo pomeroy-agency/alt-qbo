@@ -4,8 +4,8 @@ import type { StateRulePack } from "./types.js";
 // exemption, spread over the pay periods (Treasury's 2026 calendar-year
 // figures). michigan.gov refused our requests, so the figures were checked
 // against Treasury's published data as reported elsewhere. City income taxes
-// (Detroit, Grand Rapids and others) aren't withheld yet. Draft until Greg
-// reviews it (docs/rule-pack-review.md).
+// (Detroit, Grand Rapids and others) aren't withheld yet. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usMichigan2026: StateRulePack = {
   kind: "state",
   id: "us-mi",
@@ -14,7 +14,7 @@ export const usMichigan2026: StateRulePack = {
   place: { country: "US", region: "MI" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Michigan Treasury, Withholding Tax Information by Calendar Year (2026), as reported by Bloomberg Tax and the USDA NFC payroll bulletin", covers: "4.25% rate; $5,900 a personal exemption (up from $5,800)", basis: "published" },
@@ -56,7 +56,7 @@ export const usMichigan2026: StateRulePack = {
       },
       { kind: "mi_ui", codes: ["MI_UI"], agency: "UIA", what: "Michigan UI", where: "MiWAM", schedule: "quarterly", report: "UIA 1028" },
     ],
-    employerAccount: { label: "Michigan UIA employer account number", hint: "The number on your UIA notices. It goes on the UIA 1028. Withholding uses your federal EIN.", pattern: "^[0-9 -]{7,13}$" },
+    employerAccount: { label: "Michigan UIA employer account number", hint: "The number on your UIA notices. It goes on the UIA 1028. Withholding uses your federal EIN.", pattern: "^[0-9]{7,10}$" },
     accounts: [
       { code: "2340", name: "Michigan income tax payable", systemKey: "mi_wh_payable" },
       { code: "2350", name: "Michigan UI payable", systemKey: "mi_ui_payable" },

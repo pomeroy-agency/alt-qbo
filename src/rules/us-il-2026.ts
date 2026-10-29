@@ -2,9 +2,9 @@ import type { StateRulePack } from "./types.js";
 
 // Illinois 2026. Withholding follows the automated payroll method in Booklet
 // IL-700-T (R-12/25), read from the booklet itself on 2026-10-29: 4.95% of
-// wages less $2,925 for each IL-W-4 line 1 allowance and $1,000 for each line
-// 2 allowance, spread over the pay periods. Draft until Greg reviews it
-// (docs/rule-pack-review.md).
+// wages less $2,925 for each IL-W-4 line 1 allowance and $1,000 for each
+// line 2 allowance, spread over the pay periods. Released 2026-10-29 after
+// Greg's review (docs/rule-pack-review.md).
 export const usIllinois2026: StateRulePack = {
   kind: "state",
   id: "us-il",
@@ -13,7 +13,7 @@ export const usIllinois2026: StateRulePack = {
   place: { country: "US", region: "IL" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "IDOR Booklet IL-700-T (R-12/25), Illinois Withholding Tax Tables, effective January 1, 2026, page 3", covers: "4.95% rate; $2,925 per line 1 allowance and $1,000 per line 2 allowance; automated payroll method and its $32.13 example", basis: "published" },

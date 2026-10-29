@@ -1,13 +1,13 @@
 import type { StateRulePack } from "./types.js";
 
 // New Jersey 2026. Withholding follows the percentage tables in NJ-WT
-// (September 2025) and the rate tables effective January 1, 2026, read
-// from the Division of Taxation's own files on 2026-10-29: the year's wages
-// less $1,000 for each NJ-W4 allowance, through Rate table A (single or
+// (September 2025) and the rate tables effective January 1, 2026, read from
+// the Division of Taxation's own files on 2026-10-29: the year's wages less
+// $1,000 for each NJ-W4 allowance, through Rate table A (single or
 // married/CU filing separately), B (joint, head of household, surviving
 // spouse) or the table the employee picks on line 3. Employee UI, disability
-// and family leave contributions come from the NJDOL rate page. Draft until
-// Greg reviews it (docs/rule-pack-review.md).
+// and family leave contributions come from the NJDOL rate page. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 const top = [{ over: "500000", rate: "0.099" }, { over: "1000000", rate: "0.118" }];
 export const usNewJersey2026: StateRulePack = {
   kind: "state",
@@ -17,7 +17,7 @@ export const usNewJersey2026: StateRulePack = {
   place: { country: "US", region: "NJ" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "NJ Division of Taxation, NJ-WT (September 2025), Which Rate Table to Use and the allowance value table", covers: "Rate A for NJ-W4 boxes 1 and 3, Rate B for boxes 2, 4 and 5, or the table chosen on line 3; $1,000 a year per allowance", basis: "published" },
@@ -84,7 +84,7 @@ export const usNewJersey2026: StateRulePack = {
         where: "NJ Division of Revenue online services", schedule: "quarterly", report: "NJ-927", dueDay: 30, noWeekendExtension: true,
       },
     ],
-    employerAccount: { label: "New Jersey employer ID", hint: "Your federal EIN followed by 000, as on your NJ-927.", pattern: "^[0-9 -]{9,15}$" },
+    employerAccount: { label: "New Jersey employer ID", hint: "Your federal EIN followed by 000, as on your NJ-927.", pattern: "^[0-9]{9}([0-9]{3})?$" },
     accounts: [
       { code: "2340", name: "New Jersey income tax payable", systemKey: "nj_wh_payable" },
       { code: "2350", name: "New Jersey UI, disability and family leave payable", systemKey: "nj_ui_payable" },
