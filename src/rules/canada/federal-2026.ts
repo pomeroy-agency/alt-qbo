@@ -2,11 +2,12 @@ import type { CanadaFederalRulePack } from "./types.js";
 
 // Canada federal, July to December 2026 (T4127 123rd edition). The July
 // edition changed only provincial figures, so these federal figures hold
-// for the whole year. Released 2026-10-29 after Greg's review.
+// for the whole year (checked against the January edition). Released
+// 2026-10-29 after Greg's review.
 export const caFederal2026: CanadaFederalRulePack = {
   kind: "ca-federal",
   id: "ca-federal",
-  version: "2026.2",
+  version: "2026.3",
   place: { country: "CA" },
   effectiveFrom: "2026-07-01",
   effectiveTo: "2026-12-31",
@@ -14,10 +15,9 @@ export const caFederal2026: CanadaFederalRulePack = {
   sources: [
     { ref: "CRA T4127 Payroll Deductions Formulas, 123rd edition (effective July 1, 2026), uploaded by Greg 2026-10-29, Tables 8.1 and 8.2 and chapter 4", covers: "federal rates 14%, 20.5%, 26%, 29%, 33% over $58,523, $117,045, $181,440, $258,482 with constants $3,804, $10,241, $15,685, $26,024; Canada employment amount $1,501; Quebec abatement 16.5%; maximum base CPP $3,519.45 (4.95% of 5.95%) and maximum EI $1,123.07; no federal change from the January edition; base CPP to fall from 4.95% to 4.75% on January 1, 2027", basis: "published" },
     { ref: "Revenu Québec TP-1015.F-V (2026-01), Principal changes and sections 3 and 4", covers: "QPP 6.30% (5.30% base, 1% first additional) on $3,500 to $74,600, QPP2 4% to $85,000; QPIP 0.430% employee and 0.602% employer to $103,000", basis: "published" },
-    { ref: "ESDC CPP 2026 figures and CRA 2026 indexation, as reported in search results", covers: "CPP basic exemption $3,500, YMPE $74,600, CPP2 4% to YAMPE $85,000 (consistent with the $3,519.45 maximum above); EI 1.63% (1.30% in Quebec) to $68,900, employer 1.4×; basic personal amount $16,452 falling to $14,829 between $181,440 and $258,482", basis: "working-knowledge" },
+    { ref: "CRA T4127 Payroll Deductions Formulas, 122nd edition (effective January 1, 2026), uploaded by Greg 2026-10-29, chapters 1, 2, 4, 6 and 7", covers: "CPP 5.95% to $4,230.45 and CPP2 4% to $416 (W = greater of PIYTD and YMPE); exemption per period truncated, contributions and premiums rounded half up; EI 1.63% to $1,123.07 (Quebec 1.30% to $895.70); K2Q with QPIP to $442.90; BPAF $16,452 falling by $1,623 / $77,042 per dollar of net income over $181,440 to $14,829; K4 on employment income before deductions; credits use the year's maximums once reached", basis: "published" },
   ],
   reviewNotes: [
-    "⚠️ check against T4127 122nd edition (January 2026): EI rates and maximum, CPP2 figures and the BPAF formula aren't reprinted in the July edition; they match every other source and the maximums the July edition prints.",
     "The 16.5% Quebec abatement reduces federal tax for employees reported to Quebec; their K2 credit uses QPP base contributions, Quebec EI and QPIP.",
     "Bonuses and retroactive pay use the regular annualized formula for now; T4127's bonus method comes with the payroll pull request.",
     "2027: base CPP falls to 4.75% (T4127 upcoming changes); a 2027 pack is needed before the first 2027 pay date.",

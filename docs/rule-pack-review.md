@@ -1526,20 +1526,20 @@ Sources: DC Office of Tax and Revenue, DC Individual and Fiduciary Income Tax Ra
 
 Canada has its own pack kinds next to the US ones: one federal pack (`ca-federal`: CPP, QPP, EI, QPIP and federal income tax) and one pack per province or territory (`ca-province`: provincial income tax). The calculator follows CRA's T4127 option 1 (annualized) formula for every province and territory but Quebec, and Revenu Québec's TP-1015.F-V section 2.1.1 for Quebec income tax. Packs cover July 1 to December 31, 2026, the span of T4127's 123rd edition, which is when Canadian pay runs can first happen. Canada stays "planned" in the country picker: nothing here reaches a pay run until the payroll part (TD1 forms, CAD pay runs, remittances, T4, RL-1, ROE) is built.
 
-Sources: CRA T4127 123rd edition (July 2026) and Revenu Québec TP-1015.F-V (2026-01), both uploaded by Greg on 2026-10-29 because canada.ca and revenuquebec.ca refuse automated downloads; Quebec Finance's 2026 parameters document (downloaded). The July T4127 reprints only what changed, so a few formulas come from working knowledge until the January (122nd) edition is uploaded; they're marked ⚠️.
+Sources: CRA T4127 123rd edition (July 2026) and Revenu Québec TP-1015.F-V (2026-01), both uploaded by Greg on 2026-10-29 because canada.ca and revenuquebec.ca refuse automated downloads; Quebec Finance's 2026 parameters document (downloaded). Formulas the July T4127 doesn't reprint were checked against the January (122nd) edition, uploaded by Greg the same day (version 2026.3). That check corrected Alberta's supplemental credit to CRA's formula, made CPP/EI credits use the year's maximums once reached, based the Canada employment amount on employment income and phased Manitoba's basic amount on net income (A + HD). Greg approved these in advance ("approve, publish, merge, and continue").
 
 Tested against Revenu Québec's worked examples (Appendix 1: $444.51, $421.46, $481.76, $489.36; Appendix 3: QPP $95.94 and QPP2 $56, $160, $40), T4127 Table 8.1 constants, BC's reduction cutoff, PEI's prorated top rate and NL's mid-year claim.
 
-### Federal (ca-federal 2026.2, `src/rules/canada/federal-2026.ts`)
+### Federal (ca-federal 2026.3, `src/rules/canada/federal-2026.ts`)
 
 | Item | Figure | Status |
 |---|---|---|
 | Federal rates and constants | 14% / 20.5% / 26% / 29% / 33% over $58,523 / $117,045 / $181,440 / $258,482; K $0 / $3,804 / $10,241 / $15,685 / $26,024 | ✅ T4127 Table 8.1 |
-| Basic personal amount (BPAF) | $16,452, falling evenly to $14,829 between $181,440 and $258,482 of net income | ⚠️ check (January edition) |
+| Basic personal amount (BPAF) | $16,452, falling evenly to $14,829 between $181,440 and $258,482 of net income | ✅ T4127 January, chapter 2 |
 | Canada employment amount | $1,501 | ✅ Table 8.2 |
-| CPP | 5.95% (4.95% base) on $3,500 to $74,600, maximum $4,230.45 (base $3,519.45); exemption per period truncated to the cent | ✅ maximum base in T4127; ⚠️ check rates against the January edition |
-| CPP2 | 4% from $74,600 to $85,000, maximum $416 | ⚠️ check (January edition) |
-| EI | 1.63% (1.30% in Quebec) to $68,900, maximum $1,123.07; employer 1.4 times | ✅ maximum in T4127; ⚠️ check Quebec rate |
+| CPP | 5.95% (4.95% base) on $3,500 to $74,600, maximum $4,230.45 (base $3,519.45); exemption per period truncated to the cent | ✅ T4127 January, chapters 1 and 6 |
+| CPP2 | 4% from $74,600 to $85,000, maximum $416 | ✅ T4127 January, chapter 6 |
+| EI | 1.63% (1.30% in Quebec) to $68,900, maximum $1,123.07 ($895.70 in Quebec); employer 1.4 times | ✅ T4127 January, chapter 4 |
 | QPP, QPP2 | 6.30% (5.30% base), 4% to $85,000; maximums $4,479.30 and $416 | ✅ TP-1015.F-V |
 | QPIP | 0.430% employee, 0.602% employer, to $103,000 | ✅ TP-1015.F-V |
 | Quebec abatement | 16.5% of basic federal tax | ✅ Table 8.2 |
@@ -1548,19 +1548,19 @@ Tested against Revenu Québec's worked examples (Appendix 1: $444.51, $421.46, $
 
 | Pack | Rates and amounts | Status |
 |---|---|---|
-| ca-ab Alberta | 8% to $61,200 up to 15% over $370,220; BPA $22,769; supplemental credit 2% of credits over $60,000 | ✅ Table 8.1/8.2; ⚠️ supplemental credit formula |
+| ca-ab Alberta | 8% to $61,200 up to 15% over $370,220; BPA $22,769; supplemental credit (K5P) 25% of K1P + K2P over $4,896 | ✅ (corrected from the January edition) |
 | ca-bc British Columbia | Prorated 6.14% to $50,363, then 7.7% to 20.5%; BPA $13,216; reduction $805 less 3.56% over $25,570, none over $44,952 | ✅ T4127 July (Budget 2026 change) |
-| ca-mb Manitoba | 10.8% / 12.75% / 17.4%; BPA $15,780 phased out from $200,000 to $400,000 | ✅ rates; ⚠️ BPAMB formula |
+| ca-mb Manitoba | 10.8% / 12.75% / 17.4%; BPA $15,780 phased out from $200,000 to $400,000 of net income (A + HD) | ✅ |
 | ca-nb New Brunswick | 9.4% to $52,333, 14%, 16%, 19.5% over $193,861; BPA $13,664 | ✅ |
 | ca-nl Newfoundland and Labrador | 8.7% to 21.8% (eight brackets); BPA prorated $15,000 (2026: $13,094); an old $11,188 TD1NL claim reads as $15,000 | ✅ |
-| ca-ns Nova Scotia | 8.79% to 21% over $157,124; BPA $11,932 | ✅ rates; ⚠️ BPANS still in the glossary |
-| ca-on Ontario | 5.05% to 13.16%; BPA $12,989; surtax 20% over $5,818, 36% over $7,446; tax reduction $300 (+ $554 per dependant); Health Premium up to $900 | ✅ rates, surtax, $300; ⚠️ dependant amount and premium schedule |
+| ca-ns Nova Scotia | 8.79% to 21% over $157,124; BPA $11,932 (income-based BPANS formula removed for 2026) | ✅ |
+| ca-on Ontario | 5.05% to 13.16%; BPA $12,989; surtax 20% over $5,818, 36% over $7,446; tax reduction $300 (+ $554 per dependant); Health Premium up to $900 | ✅ |
 | ca-pe Prince Edward Island | 9.5% to 19%, new top bracket over $200,000 at prorated 21% (20% for the year); BPA $15,000 | ✅ T4127 July |
 | ca-qc Quebec | 14% / 19% / 24% / 25.75% over $54,345 / $108,680 / $132,245, constants $2,717 / $8,151 / $10,465; BPA $18,952 (rounded TP-1015.3 amount × 14%); deduction for workers 6% up to $1,450; labour-fund share credit 15% | ✅ TP-1015.F-V |
 | ca-sk Saskatchewan | 10.5% / 12.5% / 14.5%; BPA $20,381 | ✅ |
 | ca-nt Northwest Territories | 5.9% to 14.05%; BPA $18,198 | ✅ |
 | ca-nu Nunavut | 4% to 11.5%; BPA $19,659 | ✅ |
-| ca-yt Yukon | 6.4% to 15% over $500,000; BPA follows the federal amount; Canada employment amount credit | ✅ rates; ⚠️ BPAYT formula |
+| ca-yt Yukon | 6.4% to 15% over $500,000; BPA follows the federal amount (BPAYT = BPAF); Canada employment amount credit | ✅ |
 
 Not yet built (next parts): TD1 and TP-1015.3 forms on employees, CAD pay runs and pay stubs, bonus and retroactive pay methods, CRA and Revenu Québec remittance schedules, T4, RL-1 and ROE, Quebec's health services fund and other employer taxes (Ontario EHT, BC EHT, Manitoba HE levy, NL HAPSET, CNESST and provincial workers' compensation), provincial employment standards (minimum wage, overtime, vacation pay, statutory holidays) and GST/HST/PST/QST.
 

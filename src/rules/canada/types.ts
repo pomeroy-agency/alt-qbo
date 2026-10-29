@@ -96,7 +96,7 @@ export interface T4127ProvincialTax {
     | { kind: "on"; basic: string; perDependant: string };
   /** Yukon: the Canada employment amount is a provincial credit too (K4P). */
   canadaEmploymentAmount?: boolean;
-  /** Alberta: an extra `rate` credit on non-refundable credits above `over` (K5P). */
+  /** Alberta (K5P): `rate` of the credits K1P + K2P above `over` ($4,896, 25%). */
   supplementalCredit?: { over: string; rate: string };
 }
 
