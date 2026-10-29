@@ -1,5 +1,5 @@
 import { D, type Dec } from "../core/money.js";
-import type { FederalFilingStatus, LocalIncomeTax, StateIncomeTaxRules } from "../rules/types.js";
+import type { AnnualFormulaStatus, FederalFilingStatus, LocalIncomeTax, StateIncomeTaxRules } from "../rules/types.js";
 import { californiaWithholding, type DE4 } from "./california.js";
 
 /**
@@ -24,6 +24,8 @@ export interface StateWithholding {
   allowances?: number;
   /** A second kind of allowance (Illinois IL-W-4 line 2). */
   allowances2?: number;
+  /** A third kind of allowance (Indiana WH-4 line 8, adopted children). */
+  allowances3?: number;
   /** A dollar allowance for the year that replaces the standard deduction (Colorado DR 0004 line 2). */
   allowanceAmount?: string;
   /** City income taxes that apply to the employee, by id (New York: "nyc", "yonkers", "yonkers_nr"). */
@@ -94,8 +96,15 @@ export function localWithholding(
       if (!rate) return new D(0);
       let base = wagesThisPeriod;
       if (r.base === "less_state_exemptions" && stateRules.method === "annual_formula") {
-        const perAllowance = new D(stateRules.allowances[0]?.amount ?? 0);
-        base = D.max(wagesThisPeriod.sub(perAllowance.mul(cert.allowances ?? 0).div(periodsPerYear)), 0);
+        // The state's allowance deductions for the year (Ohio's $650, Indiana's three kinds), spread over the paychecks.
+        const counts = allowanceCounts(cert);
+        const yearly = stateRules.allowances.reduce((sum, a, i) => (a.credit ? sum : sum.add(new D(a.amount).mul(counts[i] ?? 0))), new D(0));
+        base = D.max(wagesThisPeriod.sub(yearly.div(periodsPerYear)), 0);
+      } else if (r.base === "state_taxable" && stateRules.method === "annual_formula") {
+        // Maryland: the same taxable wages as the state tax, after the standard deduction and exemptions.
+        const status = stateRules.statuses.find((s) => s.id === cert.filingStatus) ?? stateRules.statuses.find((s) => s.id === stateRules.noCertificateStatus) ?? stateRules.statuses[0]!;
+        const annual = wagesThisPeriod.mul(periodsPerYear);
+        base = D.max(annual.sub(annualDeduction(stateRules, status, cert, annual).deduction), 0).div(periodsPerYear);
       }
       return base.mul(D.min(rate, r.maxRate)).toDecimalPlaces(2);
     }
@@ -126,19 +135,20 @@ export function localWithholding(
   }
 }
 
-function annualFormulaWithholding(
-  rules: Extract<StateIncomeTaxRules, { method: "annual_formula" }>, c: StateWithholding | null | undefined, w4Status: FederalFilingStatus | undefined,
-  wages: Dec, periods: number, fica: EmployeeFica | undefined,
-): Dec {
-  const fromW4 = rules.statusFromW4 && w4Status ? rules.statusFromW4[w4Status] : undefined;
-  const status = rules.statuses.find((s) => s.id === c?.filingStatus) ?? rules.statuses.find((s) => s.id === (fromW4 ?? rules.noCertificateStatus)) ?? rules.statuses[0]!;
-  const counts = [c?.allowances ?? 0, c?.allowances2 ?? 0];
-  if (rules.noTaxBelowAnnualWages && counts[0]! > 0 && wages.mul(periods).lt(rules.noTaxBelowAnnualWages)) return new D(0);
-  // Massachusetts: this paycheck's Social Security and Medicare, until the year's total reaches the cap.
-  let ficaOff = new D(0);
-  if (rules.ficaDeductionCap && fica) ficaOff = D.min(fica.thisPeriod, D.max(new D(rules.ficaDeductionCap).sub(fica.yearToDate), 0));
-  const annual = wages.sub(ficaOff).mul(periods);
+function allowanceCounts(c: StateWithholding | null | undefined): number[] {
+  return [c?.allowances ?? 0, c?.allowances2 ?? 0, c?.allowances3 ?? 0];
+}
+
+/** The year's deductions (standard deduction and allowances) and allowance credits under an annual formula. */
+function annualDeduction(
+  rules: Extract<StateIncomeTaxRules, { method: "annual_formula" }>, status: AnnualFormulaStatus, c: StateWithholding | null | undefined, annual: Dec,
+): { deduction: Dec; credits: Dec } {
+  const counts = allowanceCounts(c);
   let deduction = new D(rules.dollarAllowance && c?.allowanceAmount !== undefined ? c.allowanceAmount : status.standardDeduction);
+  // Wisconsin: the standard deduction shrinks by a share of the year's wages above a level, to nothing.
+  if (status.phaseOut) deduction = D.max(deduction.sub(D.max(annual.sub(status.phaseOut.from), 0).mul(status.phaseOut.rate)), 0);
+  // South Carolina: a share of the year's wages, up to a cap, once at least one allowance is claimed.
+  if (rules.percentDeduction && counts[0]! > 0) deduction = deduction.add(D.min(annual.mul(rules.percentDeduction.rate), rules.percentDeduction.max));
   if (rules.exemptionBase && counts[0]! > 0) deduction = deduction.add(rules.exemptionBase);
   let credits = new D(0);
   rules.allowances.forEach((a, i) => {
@@ -146,6 +156,23 @@ function annualFormulaWithholding(
     if (a.credit) credits = credits.add(amount);
     else deduction = deduction.add(amount);
   });
+  return { deduction, credits };
+}
+
+function annualFormulaWithholding(
+  rules: Extract<StateIncomeTaxRules, { method: "annual_formula" }>, c: StateWithholding | null | undefined, w4Status: FederalFilingStatus | undefined,
+  wages: Dec, periods: number, fica: EmployeeFica | undefined,
+): Dec {
+  const fromW4 = rules.statusFromW4 && w4Status ? rules.statusFromW4[w4Status] : undefined;
+  const status = rules.statuses.find((s) => s.id === c?.filingStatus) ?? rules.statuses.find((s) => s.id === (fromW4 ?? rules.noCertificateStatus)) ?? rules.statuses[0]!;
+  const counts = allowanceCounts(c);
+  if (rules.noTaxBelowAnnualWages && counts[0]! > 0 && wages.mul(periods).lt(rules.noTaxBelowAnnualWages)) return new D(0);
+  // Massachusetts: this paycheck's Social Security and Medicare, until the year's total reaches the cap.
+  let ficaOff = new D(0);
+  if (rules.ficaDeductionCap && fica) ficaOff = D.min(fica.thisPeriod, D.max(new D(rules.ficaDeductionCap).sub(fica.yearToDate), 0));
+  const annual = wages.sub(ficaOff).mul(periods);
+  const { deduction, credits: allowanceCredits } = annualDeduction(rules, status, c, annual);
+  let credits = allowanceCredits;
   const taxable = D.max(annual.sub(deduction), 0);
   let tax = new D(0);
   const rows = rules.tables[status.table]!;

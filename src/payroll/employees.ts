@@ -177,7 +177,7 @@ function cleanStateWithholding(w: EmployeeFields["stateWithholding"]): StateWith
     if (typeof w.filingStatus !== "string" || !/^[a-z_]{2,30}$/.test(w.filingStatus)) invalid("pick a filing status for state withholding");
     out.filingStatus = w.filingStatus as string;
   }
-  for (const key of ["allowances", "allowances2"] as const) {
+  for (const key of ["allowances", "allowances2", "allowances3"] as const) {
     const v = w[key];
     if (v === undefined || v === null || (v as unknown) === "") continue;
     const n = Number(v);
