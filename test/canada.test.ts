@@ -21,7 +21,7 @@ describe("Canada rule packs", () => {
   it("resolves released packs for live pay runs and refuses dates without a pack", () => {
     expect(resolveCanadaRules("BC", "2026-11-13", { requireReleased: true }).province.id).toBe("ca-bc");
     expect(() => resolveCanadaRules("BC", "2027-01-15")).toThrow(/no Canadian rule pack/);
-    expect(resolveCanadaRules("BC", "2026-11-13").provenance[1]).toMatch(/^ca-bc@2026\.2#[0-9a-f]{12}$/);
+    expect(resolveCanadaRules("BC", "2026-11-13").provenance[1]).toMatch(/^ca-bc@2026\.3#[0-9a-f]{12}$/);
   });
 });
 
@@ -118,7 +118,8 @@ describe("provincial income tax", () => {
     const { province } = resolveCanadaRules("ON", "2026-11-13");
     const tax = province.incomeTax;
     if (tax.method !== "t4127") throw new Error("ON pack shape");
-    const t4 = bracketTax(tax.brackets, a).sub(new D(12989).mul(0.0505));
+    // CPP and EI are at their maximums for the year, so the credits use the maximums (T4127 K2 note).
+    const t4 = bracketTax(tax.brackets, a).sub(new D(12989).add(3519.45).add(1123.07).mul(0.0505));
     const v1 = t4.sub(5818).mul(0.2).add(t4.sub(7446).mul(0.36));
     const premium = D.min(900, new D(750).add(a.sub(200000).mul(0.25)));
     expect(d.provincialTax.toFixed(2)).toBe(t4.add(v1).add(premium).div(26).toFixed(2));
@@ -214,5 +215,29 @@ describe("T4127 July 2026 changes", () => {
     const { province } = resolveCanadaRules("PE", "2026-11-13");
     if (province.incomeTax.method !== "t4127") throw new Error("PE pack shape");
     expect(bracketTax(province.incomeTax.brackets, new D(250000)).toFixed(2)).toBe("42036.00"); // 21% × 250,000 − 10,464
+  });
+});
+
+describe("T4127 January 2026 formulas", () => {
+  it("takes CPP and EI on $1,000 a week as in CRA's bonus example ($55.50 and $16.30)", () => {
+    const d = pay("ON", { gross: "1000", periodsPerYear: 52 });
+    expect([d.pension.toFixed(2), d.ei.toFixed(2)]).toEqual(["55.50", "16.30"]);
+  });
+
+  it("gives Alberta's supplemental credit: 25% of K1P + K2P over $4,896", () => {
+    const big = pay("AB", { gross: "3000", provincialClaim: "70000", cppExempt: true, eiExempt: true });
+    const { province } = resolveCanadaRules("AB", "2026-11-13");
+    if (province.incomeTax.method !== "t4127") throw new Error("AB pack shape");
+    const k1p = new D(70000).mul(0.08);
+    const t4 = D.max(0, bracketTax(province.incomeTax.brackets, new D(78000)).sub(k1p).sub(k1p.sub(4896).mul(0.25)));
+    expect(big.provincialTax.toFixed(2)).toBe(t4.div(26).toFixed(2));
+  });
+
+  it("uses the year's maximum CPP and EI credits once they're reached", () => {
+    const { federal } = resolveCanadaRules("SK", "2026-11-13");
+    const maxed = pay("SK", { gross: "3000", ytd: { pension: "4230.45", ei: "1123.07", pensionableEarnings: "90000", pension2: "416" } });
+    const a = new D(78000);
+    const t3 = bracketTax(federal.incomeTax.brackets, a).sub(new D(16452).add(3519.45).add(1123.07).add(1501).mul(0.14));
+    expect(maxed.federalTax.toFixed(2)).toBe(t3.div(26).toFixed(2));
   });
 });

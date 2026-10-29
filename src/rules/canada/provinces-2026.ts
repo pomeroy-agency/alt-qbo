@@ -12,13 +12,13 @@ const rows = (list: [over: number, rate: number, constant: number][]): RateRow[]
 
 const T4127_JULY = "CRA T4127 Payroll Deductions Formulas, 123rd edition (effective July 1, 2026), uploaded by Greg 2026-10-29";
 const table81 = (covers: string): Source => ({ ref: `${T4127_JULY}, Tables 8.1 and 8.2`, covers, basis: "published" });
-const JANUARY = "⚠️ check against T4127 122nd edition (January 2026), which the July edition refers back to for unchanged formulas; asked Greg to upload it.";
+const T4127_JANUARY = "CRA T4127 Payroll Deductions Formulas, 122nd edition (effective January 1, 2026), uploaded by Greg 2026-10-29";
 
 function pack(region: string, name: string, incomeTax: T4127ProvincialTax | QuebecIncomeTax, sources: Source[], reviewNotes: string[]): ProvinceRulePack {
   return {
     kind: "ca-province",
     id: `ca-${region.toLowerCase()}`,
-    version: "2026.2",
+    version: "2026.3",
     name,
     place: { country: "CA", region },
     effectiveFrom: "2026-07-01",
@@ -36,9 +36,12 @@ const t4127 = (td1: string, brackets: RateRow[], basicPersonalAmount: string, ex
 
 export const caAlberta2026 = pack("AB", "Alberta",
   t4127("TD1AB", rows([[0, 0.08, 0], [61200, 0.10, 1224], [154259, 0.12, 4309], [185111, 0.13, 6160], [246813, 0.14, 8628], [370220, 0.15, 12331]]), "22769",
-    { supplementalCredit: { over: "60000", rate: "0.02" } }),
-  [table81("8% to $61,200 up to 15% over $370,220 with constants; basic personal amount $22,769")],
-  [`${JANUARY} The supplemental credit (K5P): TrailBook gives 2% of non-refundable credits above $60,000, which only matters for very large TD1AB claims.`]);
+    { supplementalCredit: { over: "4896", rate: "0.25" } }),
+  [
+    table81("8% to $61,200 up to 15% over $370,220 with constants; basic personal amount $22,769"),
+    { ref: `${T4127_JANUARY}, chapter 4 step 5 (Alberta)`, covers: "K5P = 25% of (K1P + K2P) above $4,896", basis: "published" },
+  ],
+  ["The supplemental credit only matters for TD1AB claims above about $56,000."]);
 
 export const caBritishColumbia2026 = pack("BC", "British Columbia",
   t4127("TD1BC", rows([[0, 0.0614, 0], [50363, 0.077, 786], [100728, 0.105, 3606], [115648, 0.1229, 5676], [140430, 0.147, 9061], [190405, 0.168, 13059], [265545, 0.205, 22884]]), "13216",
@@ -53,9 +56,9 @@ export const caManitoba2026 = pack("MB", "Manitoba",
   t4127("TD1MB", rows([[0, 0.108, 0], [47000, 0.1275, 917], [100000, 0.174, 5567]]), "15780", { bpaPhaseOut: { from: "200000", to: "400000", min: "0" } }),
   [
     table81("10.8% to $47,000, 12.75% to $100,000, 17.4% above, with constants; basic personal amount by the BPAMB formula"),
-    { ref: "EY, Manitoba Budget 2026 tax alert; tax publishers", covers: "basic personal amount $15,780, phased out between $200,000 and $400,000 of net income", basis: "working-knowledge" },
+    { ref: `${T4127_JANUARY}, chapter 2 (BPAMB formula) and what's new`, covers: "basic personal amount $15,780 (not indexed), falling evenly to $0 between $200,000 and $400,000 of net income (A + HD)", basis: "published" },
   ],
-  [`${JANUARY} BPAMB: TrailBook uses $15,780 phased out evenly on annual taxable income between $200,000 and $400,000.`]);
+  []);
 
 export const caNewBrunswick2026 = pack("NB", "New Brunswick",
   t4127("TD1NB", rows([[0, 0.094, 0], [52333, 0.14, 2407], [104666, 0.16, 4501], [193861, 0.195, 11286]]), "13664"),
@@ -74,7 +77,7 @@ export const caNewfoundland2026 = pack("NL", "Newfoundland and Labrador",
 export const caNovaScotia2026 = pack("NS", "Nova Scotia",
   t4127("TD1NS", rows([[0, 0.0879, 0], [30995, 0.1495, 1909], [61991, 0.1667, 2976], [97417, 0.175, 3784], [157124, 0.21, 9283]]), "11932"),
   [table81("8.79% to $30,995 up to 21% over $157,124 with constants; basic personal amount $11,932")],
-  [`${JANUARY} The glossary still lists a BPANS formula; TrailBook uses the flat $11,932 from Table 8.2.`]);
+  ["The BPANS income-based formula was removed for 2026 (T4127 122nd edition); the flat $11,932 applies to everyone."]);
 
 export const caOntario2026 = pack("ON", "Ontario",
   t4127("TD1ON", rows([[0, 0.0505, 0], [53891, 0.0915, 2210], [107785, 0.1116, 4376], [150000, 0.1216, 5876], [220000, 0.1316, 8076]]), "12989", {
@@ -90,9 +93,9 @@ export const caOntario2026 = pack("ON", "Ontario",
   }),
   [
     table81("5.05% to $53,891 up to 13.16% over $220,000 with constants; basic personal amount $12,989; surtax 20% over $5,818 and 36% over $7,446; tax reduction basic amount (S2) $300"),
-    { ref: "Ontario Health Premium schedule (Taxation Act, 2007, s. 33.1), not indexed", covers: "$0 to $20,000 nil, then 6% and 25% steps to $300, $450, $600, $750 and $900", basis: "working-knowledge" },
+    { ref: `${T4127_JANUARY}, chapter 4 step 5 (Ontario)`, covers: "Health Premium (V2): nil to $20,000, then 6% and 25% steps capped at $300, $450, $600, $750 and $900, not reduced by S; tax reduction S = 2 × ($300 + Y) − (T4 + V1), Y = $554 per dependant under 19 and per disabled dependant", basis: "published" },
   ],
-  [`${JANUARY} Health premium schedule and the $554 per-dependant amount (Y) for the Ontario tax reduction (2025's amount indexed 1.9%).`]);
+  []);
 
 export const caPrinceEdwardIsland2026 = pack("PE", "Prince Edward Island",
   t4127("TD1PE", rows([[0, 0.095, 0], [33928, 0.1347, 1347], [65820, 0.166, 3407], [106890, 0.1762, 4497], [142520, 0.19, 6464], [200000, 0.21, 10464]]), "15000"),
@@ -120,7 +123,7 @@ export const caNunavut2026 = pack("NU", "Nunavut",
 export const caYukon2026 = pack("YT", "Yukon",
   t4127("TD1YT", rows([[0, 0.064, 0], [58523, 0.09, 1522], [117045, 0.109, 3745], [181440, 0.128, 7193], [500000, 0.15, 18193]]), "federal", { canadaEmploymentAmount: true }),
   [table81("6.4% to $58,523 up to 15% over $500,000 with constants; basic personal amount by BPAYT; Canada employment amount $1,501 (K4P)")],
-  [`${JANUARY} BPAYT: TrailBook follows the federal basic personal amount and its phase-out.`]);
+  ["BPAYT = BPAF (T4127 122nd edition, chapter 2): the federal amount and its phase-out."]);
 
 export const caQuebec2026 = pack("QC", "Quebec",
   {
