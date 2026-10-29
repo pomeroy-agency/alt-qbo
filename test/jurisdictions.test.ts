@@ -17,7 +17,7 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AZ", "CA", "CO", "CT", "FL", "GA", "IA", "ID", "IL", "IN", "KY", "LA", "MA", "MD", "MI", "MN", "MO", "NC", "NH", "NJ", "NV", "NY", "OH", "OK", "OR", "PA", "SC", "SD", "TN", "TX", "UT", "VA", "WA", "WI", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DE", "FL", "GA", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "MI", "MN", "MO", "MS", "NC", "ND", "NH", "NJ", "NV", "NY", "OH", "OK", "OR", "PA", "SC", "SD", "TN", "TX", "UT", "VA", "WA", "WI", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
@@ -656,5 +656,59 @@ describe("Alabama, Louisiana, Kentucky, Oklahoma, Connecticut and Iowa", () => {
     expect(due("OK", "OK_WH", "ok_wh")).toEqual(["2026-08-20"]);
     expect(due("CT", "CT_WH", "ct_wh")).toEqual(["2026-08-17"]);
     expect(due("IA", "IA_WH", "ia_wh")).toEqual(["2026-08-17"]);
+  });
+});
+
+describe("Arkansas, Delaware, Kansas, Mississippi and North Dakota", () => {
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number) =>
+    stateWithholding(pack(region).payroll.incomeTax, { state }, new D(wages), periods).toFixed(2);
+
+  it("matches Arkansas's formula example, with the $50 midpoint and the top-bracket adjustments", () => {
+    expect(w("AR", { allowances: 2 }, 2127, 12)).toBe("36.50");
+    // $95,050 taxable (midpoint of $95,001-$95,100): 3.7% less $339.90, rounded.
+    expect(w("AR", null, 97520, 1)).toBe("3177.00");
+    // From $100,001 the exact figure: 3.7% less $79.90.
+    expect(w("AR", null, 120000, 1)).toBe("4269.00");
+  });
+
+  it("matches Delaware's Employer's Guide examples", () => {
+    expect(w("DE", { filingStatus: "single", allowances: 1 }, 500, 52)).toBe(new D(774).div(52).toFixed(2));
+    expect(w("DE", { filingStatus: "married", allowances: 3 }, 500, 52)).toBe(new D(387).div(52).toFixed(2));
+    expect(w("DE", { filingStatus: "single", allowances: 1 }, 31000, 1)).toBe("1043.63");
+  });
+
+  it("matches Kansas's KW-100 example and its single wage bracket table", () => {
+    // The guide's per-period table gives $41.44.
+    expect(w("KS", { filingStatus: "joint", allowances: 3 }, 2000, 24)).toBe("41.43");
+    // Semi-monthly single, $1,985-$2,005 row: $78 with one allowance, $73 with two.
+    expect(w("KS", { filingStatus: "single", allowances: 1 }, 1995, 24)).toBe("78.00");
+    expect(new D(w("KS", { filingStatus: "single", allowances: 2 }, 1995, 24)).toDecimalPlaces(0).toFixed(2)).toBe("73.00");
+  });
+
+  it("works Mississippi out from the 2026 flowchart, rounded to the dollar", () => {
+    expect(w("MS", { filingStatus: "single" }, 3000, 12)).toBe("59.00");
+    expect(w("MS", { filingStatus: "head_of_family", allowances: 2 }, 1000, 52)).toBe("20.00");
+    expect(w("MS", null, 1000, 52)).toBe(new D(52000 - 2300 - 10000).mul("0.04").div(52).toDecimalPlaces(0).toFixed(2));
+  });
+
+  it("matches North Dakota's 2026 weekly wage bracket table by federal W-4 status", () => {
+    const nd = (w4Status: "single_or_mfs" | "mfj" | "hoh", wages: number) =>
+      stateWithholding(pack("ND").payroll.incomeTax, { w4Status }, new D(wages), 52).toFixed(2);
+    expect(nd("single_or_mfs", 1787.5)).toBe("13.00");
+    expect(nd("single_or_mfs", 1812.5)).toBe("14.00");
+    expect(nd("mfj", 2112.5)).toBe("20.00");
+    expect(nd("hoh", 2112.5)).toBe("12.00");
+  });
+
+  it("dates each state's withholding deposit", () => {
+    const run = (code: string): RunTaxes => ({ payRunId: "r1", payDate: "2026-07-10", byTax: { [code]: 30000n, FIT: 10000n } });
+    const due = (region: string, code: string, kind: string) =>
+      depositSchedule([run(code)], "monthly", { country: "US", region }, {}).filter((d) => d.kind === kind).map((d) => d.dueDate);
+    expect(due("AR", "AR_WH", "ar_wh")).toEqual(["2026-08-17"]);
+    expect(due("DE", "DE_WH", "de_wh")).toEqual(["2026-08-17"]);
+    expect(due("KS", "KS_WH", "ks_wh")).toEqual(["2026-08-17"]);
+    expect(due("MS", "MS_WH", "ms_wh")).toEqual(["2026-08-17"]);
+    expect(due("ND", "ND_WH", "nd_wh")).toEqual(["2026-11-02"]);
   });
 });

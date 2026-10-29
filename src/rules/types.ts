@@ -189,8 +189,14 @@ export type StateIncomeTaxRules =
       noTaxBelowAnnualWages?: string;
       /** The employee may enter a dollar allowance that replaces the standard deduction (Colorado DR 0004 line 2). */
       dollarAllowance?: { label: string };
-      /** Marginal rates on taxable wages for the year, by `AnnualFormulaStatus.table`. */
-      tables: Record<string, { over: string; rate: string }[]>;
+      /**
+       * Marginal rates on taxable wages for the year, by `AnnualFormulaStatus.table`.
+       * Rows with `subtract` instead give the whole tax as taxable wages × rate
+       * less `subtract`, from the row in force (Arkansas's bracket adjustments).
+       */
+      tables: Record<string, { over: string; rate: string; subtract?: string }[]>;
+      /** Taxable wages below `below` are looked up at the middle of their `step` (Arkansas: the $50 midpoint of each $100 below $100,001). */
+      taxableMidpoint?: { step: string; below: string };
       /**
        * Round each paycheck's amount to the cent or, as North Carolina asks,
        * the whole dollar; "annual_dollar" rounds the year's tax to the dollar
@@ -214,6 +220,8 @@ export interface AnnualFormulaStatus {
   deductionByWages?: WageRow[];
   /** A personal exemption added to the deduction (Alabama: $1,500 or $3,000). */
   exemption?: string;
+  /** The first `count` allowances of the first kind are worth `amount` each instead (Kansas: one $9,160 allowance single, two joint; the rest $2,320). */
+  firstAllowances?: { count: number; amount: string };
   table: string;
   /** Amounts by the year's wages added to the tax from the table (Connecticut Tables C and D). */
   taxAdditions?: WageRow[][];
