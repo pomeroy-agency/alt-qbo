@@ -47,7 +47,7 @@ export function calculatePayRun(input: PayRunInput): PayRun {
   const st = rules.state.payroll;
   const taxAccounts: Record<string, string> = { ...FEDERAL_TAX_ACCOUNT };
   if (st.incomeTaxAgency) taxAccounts[st.incomeTaxAgency.code] = st.incomeTaxAgency.account;
-  for (const t of st.taxes) taxAccounts[t.code] = t.account;
+  for (const t of [...(st.localIncomeTaxes ?? []), ...st.taxes]) taxAccounts[t.code] = t.account;
   const byTax: Record<string, bigint> = {};
   const byDeduction: Record<string, bigint> = {};
   for (const p of paychecks) {

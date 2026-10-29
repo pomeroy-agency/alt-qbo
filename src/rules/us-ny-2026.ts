@@ -3,12 +3,21 @@ import type { StateRulePack } from "./types.js";
 // New York State 2026. Withholding follows the exact calculation method
 // (Method II) and top-rates method (Method III) of NYS-50-T-NYS (1/26),
 // read from the publication itself on 2026-10-29; the tables below are
-// copied from it. New York City and Yonkers income tax withholding (for their
-// residents) isn't included yet. Greg reviewed and released it on 2026-10-29 (docs/rule-pack-review.md).
+// copied from it. Greg reviewed and released 2026.1 on 2026-10-29
+// (docs/rule-pack-review.md). 2026.2 adds New York City and Yonkers income
+// tax withholding from NYS-50-T-NYC (1/26) and NYS-50-T-Y (1/26); merging its
+// pull request releases it.
+const NYC_RATES = ["0.0205", "0.0280", "0.0325", "0.0395", "0.0415", "0.0425"];
+
+/** NYC table rows from [wages from, amount added]; each row subtracts its own start and uses the rate above. */
+function nycRows(...rows: [string, string][]) {
+  return rows.map(([from, add], i) => ({ from, subtract: from, rate: NYC_RATES[i]!, add }));
+}
+
 export const usNewYork2026: StateRulePack = {
   kind: "state",
   id: "us-ny",
-  version: "2026.1",
+  version: "2026.2",
   name: "New York",
   place: { country: "US", region: "NY" },
   effectiveFrom: "2026-01-01",
@@ -17,6 +26,8 @@ export const usNewYork2026: StateRulePack = {
   calendar: "weekends",
   sources: [
     { ref: "NYS-50-T-NYS (1/26), New York State Withholding Tax Tables and Methods, pages 14 to 22", covers: "tables A to C (deduction and exemption allowances), Method II tables II-A to II-D, Method III top rates", basis: "published" },
+    { ref: "NYS-50-T-NYC (1/26), New York City Withholding Tax Tables and Methods, exact calculation method", covers: "Table B deductions, Table C exemptions, NYC tables (2.05% to 4.25%), the same for single and married", basis: "published" },
+    { ref: "NYS-50-T-Y (1/26), Yonkers Withholding Tax Tables and Methods", covers: "residents: 16.75% of the New York State amount (Method II); nonresidents: 0.5% of wages less the Method VII exclusion", basis: "published" },
     { ref: "NYS-50 (Employer's Guide); Tax Law 674", covers: "withholding paid within 3 business days once $700 or more is withheld; otherwise with the NY-45; no IT-2104 means single with no allowances", basis: "working-knowledge" },
     { ref: "NYS DOL, Current 2026 Employer Contribution Rate", covers: "$17,600 UI wage base; new employers 4.1% (4.025% UI plus 0.075% Re-employment Service Fund)", basis: "published" },
     { ref: "DFS, 2026 Paid Family Leave rate decision; paidfamilyleave.ny.gov/2026", covers: "0.432% of wages, at most $411.91 a year", basis: "published" },
@@ -27,7 +38,10 @@ export const usNewYork2026: StateRulePack = {
   reviewNotes: [
     "No IT-2104 on file: withheld as single with no allowances. Married withholding at the higher single rate, and head of household, use the single tables.",
     "Withholding over $700 not yet paid is due within 3 business days of the payday; the rest is paid with the NY-45. Check whether your business must use the 5-business-day rule instead.",
-    "New York City and Yonkers resident withholding isn't calculated yet. This is the main gap before releasing New York for employees who live there.",
+    "New York City and Yonkers income tax is withheld only when the employee's record says it applies: lives in New York City, lives in Yonkers, or works in Yonkers and lives elsewhere (IT-2104 and IT-2104.1). TrailBook doesn't guess it from an address.",
+    "NYC uses one table for single and married; its deduction and exemption figures differ from the state's. Yonkers residents pay 16.75% of the state amount worked out before any extra withholding the employee asked for.",
+    "NYC and Yonkers withholding is paid and reported with New York State withholding (NYS-1 and NY-45), so it's credited to the same liability account.",
+    "NYC withholding uses the state allowances (IT-2104 line 1); a different NYC count on line 2 isn't kept separately yet. Extra NYC and Yonkers withholding (lines 4 and 5) isn't split out either: the one extra amount is added to state withholding.",
     "Disability (DBL) and Paid Family Leave contributions are withheld from employees and go toward your insurance carrier's premium; TrailBook holds them in a liability account and doesn't schedule a state payment.",
     "Paid Family Leave is capped by its annual maximum ($411.91), shown as a wage base of $95,349.54.",
     "The Metropolitan Commuter Transportation Mobility Tax (employers in the MCTD with more than $312,500 of payroll a quarter) isn't calculated.",
@@ -161,6 +175,40 @@ export const usNewYork2026: StateRulePack = {
       },
     },
     incomeTaxAgency: { agency: "DTF", code: "NY_WH", label: "New York income tax", account: "ny_wh_payable" },
+    localIncomeTaxes: [
+      {
+        id: "nyc", name: "NYC income tax", label: "Lives in New York City", code: "NYC_WH", agency: "DTF", account: "ny_wh_payable", w2Locality: "NYC",
+        rules: {
+          method: "ny_exact",
+          deduction: {
+            weekly: { single: "96.15", married: "105.75" },
+            biweekly: { single: "192.30", married: "211.50" },
+            semimonthly: { single: "208.35", married: "229.15" },
+            monthly: { single: "416.70", married: "458.30" },
+          },
+          exemption: { weekly: "19.25", biweekly: "38.50", semimonthly: "41.65", monthly: "83.30" },
+          tables: {
+            weekly: nycRows(["0", "0.00"], ["154", "3.15"], ["167", "3.54"], ["288", "7.46"], ["481", "15.06"], ["1154", "43.00"]),
+            biweekly: nycRows(["0", "0.00"], ["308", "6.31"], ["334", "7.08"], ["577", "14.92"], ["962", "30.12"], ["2308", "86.00"]),
+            semimonthly: nycRows(["0", "0.00"], ["333", "6.83"], ["362", "7.67"], ["625", "16.17"], ["1042", "32.63"], ["2500", "93.17"]),
+            monthly: nycRows(["0", "0.00"], ["667", "13.67"], ["725", "15.33"], ["1250", "32.33"], ["2083", "65.25"], ["5000", "186.33"]),
+          },
+        },
+      },
+      { id: "yonkers", name: "Yonkers income tax", label: "Lives in Yonkers", code: "YON_WH", agency: "DTF", account: "ny_wh_payable", w2Locality: "YONKERS", rules: { method: "share_of_state", share: "0.1675" } },
+      {
+        id: "yonkers_nr", name: "Yonkers nonresident earnings tax", label: "Works in Yonkers, lives elsewhere", code: "YON_NR", agency: "DTF", account: "ny_wh_payable", w2Locality: "YONKERS",
+        rules: {
+          method: "exclusion_percent", rate: "0.005",
+          exclusions: {
+            weekly: [{ from: "0", exclusion: null }, { from: "77", exclusion: "58" }, { from: "192", exclusion: "38" }, { from: "385", exclusion: "19" }, { from: "577", exclusion: "0" }],
+            biweekly: [{ from: "0", exclusion: null }, { from: "154", exclusion: "115" }, { from: "385", exclusion: "77" }, { from: "769", exclusion: "38" }, { from: "1154", exclusion: "0" }],
+            semimonthly: [{ from: "0", exclusion: null }, { from: "167", exclusion: "125" }, { from: "417", exclusion: "83" }, { from: "833", exclusion: "42" }, { from: "1250", exclusion: "0" }],
+            monthly: [{ from: "0", exclusion: null }, { from: "333", exclusion: "250" }, { from: "833", exclusion: "167" }, { from: "1667", exclusion: "83" }, { from: "2500", exclusion: "0" }],
+          },
+        },
+      },
+    ],
     taxes: [
       { code: "NY_SDI", label: "NY disability (DBL)", agency: "Carrier", paidBy: "employee", rate: "0.005", perWeekCap: "0.60", paidToCarrier: true, wageBase: null, account: "ny_dbl_pfl_payable" },
       { code: "NY_PFL", label: "NY Paid Family Leave", agency: "Carrier", paidBy: "employee", rate: "0.00432", wageBase: "95349.54", paidToCarrier: true, account: "ny_dbl_pfl_payable" },
@@ -170,7 +218,7 @@ export const usNewYork2026: StateRulePack = {
       },
     ],
     deposits: [
-      { kind: "ny_wh", codes: ["NY_WH"], agency: "DTF", what: "New York withholding", where: "NY Business Online Services (NYS-1)", schedule: "accumulated_threshold", atOrAbove: "700", businessDays: 3, report: "NY-45" },
+      { kind: "ny_wh", codes: ["NY_WH", "NYC_WH", "YON_WH", "YON_NR"], agency: "DTF", what: "New York, NYC and Yonkers withholding", where: "NY Business Online Services (NYS-1)", schedule: "accumulated_threshold", atOrAbove: "700", businessDays: 3, report: "NY-45" },
       { kind: "ny_ui", codes: ["NY_UI"], agency: "DOL", what: "New York UI", where: "NY Business Online Services", schedule: "quarterly", report: "NY-45" },
     ],
     employerAccount: { label: "New York UI employer registration number", hint: "The number on your Department of Labor notices. It goes on the NY-45. Withholding uses your federal EIN.", pattern: "^[0-9]{7}$" },
@@ -184,7 +232,7 @@ export const usNewYork2026: StateRulePack = {
     quarterly: [
       {
         form: "NY-45", slug: "ny45", title: "Quarterly Combined Withholding, Wage Reporting, and Unemployment Insurance Return (NY-45)", kind: "combined_return",
-        codes: ["NY_UI"], withholdingCodes: ["NY_WH"], fileAt: "File through NY Business Online Services",
+        codes: ["NY_UI"], withholdingCodes: ["NY_WH", "NYC_WH", "YON_WH", "YON_NR"], fileAt: "File through NY Business Online Services",
       },
     ],
     w2Box14: [{ code: "NY_SDI", label: "NY SDI" }, { code: "NY_PFL", label: "NY PFL" }],

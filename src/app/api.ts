@@ -1345,6 +1345,16 @@ async function notifyAdmins(ctx: Ctx, msg: { subject: string; text: string }) {
   }
 }
 
+/** Names for the state's tax codes on pay run tables and stubs ("NY_WH" is "New York income tax"). */
+function taxLabels(pack: StateRulePack): Record<string, string> {
+  const st = pack.payroll;
+  return Object.fromEntries([
+    ...(st.incomeTaxAgency ? [[st.incomeTaxAgency.code, st.incomeTaxAgency.label]] : []),
+    ...(st.localIncomeTaxes ?? []).map((t) => [t.code, t.name]),
+    ...st.taxes.map((t) => [t.code, t.label]),
+  ]);
+}
+
 /** What the payroll screens need to know about the business's state: its forms, taxes and labels. */
 function payrollProfile(pack: StateRulePack, today: string) {
   const it = pack.payroll.incomeTax;
@@ -1354,6 +1364,8 @@ function payrollProfile(pack: StateRulePack, today: string) {
       : it.method === "elected_percent" ? { method: it.method, certificate: it.certificate, choices: it.choices, defaultRate: it.defaultRate, zeroAllowed: it.zeroAllowed }
       : it.method === "or_formula" ? { method: it.method, certificate: it.certificate, noCertificateRate: it.noCertificateRate }
       : { method: it.method, certificate: it.certificate },
+    localIncomeTaxes: (pack.payroll.localIncomeTaxes ?? []).map((t) => ({ id: t.id, label: t.label })),
+    taxLabels: taxLabels(pack),
     wageAreas: pack.wageHour.areas ? [pack.wageHour.defaultAreaName ?? "Rest of the state", ...pack.wageHour.areas.map((a) => a.name)] : [],
     agencies: [...new Set([pack.payroll.incomeTaxAgency?.agency, ...pack.payroll.taxes.filter((t) => !t.paidToCarrier).map((t) => t.agency)].filter(Boolean))],
     assignedRates: pack.payroll.taxes.filter((t) => t.assignedRate).map((t) => ({ code: t.code, label: t.assignedRate!.label, hint: t.assignedRate!.hint, newEmployerRate: t.rate })),
@@ -1653,7 +1665,7 @@ route("GET", "/api/orgs/:org/entities/:entity/pay-runs/:run", async (_req, p, ct
     );
     const pr = rows[0];
     if (!pr) throw new HttpError(404, "pay run not found");
-    const ent = (await tx.query("SELECT legal_name, ein, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const ent = (await tx.query("SELECT legal_name, ein, address_line1, address_city, address_state, address_zip, country, region FROM entities WHERE id = $1", [p.entity])).rows[0];
     const people = new Map((await listEmployees(tx, p.entity!)).map((e) => [e.id, e]));
     // A posted run's stubs show the year through this run; a prepared one adds itself to what's posted so far.
     const ytd = await yearToDate(tx, p.entity!, pr.pay_date ?? pr.result.payDate, pr.status === "posted" ? { throughRunId: pr.id } : {});
@@ -1682,6 +1694,7 @@ route("GET", "/api/orgs/:org/entities/:entity/pay-runs/:run", async (_req, p, ct
       directDeposit,
       employer: { name: ent.legal_name, ein: ent.ein, address: ent.address_line1 ? { line1: ent.address_line1, city: ent.address_city, state: ent.address_state, zip: ent.address_zip } : null },
       stubs,
+      taxLabels: taxLabels(statePackFor({ country: ent.country, region: ent.region }, pr.pay_date ?? pr.result.payDate)),
     }), { headers: { "content-type": "application/json" } });
   }),
 );
