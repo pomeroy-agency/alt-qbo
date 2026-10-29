@@ -111,6 +111,8 @@ nav.mobile { display: none; }
 /* forms */
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--ink); }
+label.check.wrap { align-items: flex-start; line-height: 1.4; }
+label.check.wrap input { margin-top: 2px; flex: none; }
 input, select, textarea {
   font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
   border-radius: 8px; padding: 7px 10px; min-width: 0;
