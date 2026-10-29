@@ -1640,6 +1640,9 @@ const FREQ_DAYS = { weekly: 7, biweekly: 14, semimonthly: 15, monthly: 30 };
 const DEDUCTION_LABEL = { traditional401k: "401(k)", section125: "Health premium (pre-tax)", post_tax: "After-tax deduction" };
 const pay = { employees: [], stateRates: {}, state: null, adding: false, workCities: [] };
 
+/** A rate as a percentage without float noise: "0.034" reads as "3.4". */
+const pct100 = (r) => String(Number((Number(r) * 100).toFixed(4)));
+
 /** The state withholding certificate's fields: California's DE 4, an elected rate (Arizona A-4), or nothing where there's no income tax. */
 function stateCertificateFields(e, v, sel) {
   const it = pay.state?.incomeTax ?? { method: "ca_method_b", certificate: "DE 4" };
@@ -1650,7 +1653,7 @@ function stateCertificateFields(e, v, sel) {
   }
   if (it.method === "elected_percent") {
     const sw = e?.stateWithholding ?? {};
-    const pctLabel = (r) => `${Number(r) * 100}%`;
+    const pctLabel = (r) => `${pct100(r)}%`;
     const opts = [["", `Not filed (${pctLabel(it.defaultRate)})`], ...it.choices.map((r) => [r, pctLabel(r)])];
     return `<label>${esc(it.certificate)} rate${sel("swRate", opts, sw.rate ?? "")}</label>
       <label>${esc(it.certificate)} extra each paycheck ($)<input name="swExtra" value="${v(sw.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
@@ -1858,7 +1861,7 @@ async function payrollView(id) {
       </table></div>
       <datalist id="work-cities">${pay.workCities.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
       ${(st?.assignedRates ?? []).map((r) => `<form data-form="ui-rate" data-code="${esc(r.code)}" class="row" style="margin-top:12px">
-        <label>${esc(r.label)}<input name="ratePercent" value="${pay.stateRates[r.code] ? esc(String(Number(pay.stateRates[r.code]) * 100)) : ""}" placeholder="${esc(String(Number(r.newEmployerRate) * 100))} (new employer)" style="width:170px" ${canWrite ? "" : "disabled"}></label>
+        <label>${esc(r.label)}<input name="ratePercent" value="${pay.stateRates[r.code] ? esc(pct100(pay.stateRates[r.code])) : ""}" placeholder="${esc(pct100(r.newEmployerRate))} (new employer)" style="width:170px" ${canWrite ? "" : "disabled"}></label>
         ${canWrite ? `<button type="submit" class="secondary">Save rate</button>` : ""}
         <span class="hash">${esc(r.hint)}</span>
       </form>`).join("")}
@@ -2034,7 +2037,7 @@ async function formsView(id, yearParam) {
       <div class="row"><a class="btn secondary" href="#/e/${id}/payroll/forms/${year - 1}">${year - 1}</a>${year < Number(bookDate().slice(0, 4)) ? `<a class="btn secondary" href="#/e/${id}/payroll/forms/${year + 1}">${year + 1}</a>` : ""}</div></div>
     <div class="panel">
       <form data-form="edd-account" class="row" style="margin-bottom:12px">
-        <label>${esc(ea.label)}<input name="stateEmployerAccount" value="${esc(shown ?? "")}" placeholder="${esc(ea.format ? ea.format.replace(/#/g, "0") : "")}" style="width:160px" ${canSet ? "" : "disabled"}></label>
+        <label>${esc(ea.label)}<input name="stateEmployerAccount" value="${esc(shown ?? "")}" placeholder="${esc(ea.format ? (() => { let n = 0; return ea.format.replace(/#/g, () => "1234567890"[n++ % 10]); })() : "")}" style="width:160px" ${canSet ? "" : "disabled"}></label>
         ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
         <span class="hash">${esc(ea.hint)}</span>
       </form>
