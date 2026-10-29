@@ -1119,6 +1119,264 @@ Sources: Connecticut DRS, TPG-211, 2026 Withholding Calculation Rules (Rev. 12/2
 
 Sources: Iowa Department of Revenue, Iowa Withholding Formula, effective January 1, 2026 (released November 2025) (deductions $13,000 / $19,500 / $26,000 a year by IA W-4 marital status; 3.8% rate; allowance amount off the tax; $40 per allowance on 2023 and earlier IA W-4s; examples 1 to 3 ($59.26, $38.72, $45.15)); Iowa Department of Revenue, Iowa Withholding Tax Information and Filing Frequency and Return Due Dates pages (no IA W-4: an allowance amount of zero (701 IAC 307.3(3)"a"); quarterly under $6,000 a year; monthly $6,000 to $120,000 by the 15th for the first two months of a quarter; semimonthly over $120,000); Iowa Workforce Development 2026 rates, as reported by Bloomberg Tax ($20,400 wage base (down from $39,500); 1.0% new-employer rate); Iowa Code 91D.1 (minimum wage $7.25); Iowa Code 252G.3 (new hire reporting within 15 days); no state paid sick leave law ($7.25 minimum wage; report new hires within 15 days).
 
+## Seventh round of states: us-ar, us-de, us-ks, us-ms, us-nd, us-mt, us-nm, us-ri, us-vt, us-wv 2026.1, released 2026-10-29
+
+Ten of the last fourteen (thirteen states and DC). The first five are the ones whose agency sites can be read from here. All use the `annual_formula` method, which gained what they need: Arkansas's bracket adjustments (a table row can give the tax as taxable wages × rate less a fixed amount) and its $50 midpoint lookup, and Kansas's allowances, where the first one or two are personal exemptions worth more than the rest. Delaware adds Wilmington's 1.25% earned income tax (ticked for each employee) and Delaware Paid Leave (employee and employer shares the employer enters). North Dakota has no certificate of its own and follows the federal W-4 filing status. Greg approved all ten on 2026-10-29 and they are `released`, knowing the five secondary-source packs are unverified; the ⚠️ notes below stay as the known limits, and the daily rule watch should re-check every ⚠️ figure against the agency's own document once its site can be reached.
+
+Tested against each publication's own examples: Arkansas's $2,127 monthly example ($36.50), Delaware's Employer's Guide supplemental wage examples ($774, $387 and $1,043.63 a year), Kansas's $2,000 semi-monthly married example ($41.43 against the guide's per-period $41.44) and its single wage bracket table, Mississippi's 2026 flowchart, and North Dakota's 2026 weekly wage bracket table for all three statuses. In the app, each state was added to a new company, an employee entered and a pay run previewed with no errors (the packs were set to released only for that check).
+
+Read from the agencies' own documents on 2026-10-29: Arkansas's revised 2026 formula, employer's instructions and AR4EC; Delaware's Employer's Guide; Kansas's KW-100, percentage tables, wage bracket tables and K-4; Mississippi's 2026 computer payroll flowchart and Pub 89-700; North Dakota's 2026 withholding booklet and withholding guideline. From payroll publishers or secondary sources (the agency pages are blocked from here or don't state them): every UI wage base and new-employer rate except Kansas's (from the Legislative Research Department), and Delaware Paid Leave. Montana, New Mexico, Rhode Island, Vermont and West Virginia (after the first five below) are drafted only from secondary sources: search results quoting the agencies' 2026 tables, the USDA National Finance Center's state bulletins and payroll publishers, because their agency sites can't be reached from here. Their tests check the formulas against the few figures those sources print, not against agency examples, and every figure is ⚠️ until it is checked against the agency's own document. Still to come: Hawaii, Maine, Nebraska and DC, where the secondary sources disagree or leave out whole tables.
+
+### Arkansas (us-ar 2026.1, `src/rules/us-ar-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less the $2,470 standard deduction, looked up at the $50 midpoint of each $100 below $100,001; 0% to $5,599, then rate less adjustment: 2% less $111.98, 3% less $223.97, 3.4% less $287.97, 3.7% less $367.16, with the adjustment falling $10 a $100 from $94,701 ($369.90) to $97,601 ($79.90); rounded to the dollar, less $29 an AR4EC exemption, divided by the pay periods; no AR4EC means no exemptions | ⚠️ check |
+| Arkansas withholding deposits | Monthly by the 15th of the next month; AR941M | ⚠️ check |
+| Arkansas UI deposits | Quarterly with the DWS-ARK-209B | ⚠️ check |
+| Arkansas UI (AR_UI, employer, Arkansas DWS) | 2% default; employer enters its own rate, on the first $7,000 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Contribution Report (DWS-ARK-209B) | ⚠️ check |
+| Minimum wage | $11.00 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Arkansas New Hire Reporting Center | ⚠️ check |
+
+- ⚠️ Arkansas cut its top rate to 3.7% back to January 1, 2026; the DFA reissued the formula in May 2026 under the same 01/01/2026 date. TrailBook uses the revised formula for the whole year.
+- ⚠️ AR4EC: the total exemptions (line 3), each a $29 credit. Filing status doesn't change the formula. No AR4EC on file: no exemptions, as the form says.
+- ⚠️ check: AR4EC line 5 (low-income tax rates) isn't supported yet. TrailBook withholds at the regular rates for employees who tick it, which withholds more than the low-income tables would.
+- ⚠️ Deposits: TrailBook shows Arkansas withholding monthly (AR941M), due the 15th of the next month. Accounts the DFA moves to annual filing (deposits under $1,000) can pay by January 31 instead, later than shown.
+- ⚠️ UI rates are per employer: enter yours from the Division of Workforce Services rate notice. ⚠️ check: the $7,000 wage base and 2.0% new-employer rate are from payroll publishers; dws.arkansas.gov isn't reachable from here.
+- ⚠️ Sales tax: TrailBook doesn't work out Arkansas sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Arkansas DFA, Withholding Tax Formula Method, effective 01/01/2026 (revised May 2026) ($2,470 standard deduction; $50 midrange lookup below $100,001; 0% to $5,599, 2% less $111.98, 3% less $223.97, 3.4% less $287.97, 3.7% less $367.16 from $26,400, then the adjustment falls $10 for each $100 from $94,701 ($369.90) to $97,601 ($79.90); round the year's tax; $29 credit per AR4EC exemption; the $2,127 monthly example ($36.50)); Arkansas DFA, Withholding Tax Employer's Instructions (revised 4/27/26) and Form AR4EC (R 12/04/2025) (monthly AR941M by the 15th of the next month for all new accounts; annual AR941A by January 31 once deposits are under $1,000; AR3MAR by February 28; no AR4EC means no exemptions; low-income tax rates by election on AR4EC line 5); Payroll publishers on Arkansas Division of Workforce Services 2026 rates (dws.arkansas.gov isn't reachable from here) ($7,000 wage base; 2.0% new-employer rate including the administrative assessment); Ark. Code 11-4-210 (minimum wage $11.00); Ark. Code 11-10-904 (new hire reporting); no state paid sick leave law ($11.00 minimum wage; report new hires within 20 days).
+
+### Delaware (us-de 2026.1, `src/rules/us-de-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $3,250 (single or married separately) or $6,500 (married jointly); 0% to $2,000, 2.2% to $5,000, 3.9% to $10,000, 4.8% to $20,000, 5.2% to $25,000, 5.55% to $60,000, 6.6% above; less $110 an exemption; divided by the pay periods; no DE W-4 means single with none | ⚠️ check |
+| Lives or works in Wilmington (WILM_EIT, City of Wilmington) | 1.25% of wages | ⚠️ check |
+| Delaware withholding deposits | Monthly by the 15th of the next month; weekly (by the third business day after the week's Friday) when last year's withholding was over $33,460; W-1 | ⚠️ check |
+| Wilmington earned income tax deposits | Quarterly with the Wilmington W-1 | ⚠️ check |
+| Delaware Paid Leave contributions deposits | Quarterly with the Paid Leave wage report | ⚠️ check |
+| Delaware UI deposits | Quarterly with the UC-8 | ⚠️ check |
+| Delaware Paid Leave (employee) (DE_PL_EE, employee, Delaware DOL) | 0.4% default; employer enters its own rate, on the first $184,500 | ⚠️ check |
+| Delaware Paid Leave (employer) (DE_PL_ER, employer, Delaware DOL) | 0.4% default; employer enters its own rate, on the first $184,500 | ⚠️ check |
+| Delaware UI (DE_UI, employer, Delaware DOL) | 1% default; employer enters its own rate, on the first $14,500 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Contribution Report (UC-8) | ⚠️ check |
+| Quarterly report | Delaware Paid Leave quarterly wage report | ⚠️ check |
+| Minimum wage | $15.00 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Delaware New Hire Reporting | ⚠️ check |
+
+- ⚠️ check: the 6.6% top bracket from $60,000 isn't reached by the Employer's Guide examples (the rate tables are on revenuefiles.delaware.gov, which isn't reachable from here); it matches Delaware's income tax rates.
+- ⚠️ DE W-4: single (also married filing separately) or married filing jointly, and the number of exemptions, each a $110 credit off the year's tax. ⚠️ check: with no DE W-4 on file TrailBook uses single with no exemptions.
+- ⚠️ Wilmington: tick it for employees who live in Wilmington or work there; TrailBook withholds 1.25% of wages and shows one quarterly payment to the City of Wilmington. ⚠️ check: Wilmington's own filing frequency.
+- ⚠️ Delaware Paid Leave: 0.4% employee and 0.4% employer by default (0.8% split evenly, for 25 or more employees). Employers with 10 to 24 employees pay 0.32% (only parental leave); under 10, nothing. Enter your shares in payroll settings; an employer that pays it all enters 0% for the employee share. ⚠️ check: whether TrailBook should let the employee share follow headcount automatically.
+- ⚠️ Deposits: TrailBook shows Delaware withholding monthly (W-1), due the 15th of the next month, and weekly for employers who withheld more than $33,460 in the July-June lookback. Delaware's eighth-monthly periods are due three business days after each period ends, so the weekly dates are close but not exact. Employers who withheld $6,020 or less pay quarterly (W-1Q), later than shown.
+- ⚠️ UI rates are per employer: enter yours from the Delaware DOL rate notice. ⚠️ check: the $14,500 wage base and 1.0% new-employer rate are from payroll publishers.
+- ⚠️ check: the Paid Leave rates and headcount tiers are from payroll publishers.
+- ⚠️ Sales tax: Delaware has no sales tax.
+
+Sources: Delaware Division of Revenue, Employer's Guide (Withholding Regulations and Employer's Duties), revenue.delaware.gov (annualized wages less $3,250 (single or married filing separately) or $6,500 (married filing jointly); the supplemental wage examples ($884 tax on $22,750, $1,153.63 on $27,750, $717 on $19,500 married) that fix the 0% / 2.2% / 3.9% / 4.8% / 5.2% / 5.55% / 6.6% brackets; $110 credit per allowance; quarterly up to $6,020 withheld in the July-June lookback, monthly by the 15th to $33,460, eighth-monthly above); Payroll publishers on Delaware DOL 2026 rates and Delaware Paid Leave (labor.delaware.gov pages read didn't state them) ($14,500 wage base; 1.0% new-employer rate; Paid Leave 0.8% for 25 or more employees (up to half from employees), 0.32% for 10 to 24, none under 10, up to the Social Security wage base); 19 Del. C. 902 (minimum wage $15.00 from January 1, 2025); Wilmington earned income tax 1.25%; no state paid sick leave law ($15.00 minimum wage; Wilmington 1.25%; report new hires within 20 days).
+
+### Kansas (us-ks 2026.1, `src/rules/us-ks-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less the K-4 allowances ($9,160 for the first, two at the Joint rate; $2,320 for each other) and $3,605 (Single) or $8,240 (Joint); 5.2% to $23,000 ($46,000 Joint), 5.58% above; divided by the pay periods; no K-4 means Single with none | ⚠️ check |
+| Kansas withholding deposits | Monthly by the 15th of the next month; KW-5 | ⚠️ check |
+| Kansas UI deposits | Quarterly with the K-CNS 100 | ⚠️ check |
+| Kansas UI (KS_UI, employer, Kansas DOL) | 1.75% default; employer enters its own rate, on the first $15,100 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Wage Report and Unemployment Tax Return (K-CNS 100) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Kansas New Hire Directory | ⚠️ check |
+
+- ⚠️ K-4: the allowance rate (Single or Joint) and the total allowances on line 4. TrailBook values the first allowance at $9,160 (two at the Joint rate) and the rest at $2,320, as the KW-100 wage bracket tables do. No K-4 on file: Single with no allowances, as the K-4 says.
+- ⚠️ TrailBook works out the year's tax from the annual amounts; the guide's per-period tables round the brackets, so results can differ by a cent or two. The guide allows rounding to the dollar; TrailBook keeps cents.
+- ⚠️ Deposits: TrailBook shows Kansas withholding monthly (KW-5), due the 15th of the next month. The Department assigns the frequency: employers withholding over $8,000 a year pay semi-monthly or quad-monthly, earlier than shown, and those under $1,200 can pay quarterly or yearly, later.
+- ⚠️ UI rates are per employer: enter yours from the Kansas Department of Labor rate notice. New employers pay 1.75% (construction 5.55%). ⚠️ check: the $15,100 wage base comes from the Legislative Research Department; www.dol.ks.gov isn't reachable from here.
+- ⚠️ Sales tax: TrailBook doesn't work out Kansas sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Kansas Department of Revenue, KW-100 Withholding Tax Guide (Rev. 10-24) and Tables for Percentage Method of Kansas Withholding (wages paid on and after July 1, 2024) (allowances $9,160 (single), $18,320 (joint), $2,320 per dependent or head of household allowance; zero bracket and 5.2% / 5.58% per payroll period (annual: single $3,605 then $23,000 of 5.2%, married $8,240 then $46,000); the $2,000 semi-monthly married example ($41.44); may round to the dollar; no K-4 means Single with no allowances); Same guide, Filing Frequencies and Due Dates (annual up to $200 a year, quarterly to $1,200 (25th after the quarter), monthly to $8,000 (15th of the next month), semi-monthly to $100,000, quad-monthly above); Kansas Legislative Research Department, Kansas Unemployment Insurance Trust Fund (August 2026) ($15,100 wage base for 2026; new employers 1.75% (construction 5.55%)); K.S.A. 44-1203 (minimum wage follows the $7.25 federal rate); K.S.A. 39-7,119 (new hire reporting); no state paid sick leave law ($7.25 minimum wage; report new hires within 20 days).
+
+### Mississippi (us-ms 2026.1, `src/rules/us-ms-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less the 89-350 exemption ($6,000 single, $9,500 head of family, $12,000 married, $1,500 a dependent) and standard deduction ($2,300 / $3,400 / $4,600); 0% on the first $10,000, 4% above; divided by the pay periods and rounded to the dollar; no 89-350 means no exemption | ⚠️ check |
+| Mississippi withholding deposits | Monthly by the 15th of the next month; 89-105 | ⚠️ check |
+| Mississippi UI deposits | Quarterly with the UI-2/UI-3 | ⚠️ check |
+| Mississippi UI (MS_UI, employer, MDES) | 1% default; employer enters its own rate, on the first $14,000 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Contribution and Wage Report (UI-2/UI-3) | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 15 days to Mississippi New Hire Reporting | ⚠️ check |
+
+- ⚠️ Form 89-350 status: single ($6,000 exemption, $2,300 standard deduction), head of family ($9,500, $3,400), married with a spouse who doesn't work ($12,000, $4,600), or married with a working spouse ($6,000 each by default, $2,300). Dependents, age and blindness are $1,500 each. ⚠️ check: the 89-350 asks for a dollar total of exemptions (line 6); TrailBook asks for the status and the number of $1,500 extras, so working spouses who split the $12,000 unevenly can't be entered exactly.
+- ⚠️ No 89-350 on file: zero exemption, as Pub 89-700 says, with the $2,300 single standard deduction. ⚠️ check: the publication doesn't say which standard deduction applies then.
+- ⚠️ Deposits: TrailBook shows Mississippi withholding monthly, due the 15th of the next month. The Department of Revenue assigns each employer its frequency; quarterly filers pay by the 15th of the month after the quarter, later than shown.
+- ⚠️ UI rates are per employer: enter yours from the MDES rate notice. ⚠️ check: the $14,000 wage base and the 1.0% new-employer rate (1.1% in the second year, 1.2% in the third) are from payroll publishers.
+- ⚠️ Sales tax: TrailBook doesn't work out Mississippi sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Mississippi DOR, Computer Payroll Accounting - For Periods In 2026 (revised 8/13/25) (standard deduction $2,300 single or married with both spouses employed, $3,400 head of family, $4,600 married with one spouse employed; taxable income less the 89-350 line 6 exemption; 0% on the first $10,000 and 4% above; round to whole dollars); Mississippi DOR, Pub 89-700-25-1 (revised January 13, 2026) (exemptions $6,000 single, $9,500 head of family, $12,000 married (divided between working spouses), $1,500 per dependent, age or blindness; no 89-350 means zero exemption; filing frequency assigned by the Department; monthly returns by the 15th of the next month, quarterly by the 15th of the month after the quarter); Payroll publishers on MDES 2026 rates (the MDES site doesn't state them) ($14,000 wage base; 1.0% new-employer rate (1.1% second year, 1.2% third)); Mississippi has no state minimum wage or paid sick leave law; Miss. Code 71-3-... new hire reporting (federal $7.25 minimum wage; report new hires within 15 days).
+
+### North Dakota (us-nd 2026.1, `src/rules/us-nd-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | By the federal W-4 status: the year's wages, 0% to $57,625 single ($57,500 married jointly, $78,475 head of household), 1.95% to $258,450 ($168,525, $289,675), 2.5% above; divided by the pay periods and rounded to the dollar | ⚠️ check |
+| North Dakota withholding deposits | Quarterly with the Form 306 | ⚠️ check |
+| North Dakota UI deposits | Quarterly with the UI contribution and wage report | ⚠️ check |
+| North Dakota UI (ND_UI, employer, Job Service North Dakota) | 1% default; employer enters its own rate, on the first $46,600 | ⚠️ check |
+| Quarterly report | Income Tax Withholding Return (Form 306) | ⚠️ check |
+| Quarterly report | Quarterly Contribution and Wage Report | ⚠️ check |
+| Minimum wage | $7.25 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to North Dakota New Hire Reporting Center | ⚠️ check |
+
+- ⚠️ North Dakota has no withholding certificate of its own; TrailBook uses the filing status on the employee's federal W-4 (Step 1(c)). Employees still on a pre-2020 W-4 should be asked for a current one: TrailBook doesn't use the booklet's Section 1 allowance tables.
+- ⚠️ check: the booklet's single-filer example ($1,800 weekly, $734 a year) doesn't match its own 2026 table, which gives $701.51 a year ($13 a week); the 2026 wage bracket table agrees with the annual table, so TrailBook follows the table.
+- ⚠️ Deposits: TrailBook shows North Dakota withholding quarterly with Form 306, due the last day of the month after the quarter. Employers who withheld under $1,000 last year can file once a year by January 31 instead.
+- ⚠️ UI rates are per employer: enter yours from the Job Service North Dakota rate notice. ⚠️ check: the $46,600 wage base and the 1.00% new-employer rate are from Bloomberg Tax and payroll publishers.
+- ⚠️ Sales tax: TrailBook doesn't work out North Dakota sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: North Dakota Office of State Tax Commissioner, 2026 Income Tax Withholding Rates and Instructions, Section 2 (Annual Percentage Method Tables and weekly wage bracket table, Forms W-4 for 2020 and after) (single 0% to $57,625, 1.95% to $258,450 ($3,916.09), 2.5% above; married filing jointly $57,500 and $168,525 ($2,164.99); head of household $78,475 and $289,675 ($4,118.40); filing status from the federal W-4 Step 1(c), single with no W-4; round to the nearest dollar); Same Office, Guideline – Income Tax Withholding and Information Returns (Form 306 quarterly by the last day of the month after the quarter; annual filing by January 31 for employers who withheld under $1,000 the year before and filed on time); Bloomberg Tax and payroll publishers on Job Service North Dakota 2026 rates ($46,600 wage base; 1.00% new-employer rate (construction 9.67%)); N.D.C.C. 34-06-22 (minimum wage follows the $7.25 federal rate); N.D.C.C. 50-09-02.2 (new hire reporting); no state paid sick leave law ($7.25 minimum wage; report new hires within 20 days).
+
+### Montana (us-mt 2026.1, `src/rules/us-mt-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $16,100 (single), $32,200 (married jointly) or $24,150 (head of household); 4.7% on the next $47,500 ($95,000, $71,250), 5.65% above; divided by the pay periods and rounded to the dollar; no MW-4 means single | ⚠️ check |
+| Montana withholding deposits | Monthly by the 15th of the next month; on the federal semiweekly dates when last year's withholding was over $12,000; withholding payment | ⚠️ check |
+| Montana UI deposits | Quarterly with the UI-5 | ⚠️ check |
+| Montana UI (MT_UI, employer, Montana DLI) | 1.18% default; employer enters its own rate, on the first $47,300 | ⚠️ check |
+| Quarterly report | Unemployment Insurance Quarterly Report (UI-5) | ⚠️ check |
+| Minimum wage | $10.85 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 20 days to Montana New Hire Reporting | ⚠️ check |
+
+- ⚠️ check: revenue.mt.gov isn't reachable from here, so the 2026 Employer's Guide and its tables weren't read. The brackets are the federal 2026 standard deduction ($16,100 / $32,200 / $24,150) plus HB 337's 4.7% bands, which fits the Department's description and the publishers' single table; re-check the joint and head of household tables and the rounding once the site can be read.
+- ⚠️ MW-4 (2026): single (or married filing separately), married filing jointly, or head of household; no allowances. ⚠️ check: with no MW-4 on file TrailBook uses single.
+- ⚠️ Deposits: TrailBook shows Montana withholding monthly, due the 15th of the next month, and on the federal deposit dates for employers who withheld more than $12,000 in the lookback year. ⚠️ check: Montana's thresholds; employers withholding under $1,200 a year can pay once a year.
+- ⚠️ UI rates are per employer and by industry for new employers: enter yours from the Montana Department of Labor and Industry rate notice, including the administrative fund tax. ⚠️ check: the $47,300 wage base is from payroll publishers.
+- ⚠️ Montana has no sales tax.
+
+Sources: Montana Department of Revenue, 2026 Withholding Updates news release, as quoted in search results (not read directly) (tables, Employer's Guide and MW-4 updated December 2025; top rate 5.65% from January 1, 2026; 4.7% on income up to $95,000 joint, $71,250 head of household, $47,500 other; the method now resembles the federal one); Payroll publishers' 2026 Montana tables (getuku, nationaltaxtools) (no withholding up to $16,100 single ($24,150 head of household), 4.7% to $63,600, $2,233 plus 5.65% above; MW-4 filing status, no allowances; rounded to the dollar); Payroll publishers on Montana UI 2026 ($47,300 wage base; new-employer rates by industry, about 1.18% to 2.18% with the administrative fund tax); Montana minimum wage notice (CPI-adjusted); M.C.A. 39-51-... new hire reporting; no state paid sick leave law ($10.85 minimum wage for 2026; report new hires within 20 days).
+
+### New Mexico (us-nm 2026.1, `src/rules/us-nm-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | By the federal W-4 status: the year's wages, 0% to $8,050 single ($16,100 married), then 1.5%, 3.2%, 4.3%, 4.7%, 4.9% and 5.9% from $218,050 ($331,100); head of household uses the single table; divided by the pay periods | ⚠️ check |
+| New Mexico withholding deposits | Monthly by the 25th of the next month; CRS-1 (TRD-41414) | ⚠️ check |
+| New Mexico UI deposits | Quarterly with the ES-903A | ⚠️ check |
+| New Mexico UI (NM_UI, employer, NM DWS) | 1% default; employer enters its own rate, on the first $34,700 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Wage and Contribution Report (ES-903A) | ⚠️ check |
+| Minimum wage | $12.00 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | 1 hour per 30 worked, up to 64 hours a year | ⚠️ check |
+| New-hire report | Within 20 days to New Mexico New Hire Reporting Center | ⚠️ check |
+
+- ⚠️ check: every figure comes from reproductions of the FYI-104; www.tax.newmexico.gov isn't reachable from here.
+- ⚠️ New Mexico follows the federal W-4 filing status. ⚠️ check: head of household employees use the single table here, because the head of household table's upper brackets weren't found; that withholds somewhat more than New Mexico's own table.
+- ⚠️ Deposits: TrailBook shows New Mexico withholding monthly with the CRS-1 (TRD-41414), due the 25th of the next month. ⚠️ check: employers averaging under $500 a month can file quarterly, later than shown.
+- ⚠️ UI rates are per employer: enter yours from the Department of Workforce Solutions rate notice. ⚠️ check: payroll publishers disagree on the 2026 wage base ($30,600 to $34,800); TrailBook uses $34,700.
+- ⚠️ check: New Mexico's workers' compensation fee ($4.30 a quarter per employee, part paid by the employee) isn't included yet.
+- ⚠️ Sales tax: TrailBook doesn't work out New Mexico gross receipts tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: NM Taxation and Revenue Department, FYI-104 (Rev. 11/2025, for wages paid from January 1, 2026), as reproduced in the USDA NFC bulletin and payroll publishers (not read directly) (single: nothing to $8,050, 1.5% to $13,550, 3.2% to $24,550, 4.3% to $41,550, 4.7% to $74,550, 4.9% to $218,050, 5.9% above; married: $16,100, $24,100, $41,100, $66,100, $116,100, $331,100; head of household from $12,075 (1.5% to $20,075, $1,739 plus 4.7% from $62,075)); Payroll publishers on New Mexico DWS 2026 UI (wage base reported as $30,600 to $34,800 (most often $34,700); new-employer rates about 1.0% by industry); N.M. Stat. 50-4-22 (minimum wage $12.00); Healthy Workplaces Act (N.M. Stat. 50-17); new hire reporting within 20 days ($12.00 minimum wage; 1 hour of sick leave per 30 worked, up to 64 hours a year).
+
+### Rhode Island (us-ri 2026.1, `src/rules/us-ri-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $1,000 an RI W-4 exemption (none over $290,800); 3.75% to $82,050, 4.75% to $186,450, 5.99% above; divided by the pay periods; no RI W-4 means no exemptions | ⚠️ check |
+| Rhode Island withholding deposits | Monthly by the 20th of the next month; weekly (by the third business day after the week's Friday) when last year's withholding was over $50,000; RI-941 | ⚠️ check |
+| Rhode Island UI and TDI deposits | Quarterly with the TX-17 | ⚠️ check |
+| Rhode Island TDI (RI_TDI, employee, RI DLT) | 1.1%, on the first $100,000 | ⚠️ check |
+| Rhode Island UI (RI_UI, employer, RI DLT) | 1.21% default; employer enters its own rate, on the first $30,800 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Tax and Wage Report (TX-17) | ⚠️ check |
+| Minimum wage | $16.00 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | 1 hour per 35 worked, up to 40 hours a year (balance up to 40), for employers with 18 or more employees | ⚠️ check |
+| New-hire report | Within 14 days to Rhode Island New Hire Reporting Directory | ⚠️ check |
+
+- ⚠️ check: every figure comes from search results quoting the Division of Taxation and DLT; tax.ri.gov and dlt.ri.gov aren't reachable from here.
+- ⚠️ RI W-4: the number of exemptions, $1,000 each, and none once the year's wages are over $290,800. Filing status doesn't change the table. ⚠️ check: with no RI W-4 on file TrailBook uses no exemptions.
+- ⚠️ TDI: 1.1% of each employee's wages up to $100,000, all from the employee, paid with the quarterly TX-17.
+- ⚠️ Deposits: TrailBook shows Rhode Island withholding monthly, due the 20th of the next month, and weekly for employers who withheld $50,000 or more last year. ⚠️ check: Rhode Island's quarterly-monthly and daily schedules and thresholds.
+- ⚠️ UI rates are per employer: enter yours from the DLT rate notice, including the Job Development Assessment. New employers pay 1.21%.
+- ⚠️ Sick leave: employers with fewer than 18 employees must give the time but needn't pay it; TrailBook tracks paid hours only for larger employers.
+- ⚠️ Sales tax: TrailBook doesn't work out Rhode Island sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: RI Division of Taxation, 2026 Employer's Income Tax Withholding Tables (percentage method, pages 9 and 10), as quoted in search results and the USDA NFC bulletin (not read directly) ($1,000 per exemption, none when annual wages are over $290,800; 3.75% to $82,050, 4.75% to $186,450, 5.99% above; one table for all statuses); RI Department of Labor and Training, TDI / TCI for Employers, as quoted in search results (2026 TDI 1.1% employee deduction on the first $100,000); Payroll publishers on RI DLT 2026 UI ($30,800 wage base ($32,300 for the highest rate group); 1.21% new-employer rate including the 0.21% Job Development Assessment); R.I. Gen. Laws 28-12-3 (minimum wage $16.00 from January 1, 2026); Healthy and Safe Families and Workplaces Act (R.I. Gen. Laws 28-57); new hire reporting within 14 days ($16.00 minimum wage; 1 hour of sick leave per 35 worked, up to 40 hours a year, paid for employers with 18 or more employees).
+
+### Vermont (us-vt 2026.1, `src/rules/us-vt-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $5,400 a W-4VT allowance; single 0% to $3,925, 3.35%, 6.6% from $54,675, 7.6% from $126,775, 8.75% from $260,225; married from $11,775, $96,475, $216,525, $323,825; divided by the pay periods; no W-4VT means single with none | ⚠️ check |
+| Vermont withholding and Child Care Contribution deposits | Monthly by the 25th of the next month; on the federal semiweekly dates when last year's withholding was over $9,000; WHT-436 | ⚠️ check |
+| Vermont UI deposits | Quarterly with the C-101 | ⚠️ check |
+| Vermont Child Care Contribution (employee) (VT_CCC_EE, employee, Vermont Department of Taxes) | 0.11% default; employer enters its own rate, no wage base | ⚠️ check |
+| Vermont Child Care Contribution (employer) (VT_CCC_ER, employer, Vermont Department of Taxes) | 0.33% default; employer enters its own rate, no wage base | ⚠️ check |
+| Vermont UI (VT_UI, employer, Vermont DOL) | 1% default; employer enters its own rate, on the first $15,400 | ⚠️ check |
+| Quarterly report | Quarterly Withholding Reconciliation (WHT-436) | ⚠️ check |
+| Quarterly report | Employer's Quarterly Wage and Contribution Report (C-101) | ⚠️ check |
+| Minimum wage | $14.42 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | 1 hour per 52 worked, up to 40 hours a year | ⚠️ check |
+| New-hire report | Within 10 days to Vermont New Hire Reporting | ⚠️ check |
+
+- ⚠️ check: every figure comes from search results quoting the GB-1210 and from payroll publishers; tax.vermont.gov and labor.vermont.gov aren't reachable from here.
+- ⚠️ W-4VT: single (also married filing separately) or married, and allowances worth $5,400 each. No W-4VT on file: single with no allowances.
+- ⚠️ Child Care Contribution: 0.33% employer and 0.11% employee by default (0.44% in all, up to a quarter of it from the employee). Enter your shares in payroll settings; an employer that pays it all enters 0% for the employee share. Paid with the WHT-436 withholding return.
+- ⚠️ Deposits: TrailBook shows Vermont withholding monthly, due the 25th of the next month, and on the federal deposit dates for employers who withheld more than $9,000 last year. ⚠️ check: Vermont's thresholds; employers withholding under $2,500 a year can pay quarterly.
+- ⚠️ UI rates are per employer: enter yours from the Vermont DOL rate notice. New employers pay 1.0%.
+- ⚠️ Sales tax: TrailBook doesn't work out Vermont sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Vermont Department of Taxes, GB-1210 (2026) percentage method tables, as quoted in search results and the USDA NFC bulletin (not read directly) ($5,400 per allowance ($103.85 weekly), no standard deduction; single: 3.35% from $3,925, 6.6% from $54,675, 7.6% from $126,775, 8.75% from $260,225; married: $11,775, $96,475, $216,525, $323,825; no W-4VT means single with no allowances); Vermont Child Care Contribution (Act 76 of 2023), payroll publishers (0.44% of wages from July 1, 2025; employers may withhold up to 0.11% from employees); Payroll publishers on Vermont DOL 2026 UI ($15,400 wage base; 1.0% new-employer rate); 21 V.S.A. 384 (minimum wage $14.42 for 2026); 21 V.S.A. 481 to 487 (earned sick time); new hire reporting within 10 days ($14.42 minimum wage; 1 hour of earned sick time per 52 worked, up to 40 hours a year).
+
+### West Virginia (us-wv 2026.1, `src/rules/us-wv-2026.ts`)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | The year's wages less $2,000 an IT-104 exemption; two-earner table 2.11% to $7,500, 2.81%, 3.16%, 4.22%, 4.58% above $45,000 (one-earner: $10,000, $25,000, $40,000, $60,000); divided by the pay periods and rounded to the dollar | ⚠️ check |
+| West Virginia withholding deposits | Monthly by the 15th of the next month; IT-101V | ⚠️ check |
+| West Virginia UI deposits | Quarterly with the WVUC-A-154 | ⚠️ check |
+| West Virginia UI (WV_UI, employer, WorkForce West Virginia) | 2.7% default; employer enters its own rate, on the first $9,500 | ⚠️ check |
+| Quarterly report | Employer's Quarterly Contribution and Wage Report (WVUC-A-154) | ⚠️ check |
+| Minimum wage | $8.75 | ⚠️ check |
+| Exempt salary floor (a year) | $35,568 | ⚠️ check |
+| Overtime | After 40 hours a week | ⚠️ check |
+| Paid sick leave | No state law | ⚠️ check |
+| New-hire report | Within 14 days to West Virginia New Hire Reporting Center | ⚠️ check |
+
+- ⚠️ check: every figure comes from search results quoting the IT-100.2A; tax.wv.gov and workforcewv.org aren't reachable from here. The two-earner table's middle brackets ($18,750 and $30,000) are worked out as three quarters of the one-earner ones, matching its known $7,500 and $45,000 edges; they weren't seen in a source.
+- ⚠️ IT-104: exemptions ($2,000 each) and line 5 (one earner, a lower withholding table). No IT-104 on file: the two-earner table with no exemptions.
+- ⚠️ Deposits: TrailBook shows West Virginia withholding monthly, due the 15th of the next month. ⚠️ check: smaller employers may file quarterly or yearly, and December's payment is due with the annual return.
+- ⚠️ check: city service fees (Charleston, Huntington and others charge a few dollars a week) aren't included yet.
+- ⚠️ UI rates are per employer: enter yours from the WorkForce West Virginia rate notice. New employers pay 2.7%.
+- ⚠️ Sales tax: TrailBook doesn't work out West Virginia sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: WV Tax Division, IT-100.2A Tables for Percentage Method of Withholding (March 2026), as quoted in search results and the USDA NFC bulletin (not read directly) ($2,000 per exemption; one-earner: 2.11% to $10,000, 2.81% to $25,000, 3.16% to $40,000, 4.22% to $60,000, 4.58% above; two-earner: 2.11% to $7,500 ($158.25), then 2.81%, 3.16% and 4.22%, 4.58% above $45,000; the two-earner table unless IT-104 line 5 is checked; round to the dollar); Payroll publishers on WorkForce West Virginia 2026 UI ($9,500 wage base; 2.7% new-employer rate); W. Va. Code 21-5C-2 (minimum wage $8.75); no state paid sick leave law; new hire reporting within 14 days ($8.75 minimum wage).
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
@@ -1157,4 +1415,4 @@ Each state is one file in `src/rules` with a `StateRulePack`, added to the regis
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), the Illinois Department of Revenue (IL-700-T, IL-941) and IDES (UI), the Colorado Department of Revenue (DR 1098, DR 0004), CDLE (UI, minimum wage, COMPS Order) and the FAMLI Division, the North Carolina Department of Revenue (NC-30) and DES, the Georgia Department of Revenue (Employer's Tax Guide) and Department of Labor, the Utah State Tax Commission (Publication 14) and Department of Workforce Services, the Idaho State Tax Commission (EPB00744 and EPB00745) and Department of Labor, Michigan Treasury (Form 446, calendar-year withholding figures), UIA and LEO (minimum wage, Earned Sick Time Act), Virginia Tax (Employer Withholding Instructions), the VEC and DOLI (minimum wage), Massachusetts DOR (Circular M, M-941), DUA (UI, EMAC, Workforce Training Fund) and DFML (PFML rates), the New Jersey Division of Taxation (NJ-WT and rate tables) and NJDOL (UI, disability, family leave, WF/SWF rates each July, minimum wage), the Pennsylvania Department of Revenue (employer withholding rate and deposit tiers), L&I (UC tax highlights), DCED (Act 32 earned income tax) and the City of Philadelphia (wage tax rates, which change each July 1), the Ohio Department of Taxation (optional computer formula, employer and school district withholding guidelines) and ODJFS (UI), and the Ohio minimum wage notice, the Indiana Department of Revenue (Departmental Notice #1 county rates) and DWD, the Comptroller of Maryland (withholding guide, percentage tables and county rates) and the Maryland Department of Labor (UI, minimum wage, FAMLI start), the Missouri Department of Revenue (Form 4282) and DOLIR, Kansas City and St. Louis earnings tax, the Wisconsin Department of Revenue (Publication W-166) and DWD, the Minnesota Department of Revenue (withholding booklet), UI Minnesota (UI, Paid Leave premiums) and DLI (minimum wage, earned sick and safe time), Minneapolis and St. Paul minimum wages, SCDOR (WH-1603F and the Act 110 withholding tables) and SC DEW, the Alabama Department of Revenue (withholding booklet) and Department of Workforce, the Louisiana Department of Revenue (R-1306) and Workforce Commission, the Kentucky Department of Revenue (withholding formula) and Office of Unemployment Insurance, the Oklahoma Tax Commission (OW-2) and OESC, Connecticut DRS (TPG-211, withholding tables, IP 2026(1)), the Connecticut Department of Labor (UI, minimum wage, paid sick leave) and the CT Paid Leave Authority, the Iowa Department of Revenue (withholding formula) and Iowa Workforce Development, the Chicago and Cook County minimum wage notices, and Denver, Edgewater and Boulder minimum wages, plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), the Illinois Department of Revenue (IL-700-T, IL-941) and IDES (UI), the Colorado Department of Revenue (DR 1098, DR 0004), CDLE (UI, minimum wage, COMPS Order) and the FAMLI Division, the North Carolina Department of Revenue (NC-30) and DES, the Georgia Department of Revenue (Employer's Tax Guide) and Department of Labor, the Utah State Tax Commission (Publication 14) and Department of Workforce Services, the Idaho State Tax Commission (EPB00744 and EPB00745) and Department of Labor, Michigan Treasury (Form 446, calendar-year withholding figures), UIA and LEO (minimum wage, Earned Sick Time Act), Virginia Tax (Employer Withholding Instructions), the VEC and DOLI (minimum wage), Massachusetts DOR (Circular M, M-941), DUA (UI, EMAC, Workforce Training Fund) and DFML (PFML rates), the New Jersey Division of Taxation (NJ-WT and rate tables) and NJDOL (UI, disability, family leave, WF/SWF rates each July, minimum wage), the Pennsylvania Department of Revenue (employer withholding rate and deposit tiers), L&I (UC tax highlights), DCED (Act 32 earned income tax) and the City of Philadelphia (wage tax rates, which change each July 1), the Ohio Department of Taxation (optional computer formula, employer and school district withholding guidelines) and ODJFS (UI), and the Ohio minimum wage notice, the Indiana Department of Revenue (Departmental Notice #1 county rates) and DWD, the Comptroller of Maryland (withholding guide, percentage tables and county rates) and the Maryland Department of Labor (UI, minimum wage, FAMLI start), the Missouri Department of Revenue (Form 4282) and DOLIR, Kansas City and St. Louis earnings tax, the Wisconsin Department of Revenue (Publication W-166) and DWD, the Minnesota Department of Revenue (withholding booklet), UI Minnesota (UI, Paid Leave premiums) and DLI (minimum wage, earned sick and safe time), Minneapolis and St. Paul minimum wages, SCDOR (WH-1603F and the Act 110 withholding tables) and SC DEW, the Alabama Department of Revenue (withholding booklet) and Department of Workforce, the Louisiana Department of Revenue (R-1306) and Workforce Commission, the Kentucky Department of Revenue (withholding formula) and Office of Unemployment Insurance, the Oklahoma Tax Commission (OW-2) and OESC, Connecticut DRS (TPG-211, withholding tables, IP 2026(1)), the Connecticut Department of Labor (UI, minimum wage, paid sick leave) and the CT Paid Leave Authority, the Iowa Department of Revenue (withholding formula) and Iowa Workforce Development, the Arkansas DFA (withholding formula, low-income tables, AR4EC) and Division of Workforce Services, the Delaware Division of Revenue (Employer's Guide, rate tables), Delaware DOL (UI, Paid Leave) and the City of Wilmington, the Kansas Department of Revenue (KW-100, K-4) and Department of Labor, the Mississippi Department of Revenue (Pub 89-700, computer payroll flowchart) and MDES, the North Dakota Office of State Tax Commissioner (withholding rates booklet) and Job Service North Dakota, the Montana Department of Revenue (withholding tables, MW-4) and Department of Labor and Industry, the New Mexico Taxation and Revenue Department (FYI-104) and Department of Workforce Solutions, the Rhode Island Division of Taxation (withholding tables) and DLT (UI, TDI, sick leave), the Vermont Department of Taxes (GB-1210, Child Care Contribution) and Department of Labor, the West Virginia Tax Division (IT-100.2A) and WorkForce West Virginia, the Chicago and Cook County minimum wage notices, and Denver, Edgewater and Boulder minimum wages, plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

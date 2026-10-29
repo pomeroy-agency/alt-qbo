@@ -36,7 +36,7 @@ const newsletter = newsletterFromEnv(process.env, mailer, appUrl);
 const workerUrl = process.env.CONTEXT === "production" ? process.env.URL : process.env.DEPLOY_PRIME_URL || process.env.URL;
 
 export default async (req: Request) => handleApi(req, pool, {
-  signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing, oauthClients, milepost,
+  signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing, adEvents: billing.adEvents, oauthClients, milepost,
   newsletter, startNewsletterJob: workerUrl ? (task) => startNewsletterJob(workerUrl, task) : undefined,
   backups: backupKey ? { store: netlifyBackupStore(getStore({ name: "backups", consistency: "strong" })), key: backupKey } : undefined,
 });

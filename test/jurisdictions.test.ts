@@ -17,13 +17,13 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AZ", "CA", "CO", "CT", "FL", "GA", "IA", "ID", "IL", "IN", "KY", "LA", "MA", "MD", "MI", "MN", "MO", "NC", "NH", "NJ", "NV", "NY", "OH", "OK", "OR", "PA", "SC", "SD", "TN", "TX", "UT", "VA", "WA", "WI", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DE", "FL", "GA", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
     expect(isLive("US", "CA")).toBe(true);
     expect(isLive("CA", "ON")).toBe(false);
-    expect(isSupportedPlace({ country: "US", region: "MT" })).toBe(false);
+    expect(isSupportedPlace({ country: "US", region: "NE" })).toBe(false);
     expect(() => resolveRules({ country: "CA", region: "BC" }, "2026-06-01")).toThrow(/not launched/);
   });
 
@@ -656,5 +656,95 @@ describe("Alabama, Louisiana, Kentucky, Oklahoma, Connecticut and Iowa", () => {
     expect(due("OK", "OK_WH", "ok_wh")).toEqual(["2026-08-20"]);
     expect(due("CT", "CT_WH", "ct_wh")).toEqual(["2026-08-17"]);
     expect(due("IA", "IA_WH", "ia_wh")).toEqual(["2026-08-17"]);
+  });
+});
+
+describe("Arkansas, Delaware, Kansas, Mississippi and North Dakota", () => {
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number) =>
+    stateWithholding(pack(region).payroll.incomeTax, { state }, new D(wages), periods).toFixed(2);
+
+  it("matches Arkansas's formula example, with the $50 midpoint and the top-bracket adjustments", () => {
+    expect(w("AR", { allowances: 2 }, 2127, 12)).toBe("36.50");
+    // $95,050 taxable (midpoint of $95,001-$95,100): 3.7% less $339.90, rounded.
+    expect(w("AR", null, 97520, 1)).toBe("3177.00");
+    // From $100,001 the exact figure: 3.7% less $79.90.
+    expect(w("AR", null, 120000, 1)).toBe("4269.00");
+  });
+
+  it("matches Delaware's Employer's Guide examples", () => {
+    expect(w("DE", { filingStatus: "single", allowances: 1 }, 500, 52)).toBe(new D(774).div(52).toFixed(2));
+    expect(w("DE", { filingStatus: "married", allowances: 3 }, 500, 52)).toBe(new D(387).div(52).toFixed(2));
+    expect(w("DE", { filingStatus: "single", allowances: 1 }, 31000, 1)).toBe("1043.63");
+  });
+
+  it("matches Kansas's KW-100 example and its single wage bracket table", () => {
+    // The guide's per-period table gives $41.44.
+    expect(w("KS", { filingStatus: "joint", allowances: 3 }, 2000, 24)).toBe("41.43");
+    // Semi-monthly single, $1,985-$2,005 row: $78 with one allowance, $73 with two.
+    expect(w("KS", { filingStatus: "single", allowances: 1 }, 1995, 24)).toBe("78.00");
+    expect(new D(w("KS", { filingStatus: "single", allowances: 2 }, 1995, 24)).toDecimalPlaces(0).toFixed(2)).toBe("73.00");
+  });
+
+  it("works Mississippi out from the 2026 flowchart, rounded to the dollar", () => {
+    expect(w("MS", { filingStatus: "single" }, 3000, 12)).toBe("59.00");
+    expect(w("MS", { filingStatus: "head_of_family", allowances: 2 }, 1000, 52)).toBe("20.00");
+    expect(w("MS", null, 1000, 52)).toBe(new D(52000 - 2300 - 10000).mul("0.04").div(52).toDecimalPlaces(0).toFixed(2));
+  });
+
+  it("matches North Dakota's 2026 weekly wage bracket table by federal W-4 status", () => {
+    const nd = (w4Status: "single_or_mfs" | "mfj" | "hoh", wages: number) =>
+      stateWithholding(pack("ND").payroll.incomeTax, { w4Status }, new D(wages), 52).toFixed(2);
+    expect(nd("single_or_mfs", 1787.5)).toBe("13.00");
+    expect(nd("single_or_mfs", 1812.5)).toBe("14.00");
+    expect(nd("mfj", 2112.5)).toBe("20.00");
+    expect(nd("hoh", 2112.5)).toBe("12.00");
+  });
+
+  it("dates each state's withholding deposit", () => {
+    const run = (code: string): RunTaxes => ({ payRunId: "r1", payDate: "2026-07-10", byTax: { [code]: 30000n, FIT: 10000n } });
+    const due = (region: string, code: string, kind: string) =>
+      depositSchedule([run(code)], "monthly", { country: "US", region }, {}).filter((d) => d.kind === kind).map((d) => d.dueDate);
+    expect(due("AR", "AR_WH", "ar_wh")).toEqual(["2026-08-17"]);
+    expect(due("DE", "DE_WH", "de_wh")).toEqual(["2026-08-17"]);
+    expect(due("KS", "KS_WH", "ks_wh")).toEqual(["2026-08-17"]);
+    expect(due("MS", "MS_WH", "ms_wh")).toEqual(["2026-08-17"]);
+    expect(due("ND", "ND_WH", "nd_wh")).toEqual(["2026-11-02"]);
+  });
+});
+
+describe("Montana, New Mexico, Rhode Island, Vermont and West Virginia (from secondary sources)", () => {
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const w = (region: string, state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number) =>
+    stateWithholding(pack(region).payroll.incomeTax, { state }, new D(wages), periods).toFixed(2);
+
+  it("matches the publishers' Montana single table: $2,233 at $63,600, then 5.65%", () => {
+    expect(w("MT", { filingStatus: "single" }, 63600, 1)).toBe("2233.00");
+    expect(w("MT", { filingStatus: "single" }, 73600, 1)).toBe("2798.00");
+  });
+
+  it("uses New Mexico's table for the federal W-4 status", () => {
+    const nm = (w4Status: "single_or_mfs" | "mfj" | "hoh", wages: number) => stateWithholding(pack("NM").payroll.incomeTax, { w4Status }, new D(wages), 1).toFixed(2);
+    // $82.50 at the top of the 1.5% band ($13,550).
+    expect(nm("single_or_mfs", 13550)).toBe("82.50");
+    expect(nm("mfj", 24100)).toBe("120.00");
+  });
+
+  it("drops Rhode Island's exemptions above $290,800", () => {
+    expect(w("RI", { allowances: 2 }, 50000, 1)).toBe(new D(48000).mul("0.0375").toFixed(2));
+    expect(w("RI", { allowances: 2 }, 300000, 1)).toBe(new D(82050).mul("0.0375").add(new D(104400).mul("0.0475")).add(new D(113550).mul("0.0599")).toFixed(2));
+  });
+
+  it("works Vermont and West Virginia out from their annual tables", () => {
+    expect(w("VT", { filingStatus: "single", allowances: 1 }, 30000, 1)).toBe(new D(30000 - 5400 - 3925).mul("0.0335").toFixed(2));
+    expect(w("WV", null, 7500, 1)).toBe("158.00");
+    expect(w("WV", { filingStatus: "one_earner", allowances: 1 }, 12000, 1)).toBe("211.00");
+  });
+
+  it("takes Rhode Island TDI from the employee", () => {
+    const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+    const p = calculatePaycheck({ employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "25.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } },
+      { federal, state: pack("RI"), provenance: [] }, {}, "2026-09-04");
+    expect(p.taxes.find((t) => t.code === "RI_TDI")?.amountMinor).toBe(1100n);
   });
 });

@@ -1,6 +1,7 @@
 import type { BillingConfig } from "../billing/billing.js";
 import { stripeGateway } from "../billing/gateway.js";
 import { EXAMPLE_ORG_NAME } from "./example.js";
+import { adEventsFromEnv } from "./ad-events.js";
 
 /**
  * Billing settings from the environment:
@@ -19,5 +20,6 @@ export function billingFromEnv(env: Record<string, string | undefined> = process
     seller,
     enforce: env.BILLING_ENFORCE === "true",
     freeOrgNames: [EXAMPLE_ORG_NAME],
+    adEvents: adEventsFromEnv(env),
   };
 }

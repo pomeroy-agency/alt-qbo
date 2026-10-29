@@ -159,7 +159,12 @@ function annualDeduction(
   if (rules.exemptionBase && counts[0]! > 0) deduction = deduction.add(rules.exemptionBase);
   let credits = new D(0);
   rules.allowances.forEach((a, i) => {
-    const amount = (a.byWages ? byWages(a.byWages, annual) : new D(a.amount)).mul(counts[i] ?? 0);
+    let amount = (a.byWages ? byWages(a.byWages, annual) : new D(a.amount)).mul(counts[i] ?? 0);
+    // Kansas: the first allowances are personal exemptions, worth more than the rest.
+    if (i === 0 && status.firstAllowances) {
+      const first = Math.min(counts[0]!, status.firstAllowances.count);
+      amount = new D(status.firstAllowances.amount).mul(first).add(new D(a.amount).mul(counts[0]! - first));
+    }
     if (a.credit) credits = credits.add(amount);
     else deduction = deduction.add(amount);
   });
@@ -183,10 +188,17 @@ function annualFormulaWithholding(
   let credits = allowanceCredits;
   // Alabama: the year's federal withholding comes off as well.
   const federalOff = rules.subtractFederalWithholding ? federalWithheld.mul(periods) : new D(0);
-  const taxable = D.max(annual.sub(deduction).sub(federalOff), 0);
+  let taxable = D.max(annual.sub(deduction).sub(federalOff), 0);
+  // Arkansas: look the year's taxable wages up at the middle of their $100 band.
+  if (rules.taxableMidpoint && taxable.lt(rules.taxableMidpoint.below)) {
+    const step = new D(rules.taxableMidpoint.step);
+    taxable = taxable.div(step).floor().mul(step).add(step.div(2));
+  }
   let tax = new D(0);
   const rows = rules.tables[status.table]!;
-  rows.forEach((r, i) => {
+  const inForce = row(rows, taxable, (r) => r.over);
+  if (inForce.subtract !== undefined) tax = D.max(taxable.mul(inForce.rate).sub(inForce.subtract), 0);
+  else rows.forEach((r, i) => {
     const top = rows[i + 1]?.over;
     const slice = D.min(taxable, top ?? taxable).sub(r.over);
     if (slice.gt(0)) tax = tax.add(slice.mul(r.rate));
