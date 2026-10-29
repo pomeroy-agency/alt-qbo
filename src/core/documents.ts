@@ -502,7 +502,9 @@ function summary(r: any, asOf: string): DocumentSummary {
   };
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Today where the businesses are, not UTC: in a California evening UTC is
+// already tomorrow, which made an invoice due today show as overdue.
+const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
 
 export async function listDocuments(tx: Tx, entityId: string, kind: DocumentKind, asOf = today()): Promise<DocumentSummary[]> {
   const { rows } = await tx.query(

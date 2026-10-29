@@ -30,14 +30,15 @@ import { beginMfaSetup, checkSecondFactor, disableMfa, enableMfa, issueMfaTicket
 import type { Mailer } from "./mail.js";
 import { TERMS_VERSION, acceptTerms, orgsAccepted } from "./terms.js";
 import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
-import { JurisdictionError, allRulePacks, resolveRules } from "../rules/index.js";
+import { COUNTRIES, JurisdictionError, allRulePacks, resolveRules, statePackFor, type Place, type StateRulePack } from "../rules/index.js";
+import { minimumWageOn } from "../rules/minimum-wage.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
-import { createEmployee, listEmployees, setSickLeavePolicy, setUiRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
+import { createEmployee, listEmployees, setSickLeavePolicy, setStateTaxRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
 import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
 import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
-import { form940, form941, formDe9, formsFor, formW2, type PreparedForm } from "../payroll/forms.js";
+import { form940, form941, formDe9, formsFor, formStateQuarterly, formW2, type PreparedForm } from "../payroll/forms.js";
 import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
 import { calculateSavedRun, carrySickLeave, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import { CAN_CONNECT, OAuthError, findClient, issueCode, listGrants, parseScopes, redirectWith, revokeGrant, updateGrantSettings, type OAuthClient } from "./oauth.js";
@@ -174,10 +175,11 @@ route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
   return tenant(ctx, async (tx) => {
     const org = (await tx.query("SELECT id, name, kind FROM organizations WHERE id = $1", [ctx.orgId])).rows[0];
     const entities = (await tx.query(
-      `SELECT id, legal_name, entity_type, region, framework, functional_currency, tax_return_type
+      `SELECT id, legal_name, entity_type, country, region, framework, functional_currency, tax_return_type
          FROM entities ORDER BY created_at`,
     )).rows;
-    return json({ org, role: ctx.role, entities, access });
+    // Countries and their states or provinces, for the place-of-business picker.
+    return json({ org, role: ctx.role, entities, access, countries: COUNTRIES });
   });
 });
 
@@ -1277,12 +1279,20 @@ const toJson = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === "bigin
 route("GET", "/api/orgs/:org/entities/:entity/employees", async (_req, p, ctx) =>
   tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    const ent = (await tx.query("SELECT ca_ui_rate::text, sick_leave_policy FROM entities WHERE id = $1", [p.entity])).rows[0];
-    const uiRate = ent?.ca_ui_rate;
+    const ent = (await tx.query("SELECT country, region, state_tax_rates, sick_leave_policy FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const place: Place = { country: ent.country, region: ent.region };
+    const pack = statePackFor(place, pacificToday());
     const employees = await listEmployees(tx, p.entity!);
+    const rates = ent.state_tax_rates as Record<string, string>;
     return json({
-      employees: withLocalMinimums(employees, pacificToday()), caUiRate: uiRate ? String(Number(uiRate)) : null, sickLeavePolicy: ent?.sick_leave_policy ?? "accrual",
-      directDeposit: await getDirectDepositSettings(tx, p.entity!), workCities: LOCAL_MINIMUM_WAGE_PLACES,
+      employees: withLocalMinimums(place, employees, pacificToday()),
+      state: payrollProfile(pack, pacificToday()),
+      stateRates: Object.fromEntries(Object.entries(rates).map(([k, v]) => [k, String(Number(v))])),
+      // Kept for older clients: California's UI rate.
+      caUiRate: rates.CA_UI ? String(Number(rates.CA_UI)) : null,
+      sickLeavePolicy: ent?.sick_leave_policy ?? "accrual",
+      directDeposit: await getDirectDepositSettings(tx, p.entity!),
+      workCities: pack.place.region === "CA" ? LOCAL_MINIMUM_WAGE_PLACES : [],
     });
   }),
 );
@@ -1335,17 +1345,38 @@ async function notifyAdmins(ctx: Ctx, msg: { subject: string; text: string }) {
   }
 }
 
+/** What the payroll screens need to know about the business's state: its forms, taxes and labels. */
+function payrollProfile(pack: StateRulePack, today: string) {
+  const it = pack.payroll.incomeTax;
+  return {
+    code: pack.place.region, name: pack.name,
+    incomeTax: it.method === "none" ? { method: "none" as const }
+      : it.method === "elected_percent" ? { method: it.method, certificate: it.certificate, choices: it.choices, defaultRate: it.defaultRate, zeroAllowed: it.zeroAllowed }
+      : it.method === "or_formula" ? { method: it.method, certificate: it.certificate, noCertificateRate: it.noCertificateRate }
+      : { method: it.method, certificate: it.certificate },
+    wageAreas: pack.wageHour.areas ? [pack.wageHour.defaultAreaName ?? "Rest of the state", ...pack.wageHour.areas.map((a) => a.name)] : [],
+    agencies: [...new Set([pack.payroll.incomeTaxAgency?.agency, ...pack.payroll.taxes.filter((t) => !t.paidToCarrier).map((t) => t.agency)].filter(Boolean))],
+    assignedRates: pack.payroll.taxes.filter((t) => t.assignedRate).map((t) => ({ code: t.code, label: t.assignedRate!.label, hint: t.assignedRate!.hint, newEmployerRate: t.rate })),
+    employerAccount: pack.payroll.employerAccount,
+    minimumWage: minimumWageOn(pack.wageHour, today),
+    overtime: pack.wageHour.overtime,
+    sickLeave: pack.wageHour.sickLeave,
+    forms: pack.forms.quarterly.map((f) => f.form),
+    status: pack.status,
+  };
+}
+
 /** Each hourly employee paid below a higher city or county minimum wage today gets `belowLocalMinimum`. */
-function withLocalMinimums(employees: Employee[], today: string) {
+function withLocalMinimums(place: Place, employees: Employee[], today: string) {
   let stateMinimum: string;
   try {
-    stateMinimum = resolveRules({ country: "US", region: "CA" }, today).state.wageHour.minimumWage;
+    stateMinimum = minimumWageOn(resolveRules(place, today).state.wageHour, today);
   } catch {
     return employees;
   }
   const headcount = employeeCount(employees, today);
   return employees.map((e) => {
-    const local = e.payType === "hourly" && e.status === "active" ? localMinimumAbove(stateMinimum, e.workCity, today, headcount) : null;
+    const local = e.payType === "hourly" && e.status === "active" ? localMinimumAbove(place, stateMinimum, e.workCity, today, headcount) : null;
     return local && new D(e.payRate).lt(local.rate) ? { ...e, belowLocalMinimum: local } : e;
   });
 }
@@ -1353,13 +1384,13 @@ function withLocalMinimums(employees: Employee[], today: string) {
 /** The parts of an employee in a request; a field left out is left alone. Checked in payroll/employees.ts. */
 function employeeFields(b: Record<string, any>): EmployeeFields {
   const keys = ["name", "email", "address", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours",
-    "overtimeExempt", "w4", "de4", "deductions", "sickBalanceHours", "ssn", "openingYtd", "directDeposit"] as const;
+    "overtimeExempt", "w4", "de4", "stateWithholding", "deductions", "sickBalanceHours", "ssn", "openingYtd", "directDeposit"] as const;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
   for (const k of ["name", "email", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "string") throw new HttpError(400, `${k} should be text`);
   }
-  for (const k of ["w4", "de4", "openingYtd", "address", "directDeposit"]) {
+  for (const k of ["w4", "de4", "stateWithholding", "openingYtd", "address", "directDeposit"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "object") throw new HttpError(400, `${k} should be an object`);
   }
   return out as EmployeeFields;
@@ -1367,22 +1398,30 @@ function employeeFields(b: Record<string, any>): EmployeeFields {
 
 route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p, ctx) => {
   const b = await body(req);
-  const percent = typeof b.caUiRatePercent === "string" && b.caUiRatePercent.trim() ? b.caUiRatePercent.trim() : null;
-  if (percent !== null && !/^\d{1,2}(\.\d{1,3})?$/.test(percent)) throw new HttpError(400, "the UI rate should be a percentage like 3.4");
+  // Assigned rates by tax code, as percentages: { "CA_UI": "6.2" }. caUiRatePercent is the older California-only field.
+  const rates: Record<string, unknown> = { ...(b.stateRatesPercent && typeof b.stateRatesPercent === "object" ? b.stateRatesPercent : {}) };
+  if (b.caUiRatePercent !== undefined) rates.CA_UI = b.caUiRatePercent;
+  const account = b.stateEmployerAccount ?? b.caEmployerAccount;
   await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    if (b.caUiRatePercent !== undefined) {
-      await setUiRate(tx, { orgId: ctx.orgId, entityId: p.entity!, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
+    const ent = (await tx.query("SELECT country, region, state_employer_id FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const pack = statePackFor({ country: ent.country, region: ent.region }, pacificToday());
+    for (const [code, v] of Object.entries(rates)) {
+      const percent = typeof v === "string" && v.trim() ? v.trim() : null;
+      if (percent !== null && !/^\d{1,2}(\.\d{1,3})?$/.test(percent)) throw new HttpError(400, "the rate should be a percentage like 3.4");
+      await setStateTaxRate(tx, { orgId: ctx.orgId, entityId: p.entity!, code, rate: percent === null ? null : new D(percent).div(100).toString(), actor: ctx.actor });
     }
-    if (b.caEmployerAccount !== undefined) {
-      const account = typeof b.caEmployerAccount === "string" ? b.caEmployerAccount.replace(/[\s-]/g, "") : "";
-      if (account && !/^\d{8}$/.test(account)) throw new HttpError(400, "the EDD account number has 8 digits, like 123-4567-8");
+    if (account !== undefined) {
+      const acct = pack.payroll.employerAccount;
+      const clean = typeof account === "string" ? account.replace(/[\s-]/g, "").toUpperCase() : "";
+      if (clean && !new RegExp(acct.pattern).test(clean)) {
+        throw new HttpError(400, `that doesn't look like a ${acct.label}${acct.format ? `; it looks like ${acct.format.replace(/#/g, "0")}` : ""}`);
+      }
       requireRole(ctx, ["owner", "admin", "accountant"]);
-      const before = (await tx.query("SELECT ca_employer_account FROM entities WHERE id = $1", [p.entity])).rows[0].ca_employer_account;
-      await tx.query("UPDATE entities SET ca_employer_account = $2 WHERE id = $1", [p.entity, account || null]);
+      await tx.query("UPDATE entities SET state_employer_id = $2 WHERE id = $1", [p.entity, clean || null]);
       await appendAudit(tx, {
         orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.updated", objectType: "entity", objectId: p.entity!,
-        before: { caEmployerAccount: before }, after: { caEmployerAccount: account || null }, context: { role: ctx.role },
+        before: { stateEmployerAccount: ent.state_employer_id }, after: { stateEmployerAccount: clean || null }, context: { role: ctx.role },
       });
     }
     if (b.sickLeavePolicy !== undefined) {
@@ -1437,8 +1476,11 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms", async (req, p, ctx
   if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new HttpError(400, "year should be like 2026");
   return tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
-    const ca = (await tx.query("SELECT ca_employer_account FROM entities WHERE id = $1", [p.entity])).rows[0].ca_employer_account;
-    return json({ year, forms: formsFor(year, today), caEmployerAccount: ca });
+    const ent = (await tx.query("SELECT country, region, state_employer_id FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const pack = statePackFor({ country: ent.country, region: ent.region }, today);
+    return json({
+      year, forms: formsFor(year, today, pack), stateEmployerAccount: ent.state_employer_id, employerAccount: pack.payroll.employerAccount, stateName: pack.name,
+    });
   });
 });
 
@@ -1455,7 +1497,13 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms/prepared", async (re
       case "940": return form940(tx, p.entity!, year);
       case "de9": return formDe9(tx, { ...base, quarter });
       case "w2": return formW2(tx, base);
-      default: throw new HttpError(404, "no such form");
+      default: {
+        const slug = q.get("form") ?? "";
+        const ent = (await tx.query("SELECT country, region FROM entities WHERE id = $1", [p.entity])).rows[0];
+        const forms = statePackFor({ country: ent.country, region: ent.region }, `${year}-12-31`).forms.quarterly;
+        if (!forms.some((f) => f.slug === slug && f.kind !== "ca_de9")) throw new HttpError(404, "no such form");
+        return formStateQuarterly(tx, { ...base, quarter, slug });
+      }
     }
   });
   if (q.get("format") === "csv") {

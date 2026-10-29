@@ -1,6 +1,6 @@
 import type { Tx } from "../db/pool.js";
 import { resolveSetupRules, type Place } from "../rules/index.js";
-import { COA_TEMPLATES, returnTypeFor } from "../rules/coa/us-service.js";
+import { COA_TEMPLATES, returnTypeFor, stateTaxAccounts } from "../rules/coa/us-service.js";
 import { appendAudit, initAuditChain } from "./audit.js";
 import { LedgerError } from "./errors.js";
 import type { Actor } from "./ledger.js";
@@ -83,8 +83,10 @@ export async function createEntity(tx: Tx, input: CreateEntityInput): Promise<En
   const firstDay = `${input.firstFiscalYear}-${String(fyStart).padStart(2, "0")}-01`;
   const rules = resolveSetupRules(input.place, firstDay);
   const defaults = rules.federal.entityDefaults;
-  const template = COA_TEMPLATES[defaults.coaTemplate];
-  if (!template) throw new LedgerError("INVALID", `no chart-of-accounts template ${defaults.coaTemplate}`);
+  const base = COA_TEMPLATES[defaults.coaTemplate];
+  if (!base) throw new LedgerError("INVALID", `no chart-of-accounts template ${defaults.coaTemplate}`);
+  // The state's own payroll tax liabilities (California PIT, SDI, UI, ETT; Texas UI...) come from its rule pack.
+  const template = [...base, ...stateTaxAccounts(rules.state.payroll.accounts)].sort((a, b) => a.code.localeCompare(b.code));
   const returnType = returnTypeFor(input.entityType);
 
   const { rows } = await tx.query(

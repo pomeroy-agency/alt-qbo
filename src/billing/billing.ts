@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { COUNTRIES, isLive } from "../rules/jurisdictions.js";
 import { withSystem, withTenant, type Tx } from "../db/pool.js";
 import { createContact, recordPayment, updateContact, type ContactAddress } from "../core/documents.js";
 import { issueInvoice, type RateLookup } from "../core/sales-tax.js";
@@ -198,8 +199,11 @@ export async function saveBillingDetails(
   const state = text(a.state, "the state", 2).toUpperCase(), zip = text(a.zip, "the ZIP code", 10);
   if (!/^[A-Z]{2}$/.test(state)) throw new BillingError("the state is two letters, like CA");
   if (!/^\d{5}(-\d{4})?$/.test(zip)) throw new BillingError("the ZIP code looks like 90012");
-  // At launch TrailBook is sold to California businesses only.
-  if (state !== "CA") throw new BillingError("for now, TrailBook is only available to businesses based in California");
+  // TrailBook is sold to businesses in the states it has launched in.
+  if (!isLive("US", state)) {
+    const live = COUNTRIES.find((c) => c.code === "US")!.regions.filter((r) => r.status === "live").map((r) => r.name);
+    throw new BillingError(`for now, TrailBook is only available to businesses based in ${live.join(", ").replace(/, ([^,]*)$/, " or $1")}`);
+  }
   await tx.query(
     `UPDATE subscriptions SET billing_name = $2, billing_email = $3, address_line1 = $4, address_city = $5, address_state = $6, address_zip = $7, updated_at = now()
       WHERE org_id = $1`,
