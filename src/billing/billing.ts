@@ -52,6 +52,7 @@ interface Sub {
   address_line1: string | null; address_city: string | null; address_state: string | null; address_zip: string | null;
   processor_customer: string | null; processor_card: string | null; card_brand: string | null; card_last4: string | null; card_exp: string | null;
   seller_contact_id: string | null; partner_discount_pct: number;
+  comp_until: string | null; comp_reason: string | null; canceled_at: Date | null;
 }
 
 export interface ChargeLine { description: string; quantity: number; unitMinor: number; periodStart: string; periodEnd: string }
@@ -78,6 +79,7 @@ export interface Access { level: "full" | "read_only"; reason?: string; warning?
 export function accessFor(sub: Sub, today: string): Access {
   if (sub.status === "trialing") {
     if (today <= sub.trial_ends_on) return { level: "full" };
+    if (sub.comp_until) return { level: "read_only", reason: "your complimentary period has ended; add a card under Billing to keep making changes (your books stay readable and downloadable)" };
     return { level: "read_only", reason: "your free trial has ended; add a card under Billing to keep making changes (your books stay readable and downloadable)" };
   }
   if (sub.status === "canceled" || (sub.cancel_at_period_end && sub.period_end && today > sub.period_end)) {
@@ -259,7 +261,10 @@ export async function choosePlan(tx: Tx, orgId: string, today: string, plan: unk
 export async function cancel(tx: Tx, orgId: string, today: string): Promise<void> {
   const sub = await ensureSubscription(tx, orgId, today);
   if (sub.status === "trialing" || !sub.period_end) {
-    await tx.query("UPDATE subscriptions SET status = 'canceled', canceled_at = now(), updated_at = now() WHERE org_id = $1", [orgId]);
+    await tx.query(
+      "UPDATE subscriptions SET status = 'canceled', canceled_at = now(), comp_until = NULL, comp_reason = NULL, updated_at = now() WHERE org_id = $1",
+      [orgId],
+    );
     return;
   }
   await tx.query("UPDATE subscriptions SET cancel_at_period_end = true, canceled_at = now(), updated_at = now() WHERE org_id = $1", [orgId]);
@@ -291,6 +296,54 @@ export async function saveCard(tx: Tx, orgId: string, card: SavedCard, today: st
   await tx.query("UPDATE billing_charges SET next_attempt_on = $2, updated_at = now() WHERE org_id = $1 AND status = 'failed'", [orgId, today]);
 }
 
+// ------------------------------------------------------- complimentary
+
+/** The longest complimentary period the hub may set in one go. */
+export const MAX_COMP_DAYS = 3 * 366;
+
+/**
+ * Makes TrailBook free for this organisation through `until`, on `plan`.
+ * Nothing is charged meanwhile, people paid included. It works like a trial
+ * that ends on `until`: the day after, the card on file is charged, or the
+ * books become read-only until one is added. It replaces any trial still
+ * running. Refused while a charge is still open, so a comp
+ * never hides money owed; settle or waive that first.
+ */
+export async function setComp(tx: Tx, orgId: string, today: string, input: { until: unknown; reason: unknown; plan: unknown }): Promise<void> {
+  const until = typeof input.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.until) && !Number.isNaN(Date.parse(input.until)) ? input.until : null;
+  if (!until) throw new BillingError("the complimentary end date looks like 2027-10-31");
+  if (until <= today) throw new BillingError("the complimentary end date must be after today");
+  if (daysBetween(today, until) > MAX_COMP_DAYS) throw new BillingError("a complimentary period can be at most 3 years at a time");
+  if (input.plan !== "books" && input.plan !== "books_payroll") throw new BillingError("pick the plan the complimentary period covers");
+  const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+  if (!reason || reason.length > 200) throw new BillingError("give a reason for the complimentary period (up to 200 characters)");
+  await ensureSubscription(tx, orgId, today);
+  const open = (await tx.query(
+    "SELECT count(*)::int AS n FROM billing_charges WHERE org_id = $1 AND status IN ('pending', 'processing', 'failed', 'held')", [orgId],
+  )).rows[0].n;
+  if (open) throw new BillingError("this organisation has a charge that isn't settled; settle or waive it before making TrailBook complimentary", 409);
+  await tx.query(
+    `UPDATE subscriptions SET status = 'trialing', trial_ends_on = $2, plan = $3, next_plan = NULL, next_interval = NULL,
+       period_start = NULL, period_end = NULL, past_due_since = NULL, cancel_at_period_end = false, canceled_at = NULL,
+       comp_until = $4, comp_reason = $5, comp_set_at = now(), updated_at = now()
+     WHERE org_id = $1`,
+    [orgId, until, input.plan, until, reason],
+  );
+}
+
+/** Ends a complimentary period today: from tomorrow's billing run the card is charged, or the books are read-only. */
+export async function clearComp(tx: Tx, orgId: string, today: string): Promise<void> {
+  const sub = await ensureSubscription(tx, orgId, today);
+  if (!sub.comp_until) return;
+  const stillComped = sub.status === "trialing" && today <= sub.trial_ends_on;
+  await tx.query(
+    `UPDATE subscriptions SET comp_until = NULL, comp_reason = NULL, comp_set_at = now(),
+       trial_ends_on = CASE WHEN $2 THEN $3::date ELSE trial_ends_on END, updated_at = now()
+     WHERE org_id = $1`,
+    [orgId, stillComped, today],
+  );
+}
+
 // --------------------------------------------------------------- summary
 
 export async function billingSummary(tx: Tx, orgId: string, today: string, cfg: BillingConfig) {
@@ -306,6 +359,7 @@ export async function billingSummary(tx: Tx, orgId: string, today: string, cfg: 
     free: false as const,
     plan: sub.plan, interval: sub.interval, nextPlan: sub.next_plan, nextInterval: sub.next_interval, status: sub.status,
     trialEndsOn: sub.trial_ends_on, periodStart: sub.period_start, periodEnd: sub.period_end, cancelAtPeriodEnd: sub.cancel_at_period_end,
+    compUntil: sub.comp_until && today <= sub.comp_until ? sub.comp_until : null, compReason: sub.comp_until && today <= sub.comp_until ? sub.comp_reason : null,
     founding: sub.founding, priceLockedUntil: sub.price_locked_until, foundingSeatsLeft: foundingLeft, partnerDiscountPct: sub.partner_discount_pct,
     prices: sub.prices,
     billing: { name: sub.billing_name, email: sub.billing_email, address: sub.address_line1 ? { line1: sub.address_line1, city: sub.address_city, state: sub.address_state, zip: sub.address_zip } : null },

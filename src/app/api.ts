@@ -19,6 +19,7 @@ import {
   runBilling, saveBillingDetails, saveCard, type BillingConfig,
 } from "../billing/billing.js";
 import { GatewayError } from "../billing/gateway.js";
+import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
 import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
@@ -76,6 +77,8 @@ export interface ApiOptions {
   milepost?: MilePostOptions;
   /** TrailBook News, shown only in the operator's own organisation. */
   newsletter?: NewsletterConfig;
+  /** The Pomeroy account hub: where TrailBook reports each organisation's status (hub.ts). */
+  hub?: HubOptions;
   /** Starts the newsletter's background worker. */
   startNewsletterJob?: (task: NewsletterTask) => Promise<void>;
 }
@@ -390,12 +393,14 @@ route("POST", "/api/orgs/:org/billing/plan", async (req, _p, ctx) => {
   const today = pacificToday();
   const out = await withSystem(ctx.pool, (tx) => choosePlan(tx, ctx.orgId, today, b.plan, b.interval));
   if (out.upgradeChargeId) await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
   return json({ ok: true });
 });
 
 route("POST", "/api/orgs/:org/billing/cancel", async (_req, _p, ctx) => {
   requireRole(ctx, ["owner"]);
   await withSystem(ctx.pool, (tx) => cancelSubscription(tx, ctx.orgId, pacificToday()));
+  await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
   return json({ ok: true });
 });
 
@@ -404,6 +409,7 @@ route("POST", "/api/orgs/:org/billing/resume", async (_req, _p, ctx) => {
   const today = pacificToday();
   await withSystem(ctx.pool, (tx) => resumeSubscription(tx, ctx.orgId, today));
   await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
   return json({ ok: true });
 });
 
@@ -439,6 +445,7 @@ route("POST", "/api/orgs/:org/billing/card/confirm", async (req, _p, ctx) => {
   });
   // Anything due (a trial that already ended, a failed payment) is charged to the new card straight away.
   const run = await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
   return json({ ok: true, card: { brand: card.brand, last4: card.last4 }, charged: run.charged, failed: run.failed });
 });
 
@@ -2173,7 +2180,8 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
   const path = url.pathname.replace(/\/+$/, "");
   try {
     // Connected apps: OAuth and the token-authenticated API. Neither uses the session cookie.
-    const app = (await handleOAuth(req, path, pool, opts)) ?? (await handlePublicApi(req, path, pool, opts));
+    const app = (await handleOAuth(req, path, pool, opts)) ?? (await handlePublicApi(req, path, pool, opts))
+      ?? (await handleHub(req, path, pool, { hub: opts.hub, billing: opts.billing }));
     if (app) return app;
     // TrailBook News sign-up: public, posted by forms on this site and on pomeroyagency.com.
     if (req.method === "POST" && path === "/api/newsletter/subscribe") return await newsletterSignup(req, pool, opts);
