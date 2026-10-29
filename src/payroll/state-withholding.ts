@@ -28,6 +28,10 @@ export interface StateWithholding {
   allowanceAmount?: string;
   /** City income taxes that apply to the employee, by id (New York: "nyc", "yonkers", "yonkers_nr"). */
   localities?: string[];
+  /** Entered local rates (a fraction, like "0.01") or yearly amounts (dollars), by local tax id. */
+  localRates?: Record<string, string>;
+  /** The place each entered local tax is for (a Pennsylvania PSD code, an Ohio city), by local tax id; W-2 box 20. */
+  localPlaces?: Record<string, string>;
 }
 
 type Frequency = "weekly" | "biweekly" | "semimonthly" | "monthly";
@@ -72,12 +76,37 @@ function newYorkWithholding(rules: Extract<StateIncomeTaxRules, { method: "ny_ex
 /** One city income tax for one paycheck; zero when the employee didn't claim the city. */
 export function localWithholding(
   local: LocalIncomeTax, stateRules: StateIncomeTaxRules, c: StateWithholding | null | undefined, wagesThisPeriod: Dec, periodsPerYear: number,
+  /** The date rate changes are judged by (the pay period's last day). */
+  onDate?: string,
 ): Dec {
   const cert = c ?? {};
-  if (!cert.localities?.includes(local.id) || cert.exempt) return new D(0);
+  // Claimed local taxes are owed even by employees exempt from state withholding, except New York's, which follow the IT-2104.
+  const r = local.rules;
+  const ny = r.method === "ny_exact" || r.method === "share_of_state" || r.method === "exclusion_percent";
+  if (!cert.localities?.includes(local.id) || (ny && cert.exempt)) return new D(0);
+  switch (r.method) {
+    case "flat_rate": {
+      const change = [...(r.rateChanges ?? [])].reverse().find((x) => onDate && onDate >= x.from);
+      return wagesThisPeriod.mul(change?.rate ?? r.rate).toDecimalPlaces(2);
+    }
+    case "employee_rate": {
+      const rate = cert.localRates?.[local.id];
+      if (!rate) return new D(0);
+      let base = wagesThisPeriod;
+      if (r.base === "less_state_exemptions" && stateRules.method === "annual_formula") {
+        const perAllowance = new D(stateRules.allowances[0]?.amount ?? 0);
+        base = D.max(wagesThisPeriod.sub(perAllowance.mul(cert.allowances ?? 0).div(periodsPerYear)), 0);
+      }
+      return base.mul(D.min(rate, r.maxRate)).toDecimalPlaces(2);
+    }
+    case "annual_amount": {
+      const yearly = cert.localRates?.[local.id];
+      if (!yearly) return new D(0);
+      return D.min(yearly, r.maxAnnual).div(periodsPerYear).toDecimalPlaces(2);
+    }
+  }
   const freq = FREQUENCY[periodsPerYear];
   if (!freq) throw new Error(`no ${local.label} table for ${periodsPerYear} pay periods a year`);
-  const r = local.rules;
   switch (r.method) {
     case "ny_exact": {
       const status = cert.filingStatus === "married" ? "married" : "single";

@@ -1368,7 +1368,12 @@ function payrollProfile(pack: StateRulePack, today: string) {
         statusFromW4: Boolean(it.statusFromW4), allowances: it.allowances.map((a) => a.label), dollarAllowance: it.dollarAllowance?.label ?? null,
       }
       : { method: it.method, certificate: it.certificate },
-    localIncomeTaxes: (pack.payroll.localIncomeTaxes ?? []).map((t) => ({ id: t.id, label: t.label })),
+    localIncomeTaxes: (pack.payroll.localIncomeTaxes ?? []).map((t) => ({
+      id: t.id, label: t.label,
+      ...(t.rules.method === "employee_rate" ? { entry: "rate", entryLabel: t.rules.rateLabel, placeLabel: t.rules.placeLabel, hint: t.rules.hint }
+        : t.rules.method === "annual_amount" ? { entry: "amount", entryLabel: t.rules.amountLabel, placeLabel: t.rules.placeLabel, hint: t.rules.hint, maxAnnual: t.rules.maxAnnual }
+        : {}),
+    })),
     taxLabels: taxLabels(pack),
     wageAreas: pack.wageHour.areas ? [pack.wageHour.defaultAreaName ?? "Rest of the state", ...pack.wageHour.areas.map((a) => a.name)] : [],
     agencies: [...new Set([pack.payroll.incomeTaxAgency?.agency, ...pack.payroll.taxes.filter((t) => !t.paidToCarrier).map((t) => t.agency)].filter(Boolean))],

@@ -1666,7 +1666,11 @@ function stateCertificateFields(e, v, sel) {
   }
   if (it.method === "annual_formula") {
     const sw = e?.stateWithholding ?? {};
-    if (!it.certificate) return `<p class="hash">${esc(pay.state.name)} withholding uses the filing status on the federal W-4; there's no state form.</p>`;
+    if (!it.certificate) {
+      const note = it.statusFromW4 ? `${esc(pay.state.name)} withholding uses the filing status on the federal W-4; there's no state form.`
+        : `${esc(pay.state.name)} withholds a flat rate; there's no state form.`;
+      return `<p class="hash">${note}</p>${localTaxFields(sw)}${(pay.state?.localIncomeTaxes ?? []).length ? `<input type="hidden" name="swForm" value="1">` : ""}`;
+    }
     const statuses = it.statuses.map((s) => [s.id, s.label]);
     const opts = it.statusFromW4 ? [["", "Same as the federal W-4"], ...statuses] : statuses;
     const status = sw.filingStatus ?? (it.statusFromW4 ? "" : it.noCertificateStatus);
@@ -1676,7 +1680,8 @@ function stateCertificateFields(e, v, sel) {
       ${it.allowances.map((label, i) => `<label>${esc(label)}<input name="swAllowances${i ? i + 1 : ""}" value="${v(counts[i])}" inputmode="numeric"></label>`).join("")}
       ${it.dollarAllowance ? `<label>${esc(it.dollarAllowance)}<input name="swAllowanceAmount" value="${v(sw.allowanceAmount)}" inputmode="decimal" placeholder="Leave blank to use the W-4"></label>` : ""}
       <label>${esc(it.certificate)} extra each paycheck ($)<input name="swExtra" value="${v(sw.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
-      <label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Claimed exempt for this year</label>`;
+      <label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Claimed exempt for this year</label>
+      ${localTaxFields(sw)}`;
   }
   if (it.method === "or_formula" || it.method === "ny_exact") {
     const sw = e?.stateWithholding ?? {};
@@ -1688,9 +1693,44 @@ function stateCertificateFields(e, v, sel) {
       <label>${esc(it.certificate)} allowances<input name="swAllowances" value="${v(sw.allowances ?? 0)}" inputmode="numeric"></label>
       <label>${esc(it.certificate)} extra each paycheck ($)<input name="swExtra" value="${v(sw.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
       <label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Claimed exempt for this year</label>
-      ${(pay.state?.localIncomeTaxes ?? []).map((l) => `<label class="check"><input type="checkbox" name="swLocal" value="${esc(l.id)}" ${sw.localities?.includes(l.id) ? "checked" : ""}> ${esc(l.label)}</label>`).join("")}`;
+      ${localTaxFields(sw)}`;
   }
   return `<p class="hash">${esc(pay.state?.name ?? "This state")} has no income tax on wages, so there's no state withholding form.</p>`;
+}
+
+/**
+ * The state's city and local taxes on the employee form: a box for each, plus
+ * the rate (Pennsylvania earned income tax, Ohio city and school district
+ * taxes) or yearly amount (Pennsylvania Local Services Tax) and the place
+ * where the employer enters them.
+ */
+function localTaxFields(sw) {
+  return (pay.state?.localIncomeTaxes ?? []).map((l) => {
+    const on = sw.localities?.includes(l.id);
+    const box = `<label class="check"><input type="checkbox" name="swLocal" value="${esc(l.id)}" ${on ? "checked" : ""}> ${esc(l.label)}</label>`;
+    if (!l.entry) return box;
+    const stored = sw.localRates?.[l.id];
+    const shown = stored === undefined ? "" : l.entry === "rate" ? pct100(stored) : stored;
+    return `${box}
+      <label>${esc(l.entryLabel)}<input name="swLocalValue_${esc(l.id)}" value="${esc(shown)}" inputmode="decimal" placeholder="${l.entry === "amount" ? esc(l.maxAnnual) : "0"}"></label>
+      <label>${esc(l.placeLabel)}<input name="swLocalPlace_${esc(l.id)}" value="${esc(sw.localPlaces?.[l.id] ?? "")}"></label>
+      <p class="hash">${esc(l.hint)}</p>`;
+  }).join("");
+}
+
+/** The local tax fields of an employee form, for the API body. */
+function localTaxBody(f) {
+  const localities = [...f.querySelectorAll("[name=swLocal]:checked")].map((i) => i.value);
+  const localRates = {};
+  const localPlaces = {};
+  for (const l of pay.state?.localIncomeTaxes ?? []) {
+    if (!l.entry) continue;
+    const raw = f.querySelector(`[name="swLocalValue_${l.id}"]`)?.value.replace(/[$%,\s]/g, "");
+    if (raw) localRates[l.id] = l.entry === "rate" ? String(Number((Number(raw) / 100).toFixed(6))) : raw;
+    const place = f.querySelector(`[name="swLocalPlace_${l.id}"]`)?.value.trim();
+    if (place) localPlaces[l.id] = place;
+  }
+  return { localities, localRates, localPlaces };
 }
 
 /** Hours to two decimals at most: 2.6667 reads as 2.67. */
@@ -1781,9 +1821,10 @@ function employeeBody(f) {
     ...(d.swForm !== undefined ? { stateWithholding: {
       filingStatus: d.swStatus || undefined, allowances: d.swAllowances, allowances2: d.swAllowances2, additionalWithholding: d.swExtra,
       allowanceAmount: d.swAllowanceAmount?.replace(/[$,\s]/g, "") || undefined, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked),
+      ...localTaxBody(f),
     } } : d.swStatus !== undefined ? { stateWithholding: d.swStatus
       ? { filingStatus: d.swStatus, allowances: d.swAllowances, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked),
-          localities: [...f.querySelectorAll("[name=swLocal]:checked")].map((i) => i.value) }
+          ...localTaxBody(f) }
       : null } : {}),
     deductions: [{ kind: "traditional401k", amount: d.k401 }, { kind: "section125", amount: d.section125 }, { kind: "post_tax", amount: d.postTax }],
     openingYtd: d.ytdWages ? { year: d.ytdYear, wages: d.ytdWages, federalIncomeTax: d.ytdFit, socialSecurityTax: d.ytdSs, medicareTax: d.ytdMed, caIncomeTax: d.ytdPit, caSdi: d.ytdSdi } : null,

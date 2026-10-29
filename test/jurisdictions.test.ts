@@ -17,7 +17,7 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "CO", "FL", "GA", "ID", "IL", "MA", "MI", "NC", "NH", "NJ", "NV", "NY", "OR", "SD", "TN", "TX", "UT", "VA", "WA", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "CO", "FL", "GA", "ID", "IL", "MA", "MI", "NC", "NH", "NJ", "NV", "NY", "OH", "OR", "PA", "SD", "TN", "TX", "UT", "VA", "WA", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
@@ -455,5 +455,65 @@ describe("annual-formula states, third round (Michigan, Virginia, Massachusetts,
     expect(due("NJ", "NJ_UI_ER", ["2026-08-14"], "nj_ui")).toEqual([["2026-10-30", 30000n]]);
     expect(due("NJ", "NJ_UI_ER", ["2026-12-15"], "nj_ui")).toEqual([["2027-01-29", 30000n]]);
     expect(formsFor(2026, "2026-12-31", pack("NJ")).find((f) => f.slug === "nj927" && f.quarter === 4)?.dueDate).toBe("2027-01-29");
+  });
+});
+
+describe("Pennsylvania and Ohio, with entered local taxes", () => {
+  const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+  const pack = (region: string) => statePackFor({ country: "US", region }, "2026-09-01");
+  const local = (region: string, id: string) => pack(region).payroll.localIncomeTaxes!.find((l) => l.id === id)!;
+  const lw = (region: string, id: string, state: Parameters<typeof localWithholding>[2], wages: number, periods: number, onDate?: string) =>
+    localWithholding(local(region, id), pack(region).payroll.incomeTax, state, new D(wages), periods, onDate).toFixed(2);
+
+  it("withholds Ohio by the August 2026 formula", () => {
+    const w = (state: Parameters<typeof stateWithholding>[1]["state"], wages: number, periods: number) =>
+      stateWithholding(pack("OH").payroll.incomeTax, { state }, new D(wages), periods).toFixed(2);
+    // $1,000 a week, 1 exemption: (52,000 - 650 - 26,050) x 2.99% + 416.80, over 52.
+    expect(w({ allowances: 1 }, 1000, 52)).toBe(new D(25300).mul("0.0299").add("416.80").div(52).toFixed(2));
+    expect(w(null, 400, 52)).toBe(new D(20800).mul("0.016").div(52).toFixed(2));
+    // Above $100,000: $2,627.91 plus 3.4%.
+    expect(w(null, 150000, 1)).toBe("4327.91");
+  });
+
+  it("takes Pennsylvania's flat 3.07% and the employee's 0.07% UC", () => {
+    const weekly: EmployeePayInput = { employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "25.00", regularHours: "40", w4: { filingStatus: "single_or_mfs", step2Checked: false } };
+    const p = calculatePaycheck(weekly, { federal, state: pack("PA"), provenance: [] }, {}, "2026-09-04");
+    const amount = (code: string) => p.taxes.find((t) => t.code === code)?.amountMinor;
+    expect([amount("PA_WH"), amount("PA_UC_EE")]).toEqual([3070n, 70n]);
+    // Local taxes only when ticked and entered.
+    expect(amount("PA_EIT")).toBeUndefined();
+    const withLocal = calculatePaycheck({ ...weekly, stateWithholding: { localities: ["pa_eit", "pa_lst"], localRates: { pa_eit: "0.012", pa_lst: "52" } } },
+      { federal, state: pack("PA"), provenance: [] }, {}, "2026-09-04");
+    expect(withLocal.taxes.find((t) => t.code === "PA_EIT")?.amountMinor).toBe(1200n);
+    expect(withLocal.taxes.find((t) => t.code === "PA_LST")?.amountMinor).toBe(100n);
+  });
+
+  it("caps entered local taxes and changes Philadelphia's rate on July 1", () => {
+    expect(lw("PA", "pa_lst", { localities: ["pa_lst"], localRates: { pa_lst: "80" } }, 1000, 26)).toBe("2.00");
+    expect(lw("PA", "pa_eit", { localities: ["pa_eit"], localRates: { pa_eit: "0.2" } }, 1000, 52)).toBe("50.00");
+    expect(lw("PA", "pa_eit", { localRates: { pa_eit: "0.01" } }, 1000, 52)).toBe("0.00");
+    expect(lw("PA", "phl_res", { localities: ["phl_res"] }, 1000, 52, "2026-06-30")).toBe("37.40");
+    expect(lw("PA", "phl_res", { localities: ["phl_res"] }, 1000, 52, "2026-07-01")).toBe("37.35");
+    expect(lw("PA", "phl_nr", { localities: ["phl_nr"] }, 1000, 52, "2026-09-04")).toBe("34.25");
+  });
+
+  it("works Ohio school district tax on the right base", () => {
+    const state = { allowances: 2, localities: ["oh_sd", "oh_sd_ei", "oh_city"], localRates: { oh_sd: "0.01", oh_sd_ei: "0.01", oh_city: "0.025" } };
+    // Traditional base: wages less 2 x $650 over 52 weeks.
+    expect(lw("OH", "oh_sd", state, 1000, 52)).toBe(new D(1000).sub(new D(1300).div(52)).mul("0.01").toFixed(2));
+    expect(lw("OH", "oh_sd_ei", state, 1000, 52)).toBe("10.00");
+    expect(lw("OH", "oh_city", state, 1000, 52)).toBe("25.00");
+  });
+
+  it("pays Pennsylvania semi-monthly in the middle tier and local taxes 30 days after the quarter", () => {
+    const run = (id: string, payDate: string, code: string, amount: number): RunTaxes => ({ payRunId: id, payDate, byTax: { [code]: BigInt(amount * 100), FIT: 10000n } });
+    const due = (code: string, kind: string, prior: Record<string, bigint>, dates = ["2026-07-08", "2026-07-22"]) =>
+      depositSchedule(dates.map((d, i) => run(`r${i}`, d, code, 300)), "semiweekly", { country: "US", region: "PA" }, { priorYearMinorByCode: prior })
+        .filter((d) => d.kind === kind).map((d) => [d.dueDate, d.amountMinor]);
+    expect(due("PA_WH", "pa_wh", {})).toEqual([["2026-08-17", 60000n]]);
+    // $10,000 last year: the 1st-15th half is due July 20 (third business day after the 15th), the rest August 5.
+    expect(due("PA_WH", "pa_wh", { PA_WH: 1000000n })).toEqual([["2026-07-20", 30000n], ["2026-08-05", 30000n]]);
+    expect(due("PA_WH", "pa_wh", { PA_WH: 3000000n })).toEqual([["2026-07-15", 30000n], ["2026-07-29", 30000n]]);
+    expect(due("PA_EIT", "pa_local", {})).toEqual([["2026-10-30", 60000n]]);
   });
 });

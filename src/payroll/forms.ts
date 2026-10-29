@@ -285,15 +285,16 @@ interface EmployeeRow {
   ssnSealed: string | null;
   address: { line1: string; city: string; state: string; zip: string } | null;
   openingYtd: { year: number } | null;
+  localPlaces: Record<string, string>;
 }
 
 async function employeesOf(tx: Tx, entityId: string): Promise<Map<string, EmployeeRow>> {
   const { rows } = await tx.query(
-    "SELECT id, name, ssn_last4, ssn_sealed, address_line1, address_city, address_state, address_zip, opening_ytd FROM employees WHERE entity_id = $1",
+    "SELECT id, name, ssn_last4, ssn_sealed, address_line1, address_city, address_state, address_zip, opening_ytd, state_withholding FROM employees WHERE entity_id = $1",
     [entityId],
   );
   return new Map(rows.map((r) => [r.id, {
-    id: r.id, name: r.name, ssnLast4: r.ssn_last4, ssnSealed: r.ssn_sealed, openingYtd: r.opening_ytd,
+    id: r.id, name: r.name, ssnLast4: r.ssn_last4, ssnSealed: r.ssn_sealed, openingYtd: r.opening_ytd, localPlaces: r.state_withholding?.localPlaces ?? {},
     address: r.address_line1 ? { line1: r.address_line1, city: r.address_city, state: r.address_state, zip: r.address_zip } : null,
   }]));
 }
@@ -424,7 +425,9 @@ export async function formW2(
       box12, box14: pack.forms.w2Box14.filter((b) => t(b.code).amount).map((b) => ({ label: b.label, amountMinor: t(b.code).amount })),
       box15: income ? { state: st, employerStateId: stateId } : null, box16: t(income?.code).wages, box17: t(income?.code).amount,
       // Boxes 18 to 20: each city tax withheld (New York City, Yonkers).
-      local: (pack.payroll.localIncomeTaxes ?? []).filter((l) => t(l.code).amount).map((l) => ({ locality: l.w2Locality, wagesMinor: t(l.code).wages, taxMinor: t(l.code).amount })),
+      // Entered local taxes (Pennsylvania, Ohio) name the place the employee has on file now.
+      local: (pack.payroll.localIncomeTaxes ?? []).filter((l) => t(l.code).amount)
+        .map((l) => ({ locality: p?.localPlaces[l.id] || l.w2Locality, wagesMinor: t(l.code).wages, taxMinor: t(l.code).amount })),
       hasEarlierPay: Boolean(p?.openingYtd && p.openingYtd.year === input.year),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
