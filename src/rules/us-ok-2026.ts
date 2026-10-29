@@ -4,8 +4,8 @@ import type { StateRulePack } from "./types.js";
 // Oklahoma Income Tax Withholding Tables, read from it on 2026-10-29: the
 // year's wages less $1,000 for each OK-W-4 allowance, through the annual
 // percentage table (nothing up to $10,100 single or $20,200 married, then
-// 2.5%, 3.5% and 4.5%), rounded to the whole dollar each paycheck. Drafted
-// 2026-10-29 for Greg's review (docs/rule-pack-review.md).
+// 2.5%, 3.5% and 4.5%), rounded to the whole dollar each paycheck. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usOklahoma2026: StateRulePack = {
   kind: "state",
   id: "us-ok",
@@ -14,7 +14,7 @@ export const usOklahoma2026: StateRulePack = {
   place: { country: "US", region: "OK" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Oklahoma Tax Commission, OW-2, 2026 Oklahoma Income Tax Withholding Tables (Table 7, annual payroll period)", covers: "$1,000 per allowance; single 0% to $10,100, 2.5% to $11,250, 3.5% to $13,550, 4.5% above; married 0% to $20,200, then $22,500 and $27,100; married at the higher single rate uses the single table; round to the whole dollar; the $1,825 semi-monthly example ($37)", basis: "published" },

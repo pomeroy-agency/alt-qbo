@@ -5,7 +5,7 @@ import type { StateRulePack } from "./types.js";
 // Greg supplied on 2026-10-29 (revenue.ky.gov turns away automated
 // visitors): the year's wages less the $3,360 standard deduction, at the flat
 // 3.5%. City, county and school district occupational license taxes are
-// entered per employee. Drafted 2026-10-29 for Greg's review
+// entered per employee. Released 2026-10-29 after Greg's review
 // (docs/rule-pack-review.md).
 export const usKentucky2026: StateRulePack = {
   kind: "state",
@@ -15,7 +15,7 @@ export const usKentucky2026: StateRulePack = {
   place: { country: "US", region: "KY" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Kentucky Department of Revenue, 2026 Kentucky Withholding Tax Formula, 42A003(TCF)(10-2025)", covers: "$3,360 standard deduction; 3.5% flat rate on the rest; the $3,270 monthly example ($104.65)", basis: "published" },

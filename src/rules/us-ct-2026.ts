@@ -33,7 +33,7 @@ const recaptureC = recapture(2, 50, 680, 180, 6000, 100);
 // exemption from Table A, tax from Table B, plus the 2% phase-out add-back
 // (Table C) and tax recapture (Table D), less the personal tax credit share
 // (Table E). No CT-W4: 6.99% of wages. Connecticut Paid Leave takes 0.5% of
-// wages from employees. Drafted 2026-10-29 for Greg's review
+// wages from employees. Released 2026-10-29 after Greg's review
 // (docs/rule-pack-review.md).
 export const usConnecticut2026: StateRulePack = {
   kind: "state",
@@ -43,7 +43,7 @@ export const usConnecticut2026: StateRulePack = {
   place: { country: "US", region: "CT" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Connecticut DRS, TPG-211, 2026 Withholding Calculation Rules (Rev. 12/25)", covers: "Tables A to E by withholding code A, B, C, D and F; steps 1 to 16", basis: "published" },

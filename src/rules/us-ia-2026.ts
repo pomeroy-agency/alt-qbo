@@ -6,7 +6,7 @@ import type { StateRulePack } from "./types.js";
 // marital status ($13,000 a year for "other" or married with a working
 // spouse, $19,500 head of household, $26,000 married with a non-working
 // spouse), at the flat 3.8%, less the IA W-4 allowance amount spread over
-// the pay periods. Drafted 2026-10-29 for Greg's review
+// the pay periods. Released 2026-10-29 after Greg's review
 // (docs/rule-pack-review.md).
 export const usIowa2026: StateRulePack = {
   kind: "state",
@@ -16,7 +16,7 @@ export const usIowa2026: StateRulePack = {
   place: { country: "US", region: "IA" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Iowa Department of Revenue, Iowa Withholding Formula, effective January 1, 2026 (released November 2025)", covers: "deductions $13,000 / $19,500 / $26,000 a year by IA W-4 marital status; 3.8% rate; allowance amount off the tax; $40 per allowance on 2023 and earlier IA W-4s; examples 1 to 3 ($59.26, $38.72, $45.15)", basis: "published" },

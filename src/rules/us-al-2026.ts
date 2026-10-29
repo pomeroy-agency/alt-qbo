@@ -14,8 +14,8 @@ function schedule(start: number, from: number, every: number, less: number, floo
 // schedule (it shrinks from $35,500 down), the year's federal income tax
 // withheld, the A-4 personal exemption and $1,000, $500 or $300 per
 // dependent by wages; then 2% / 4% / 5%. Local occupational taxes
-// (Birmingham, Gadsden and others) are entered per employee. Drafted
-// 2026-10-29 for Greg's review (docs/rule-pack-review.md).
+// (Birmingham, Gadsden and others) are entered per employee. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usAlabama2026: StateRulePack = {
   kind: "state",
   id: "us-al",
@@ -24,7 +24,7 @@ export const usAlabama2026: StateRulePack = {
   place: { country: "US", region: "AL" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Alabama Department of Revenue, Withholding Tax Tables and Instructions (whbooklet_0126), Formula For Computing Alabama Withholding Tax and Schedule of Standard Deduction Amounts", covers: "standard deduction by status and wages; federal withholding subtracted; personal exemption $1,500 (S, MS) or $3,000 (M, H); dependents $1,000 / $500 over $50,000 / $300 over $100,000; 2% / 4% / 5% with brackets at $500 and $3,000 ($1,000 and $6,000 for M); zero exemptions without an A-4; the M-2 $850 weekly example ($29.59)", basis: "published" },

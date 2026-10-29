@@ -5,7 +5,7 @@ import type { StateRulePack } from "./types.js";
 // 2026, read from it on 2026-10-29: wages less the L-4 standard deduction
 // spread over the pay periods ($12,875 single or married separate, $25,750
 // married joint, qualifying surviving spouse or head of household, nothing
-// for "0"), at 3.09%. Drafted 2026-10-29 for Greg's review
+// for "0"), at 3.09%. Released 2026-10-29 after Greg's review
 // (docs/rule-pack-review.md).
 export const usLouisiana2026: StateRulePack = {
   kind: "state",
@@ -15,7 +15,7 @@ export const usLouisiana2026: StateRulePack = {
   place: { country: "US", region: "LA" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Louisiana Department of Revenue, R-1306 (1/26), Louisiana Withholding Tables and Formulas", covers: "3.09% rate; standard deduction $12,875 (L-4 \"1\") or $25,750 (L-4 \"2\"), none for \"0\"; the $700 weekly example ($13.98) and $4,600 biweekly example ($111.54)", basis: "published" },
