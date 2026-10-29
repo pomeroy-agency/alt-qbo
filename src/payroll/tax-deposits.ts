@@ -72,7 +72,7 @@ export async function taxDeposits(tx: Tx, entityId: string, year: number, today:
   // Some states' timing depends on how much was withheld in the four quarters before the year.
   let priorQuarterlyAverageMinor: bigint | undefined;
   const incomeCode = state.payroll.incomeTaxAgency?.code;
-  if (incomeCode && state.payroll.deposits.some((d) => d.schedule === "federal_timing_by_average")) {
+  if (incomeCode && state.payroll.deposits.some((d) => d.schedule === "federal_timing_by_average" || d.schedule === "monthly_or_larger")) {
     const prior = await tx.query(
       `SELECT id, pay_date::text, result FROM pay_runs WHERE entity_id = $1 AND status = 'posted' AND pay_date >= $2 AND pay_date <= $3`,
       [entityId, `${year - 1}-01-01`, `${year - 1}-12-31`],

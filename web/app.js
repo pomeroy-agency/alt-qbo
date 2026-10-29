@@ -1664,6 +1664,20 @@ function stateCertificateFields(e, v, sel) {
       <label>${esc(it.certificate)} extra each paycheck ($)<input name="swExtra" value="${v(sw.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
       ${it.zeroAllowed ? `<label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Elected zero withholding for this year</label>` : ""}`;
   }
+  if (it.method === "annual_formula") {
+    const sw = e?.stateWithholding ?? {};
+    if (!it.certificate) return `<p class="hash">${esc(pay.state.name)} withholding uses the filing status on the federal W-4; there's no state form.</p>`;
+    const statuses = it.statuses.map((s) => [s.id, s.label]);
+    const opts = it.statusFromW4 ? [["", "Same as the federal W-4"], ...statuses] : statuses;
+    const status = sw.filingStatus ?? (it.statusFromW4 ? "" : it.noCertificateStatus);
+    const counts = [sw.allowances ?? 0, sw.allowances2 ?? 0];
+    return `<input type="hidden" name="swForm" value="1">
+      ${statuses.length > 1 ? `<label>${esc(it.certificate)} status${sel("swStatus", opts, status)}</label>` : ""}
+      ${it.allowances.map((label, i) => `<label>${esc(label)}<input name="swAllowances${i ? i + 1 : ""}" value="${v(counts[i])}" inputmode="numeric"></label>`).join("")}
+      ${it.dollarAllowance ? `<label>${esc(it.dollarAllowance)}<input name="swAllowanceAmount" value="${v(sw.allowanceAmount)}" inputmode="decimal" placeholder="Leave blank to use the W-4"></label>` : ""}
+      <label>${esc(it.certificate)} extra each paycheck ($)<input name="swExtra" value="${v(sw.additionalWithholding)}" inputmode="decimal" placeholder="0"></label>
+      <label class="check"><input type="checkbox" name="swExempt" ${sw.exempt ? "checked" : ""}> Claimed exempt for this year</label>`;
+  }
   if (it.method === "or_formula" || it.method === "ny_exact") {
     const sw = e?.stateWithholding ?? {};
     const statuses = [["single", "Single"], ["married", "Married"], ["married_single_rate", "Married, but withhold at the higher single rate"]];
@@ -1764,7 +1778,10 @@ function employeeBody(f) {
     w4: { filingStatus: d.w4Status, step2Checked: f.querySelector("[name=w4Step2]").checked, step3Credits: d.w4Step3, step4aOtherIncome: d.w4Step4a, step4bDeductions: d.w4Step4b, step4cExtraWithholding: d.w4Step4c },
     ...(d.de4Status ? { de4: { filingStatus: d.de4Status, regularAllowances: d.de4Allowances, additionalWithholding: d.de4Extra } } : {}),
     ...(d.swRate !== undefined ? { stateWithholding: { rate: d.swRate, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked) } } : {}),
-    ...(d.swStatus !== undefined ? { stateWithholding: d.swStatus
+    ...(d.swForm !== undefined ? { stateWithholding: {
+      filingStatus: d.swStatus || undefined, allowances: d.swAllowances, allowances2: d.swAllowances2, additionalWithholding: d.swExtra,
+      allowanceAmount: d.swAllowanceAmount?.replace(/[$,\s]/g, "") || undefined, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked),
+    } } : d.swStatus !== undefined ? { stateWithholding: d.swStatus
       ? { filingStatus: d.swStatus, allowances: d.swAllowances, additionalWithholding: d.swExtra, exempt: Boolean(f.querySelector("[name=swExempt]")?.checked),
           localities: [...f.querySelectorAll("[name=swLocal]:checked")].map((i) => i.value) }
       : null } : {}),

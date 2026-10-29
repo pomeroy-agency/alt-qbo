@@ -173,14 +173,19 @@ function cleanStateWithholding(w: EmployeeFields["stateWithholding"]): StateWith
   if (extra && !new D(extra).isZero()) out.additionalWithholding = extra;
   if (w.exempt) out.exempt = true;
   if (w.filingStatus !== undefined && w.filingStatus !== null && w.filingStatus !== "") {
-    if (!["single", "married", "married_single_rate"].includes(w.filingStatus as string)) invalid("pick single or married for state withholding");
-    out.filingStatus = w.filingStatus as StateWithholding["filingStatus"];
+    // The state's own statuses are checked against its pack when the paycheck is worked out; an unknown one falls back to its default.
+    if (typeof w.filingStatus !== "string" || !/^[a-z_]{2,30}$/.test(w.filingStatus)) invalid("pick a filing status for state withholding");
+    out.filingStatus = w.filingStatus as string;
   }
-  if (w.allowances !== undefined && w.allowances !== null && (w.allowances as unknown) !== "") {
-    const n = Number(w.allowances);
+  for (const key of ["allowances", "allowances2"] as const) {
+    const v = w[key];
+    if (v === undefined || v === null || (v as unknown) === "") continue;
+    const n = Number(v);
     if (!Number.isInteger(n) || n < 0 || n > 99) invalid("state allowances should be a whole number from 0 to 99");
-    out.allowances = n;
+    out[key] = n;
   }
+  const dollars = amount(w.allowanceAmount, "the state withholding allowance", { optional: true });
+  if (dollars !== undefined) out.allowanceAmount = dollars;
   if (w.localities !== undefined && w.localities !== null) {
     if (!Array.isArray(w.localities) || w.localities.length > 5 || !w.localities.every((l) => typeof l === "string" && /^[a-z_]{2,20}$/.test(l))) {
       invalid("pick the city taxes from the list");
@@ -414,7 +419,7 @@ export async function setSickLeavePolicy(tx: Tx, input: { orgId: string; entityI
 /** A rate the state assigned the employer (its UI rate, from the agency's notice), as a fraction; null goes back to the new-employer rate. */
 export async function setStateTaxRate(tx: Tx, input: { orgId: string; entityId: string; code: string; rate: string | null; actor: Actor }) {
   requireWriter(input.actor, "change payroll settings");
-  if (input.rate !== null && (!/^\d(\.\d{1,5})?$/.test(input.rate) || new D(input.rate).gt("0.2"))) {
+  if (input.rate !== null && (!/^\d(\.\d{1,6})?$/.test(input.rate) || new D(input.rate).gt("0.2"))) {
     invalid("the rate should be a percentage between 0 and 20");
   }
   const e = (await tx.query("SELECT country, region, state_tax_rates FROM entities WHERE id = $1", [input.entityId])).rows[0];
