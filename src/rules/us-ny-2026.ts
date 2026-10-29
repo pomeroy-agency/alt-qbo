@@ -4,8 +4,7 @@ import type { StateRulePack } from "./types.js";
 // (Method II) and top-rates method (Method III) of NYS-50-T-NYS (1/26),
 // read from the publication itself on 2026-10-29; the tables below are
 // copied from it. New York City and Yonkers income tax withholding (for their
-// residents) isn't included yet. The pack is a draft until Greg reviews it
-// in docs/rule-pack-review.md.
+// residents) isn't included yet. Greg reviewed and released it on 2026-10-29 (docs/rule-pack-review.md).
 export const usNewYork2026: StateRulePack = {
   kind: "state",
   id: "us-ny",
@@ -14,7 +13,7 @@ export const usNewYork2026: StateRulePack = {
   place: { country: "US", region: "NY" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "NYS-50-T-NYS (1/26), New York State Withholding Tax Tables and Methods, pages 14 to 22", covers: "tables A to C (deduction and exemption allowances), Method II tables II-A to II-D, Method III top rates", basis: "published" },

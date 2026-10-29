@@ -107,7 +107,7 @@ describe("state deposit rules", () => {
   });
 });
 
-describe("no-income-tax state packs (draft)", () => {
+describe("no-income-tax state packs", () => {
   const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
   const rulesFor = (region: string, on = "2026-06-01"): ResolvedRules => ({ federal, state: statePackFor({ country: "US", region }, on), provenance: [] });
   const weekly: EmployeePayInput = {
@@ -116,11 +116,10 @@ describe("no-income-tax state packs (draft)", () => {
   };
   const tax = (p: ReturnType<typeof calculatePaycheck>, code: string) => p.taxes.find((t) => t.code === code);
 
-  it("are live for books, draft for payroll, and stay out of a released-only run", () => {
-    for (const r of ["TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA"]) {
+  it("are live and released for saved pay runs (Greg's sign-off, 2026-10-29)", () => {
+    for (const r of ["TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA", "AZ", "OR", "NY"]) {
       expect(isLive("US", r)).toBe(true);
-      expect(statePackFor({ country: "US", region: r }, "2026-06-01").status).toBe("draft");
-      expect(() => resolveRules({ country: "US", region: r }, "2026-06-01", { requireReleased: true })).toThrow();
+      expect(resolveRules({ country: "US", region: r }, "2026-06-01", { requireReleased: true }).state.status).toBe("released");
     }
   });
 
@@ -173,7 +172,7 @@ describe("no-income-tax state packs (draft)", () => {
   });
 });
 
-describe("Arizona (draft)", () => {
+describe("Arizona", () => {
   const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
   const rules: ResolvedRules = { federal, state: statePackFor({ country: "US", region: "AZ" }, "2026-06-01"), provenance: [] };
   const weekly: EmployeePayInput = {
@@ -202,7 +201,7 @@ describe("Arizona (draft)", () => {
   });
 });
 
-describe("Oregon (draft)", () => {
+describe("Oregon", () => {
   const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
   const or = statePackFor({ country: "US", region: "OR" }, "2026-06-01");
   const rules: ResolvedRules = { federal, state: or, provenance: [] };
@@ -252,7 +251,7 @@ describe("Oregon (draft)", () => {
   });
 });
 
-describe("New York (draft)", () => {
+describe("New York", () => {
   const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
   const ny = statePackFor({ country: "US", region: "NY" }, "2026-06-01");
   const rules: ResolvedRules = { federal, state: ny, provenance: [] };

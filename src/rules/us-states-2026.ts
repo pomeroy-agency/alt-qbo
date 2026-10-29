@@ -4,9 +4,8 @@ import type { Source, StatePayrollTax, StateRulePack } from "./types.js";
 // Nevada, Tennessee, South Dakota, Wyoming, New Hampshire, Alaska and
 // Washington. Payroll there is federal taxes plus the state's unemployment
 // (and in Alaska and Washington, employee) taxes, its minimum wage, overtime
-// and leave rules. Every pack is a draft until Greg reviews it in
-// docs/rule-pack-review.md: until then a business can be set up and preview
-// payroll there, but saved pay runs are refused.
+// and leave rules. Greg reviewed and released these packs on 2026-10-29
+// (docs/rule-pack-review.md).
 //
 // Figures were gathered on 2026-10-28 from the agencies' own pages where a
 // search could reach them, and otherwise from payroll publishers (Bloomberg
@@ -44,7 +43,7 @@ function noIncomeTaxState(s: StateSpec): StateRulePack {
     place: { country: "US", region: s.code },
     effectiveFrom: "2026-01-01",
     effectiveTo: "2026-12-31",
-    status: "draft",
+    status: "released",
     calendar: "weekends",
     sources: s.sources,
     reviewNotes: s.reviewNotes,

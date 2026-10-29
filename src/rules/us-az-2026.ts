@@ -1,8 +1,7 @@
 import type { StateRulePack } from "./types.js";
 
 // Arizona 2026. Withholding is a flat percentage of each paycheck that the
-// employee elects on Form A-4; there are no tables. The pack is a draft until
-// Greg reviews it in docs/rule-pack-review.md. Figures were gathered on
+// employee elects on Form A-4; there are no tables. Greg reviewed and released it on 2026-10-29 (docs/rule-pack-review.md). Figures were gathered on
 // 2026-10-29 from payroll publishers; Arizona's own sites can't be opened from
 // TrailBook's build machines, so the review notes say what to check.
 export const usArizona2026: StateRulePack = {
@@ -13,7 +12,7 @@ export const usArizona2026: StateRulePack = {
   place: { country: "US", region: "AZ" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Bloomberg Law, \"Arizona's 2026 Withholding Rates Unchanged From 2025\"; A.R.S. 43-401", covers: "A-4 choices 0.5% to 3.5% in half-point steps; 2.0% when no A-4 is filed; 0% may be elected when no Arizona tax is expected", basis: "published" },

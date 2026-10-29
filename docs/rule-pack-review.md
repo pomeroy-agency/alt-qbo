@@ -4,6 +4,8 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 
 **Sign-off, 2026-10-27.** Greg reviewed this list and approved every item as it stands. The us-federal 2026.1, us-ca 2026.1 and us-ca-sales-tax 2026.1 packs are now `released`, and saved pay runs calculate only on released packs. Items marked ⚠️ were accepted on the figures shown; each note says what to recheck when the primary source can be read, and the daily rule watch keeps looking for them. The us-ca-sales-tax 2027.1 pack stays `draft` on the review's own recommendation, until OAL approves CDTFA's emergency regulations. A daily scheduled check watches the sources for changes (see "Monitoring" at the end).
 
+**Sign-off, 2026-10-29.** Greg approved every new state pack (Texas, Florida, Nevada, Tennessee, South Dakota, Wyoming, New Hampshire, Alaska, Washington, Arizona, Oregon and New York) as it stands, ⚠️ items included. Those packs are now `released`, so saved pay runs can use them. The known gaps listed in each section remain open, and the daily rule watch keeps checking them.
+
 ## us-federal 2026.1 (`src/rules/us-federal-2026.ts`), released 2026-10-27
 
 | Figure | Value | Source | Check |
@@ -122,22 +124,22 @@ How the app applies it (`decideUseTax` and `recordBill` in `src/core/sales-tax.t
 | Where it's reported | the CDTFA-401 for seller's permit holders. Without a permit: a CDTFA use tax return for qualified purchasers (generally $100,000+ gross receipts), otherwise the California income tax return | Rev. & Tax. Code §6225 (qualified purchasers) | ✅ Greg accepted 2026-10-25 (recheck the threshold when ca.gov can be reached) |
 | Resale, and items used outside California | not accrued: the person leaves the box unticked or picks a non-taxable kind | Reg. 1668 | ✅ by design |
 
-## States without a wage income tax (`src/rules/us-states-2026.ts`), draft, awaiting Greg's review
+## States without a wage income tax (`src/rules/us-states-2026.ts`), released 2026-10-29
 
-Added 2026-10-29 at Greg's choice of order (these nine first, then Oregon, Arizona and New York). Each pack is `draft`: a business there can keep its books and preview payroll, but saved pay runs are refused until Greg approves the figures below and the pack is `released`. Figures were gathered on 2026-10-28; most state sites can't be opened from TrailBook's build machines, so several come from payroll publishers and each ⚠️ says what to read off the agency's own notice. UI rates are per employer: the pack holds the new-employer rate, and the employer enters its own rate from its notice. Workers' compensation (state-run in Washington and Wyoming) and local minimum wages outside California aren't covered yet. Sales tax in these states isn't worked out: invoices carry no tax unless an owner or accountant sets the rate by hand.
+Added 2026-10-29 at Greg's choice of order (these nine first, then Oregon, Arizona and New York). Greg approved every pack on 2026-10-29 and they are `released`. Figures were gathered on 2026-10-28; most state sites can't be opened from TrailBook's build machines, so several come from payroll publishers and each ⚠️ says what to read off the agency's own notice. UI rates are per employer: the pack holds the new-employer rate, and the employer enters its own rate from its notice. Workers' compensation (state-run in Washington and Wyoming) and local minimum wages outside California aren't covered yet. Sales tax in these states isn't worked out: invoices carry no tax unless an owner or accountant sets the rate by hand.
 
-### us-tx 2026.1, Texas (draft)
+### us-tx 2026.1, Texas
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| Texas UI (TX_UI, employer, TWC) | 2.7% default; employer enters its own rate, on the first $9,000 | for Greg's review |
-| Quarterly report | Employer's Quarterly Report (C-3), filed and paid quarterly | for Greg's review |
-| Minimum wage | $7.25 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | No state law | for Greg's review |
-| New-hire report | Within 20 days to Texas Office of the Attorney General (Employer New Hire Reporting) | for Greg's review |
+| Texas UI (TX_UI, employer, TWC) | 2.7% default; employer enters its own rate, on the first $9,000 | ✅ |
+| Quarterly report | Employer's Quarterly Report (C-3), filed and paid quarterly | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Texas Office of the Attorney General (Employer New Hire Reporting) | ✅ |
 
 - ⚠️ Some sources say a new employer's rate is the greater of 2.7% or its industry average; TWC's 2026 page says 2.7% for every industry. Employers enter their own rate from the C-22 notice either way.
 - ⚠️ No statewide paid sick leave (the Austin, Dallas and San Antonio ordinances were struck down or preempted).
@@ -146,18 +148,18 @@ Added 2026-10-29 at Greg's choice of order (these nine first, then Oregon, Arizo
 
 Sources: TWC, 2026 tax rates; Bloomberg Tax, "Texas Publishes 2026 Unemployment Insurance Tax Rates" ($9,000 wage base; 2.7% new-employer rate (rates run 0.32% to 6.32%; the employment and training assessment is included in the rate)); Texas Labor Code ch. 62 (Texas Minimum Wage Act) adopting the FLSA rate ($7.25 minimum wage; weekly overtime only); Texas Family Code 234.102 (new hires reported within 20 days).
 
-### us-fl 2026.1, Florida (draft)
+### us-fl 2026.1, Florida
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| Florida reemployment tax (FL_RT, employer, FDOR) | 2.7% default; employer enters its own rate, on the first $7,000 | for Greg's review |
-| Quarterly report | Employer's Quarterly Report (RT-6), filed and paid quarterly | for Greg's review |
-| Minimum wage | $14, then $15 from 2026-09-30 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | No state law | for Greg's review |
-| New-hire report | Within 20 days to Florida New Hire Reporting Center | for Greg's review |
+| Florida reemployment tax (FL_RT, employer, FDOR) | 2.7% default; employer enters its own rate, on the first $7,000 | ✅ |
+| Quarterly report | Employer's Quarterly Report (RT-6), filed and paid quarterly | ✅ |
+| Minimum wage | $14, then $15 from 2026-09-30 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Florida New Hire Reporting Center | ✅ |
 
 - ⚠️ Tipped employees ($11.98 cash wage from September 30, 2026) aren't modelled; TrailBook checks the full minimum wage.
 - ⚠️ No statewide paid sick leave.
@@ -165,19 +167,19 @@ Sources: TWC, 2026 tax rates; Bloomberg Tax, "Texas Publishes 2026 Unemployment 
 
 Sources: Florida Department of Revenue, Reemployment Tax Rate Information ($7,000 wage base; 2.7% initial rate for the first 10 quarters; 2026 rates 0.1% to 5.4%); Florida Constitution art. X, §24 (Amendment 2, 2020) ($14.00 minimum wage, $15.00 from September 30, 2026; CPI-indexed from 2027); Florida Statutes 409.2576 (new hires reported within 20 days).
 
-### us-nv 2026.1, Nevada (draft)
+### us-nv 2026.1, Nevada
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| Nevada UI (NV_UI, employer, DETR) | 2.95% default; employer enters its own rate, on the first $43,700 | for Greg's review |
-| Nevada Career Enhancement Program (NV_CEP, employer, DETR) | 0.05%, on the first $43,700 | for Greg's review |
-| Quarterly report | Employer's Quarterly Contribution and Wage Report (NUCS-4072), filed and paid quarterly | for Greg's review |
-| Minimum wage | $12 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Overtime | After 40 hours a week; after 8 hours a day for pay under $18.00 an hour | for Greg's review |
-| Paid sick leave | 1 hour per 52 worked, up to 40 hours; 0 hours for under 50 employees | for Greg's review |
-| New-hire report | Within 20 days to Nevada New Hire Reporting (Division of Welfare and Supportive Services) | for Greg's review |
+| Nevada UI (NV_UI, employer, DETR) | 2.95% default; employer enters its own rate, on the first $43,700 | ✅ |
+| Nevada Career Enhancement Program (NV_CEP, employer, DETR) | 0.05%, on the first $43,700 | ✅ |
+| Quarterly report | Employer's Quarterly Contribution and Wage Report (NUCS-4072), filed and paid quarterly | ✅ |
+| Minimum wage | $12 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week; after 8 hours a day for pay under $18.00 an hour | ✅ |
+| Paid sick leave | 1 hour per 52 worked, up to 40 hours; 0 hours for under 50 employees | ✅ |
+| New-hire report | Within 20 days to Nevada New Hire Reporting (Division of Welfare and Supportive Services) | ✅ |
 
 - ⚠️ Daily overtime applies only when the daily hours are entered (the "Daily hours" box on the pay run), and only to employees paid under $18.00 an hour; an employer and employee may agree to four 10-hour days, which TrailBook doesn't know about.
 - ⚠️ Paid leave is counted at 1 hour per 52 worked (0.01923), up to 40 hours a year, for employers with 50 or more employees; smaller employers get no accrual. Check the 40-hour carryover cap reading.
@@ -186,18 +188,18 @@ Sources: Florida Department of Revenue, Reemployment Tax Rate Information ($7,00
 
 Sources: DETR, Contributions Newsletter June 2026; UI Information for Employers ($43,700 wage base; 2.95% new-employer rate; 0.05% Career Enhancement Program on the same base); NRS 608.250 as amended by AB 456 (2019); 2024 constitutional amendment ($12.00 minimum wage for all employers from July 1, 2024); NRS 608.018; NRS 608.0197 (daily overtime under 1.5 times the minimum wage; paid leave at 0.01923 hours per hour for 50+ employees).
 
-### us-tn 2026.1, Tennessee (draft)
+### us-tn 2026.1, Tennessee
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| Tennessee UI (TN_UI, employer, TDLWD) | 2.7% default; employer enters its own rate, on the first $7,000 | for Greg's review |
-| Quarterly report | Employer's Quarterly Premium and Wage Report (LB-0456), filed and paid quarterly | for Greg's review |
-| Minimum wage | $7.25 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | No state law | for Greg's review |
-| New-hire report | Within 20 days to Tennessee New Hire Reporting | for Greg's review |
+| Tennessee UI (TN_UI, employer, TDLWD) | 2.7% default; employer enters its own rate, on the first $7,000 | ✅ |
+| Quarterly report | Employer's Quarterly Premium and Wage Report (LB-0456), filed and paid quarterly | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Tennessee New Hire Reporting | ✅ |
 
 - ⚠️ Some new employers (certain industries) get a different starting rate; employers enter their own from the notice.
 - ⚠️ Check the quarterly report's form number (LB-0456) against the current Jobs4TN filing screens.
@@ -206,19 +208,19 @@ Sources: DETR, Contributions Newsletter June 2026; UI Information for Employers 
 
 Sources: TDLWD, UI Tax Rates page; Bloomberg Tax, "Tennessee UI Tax Schedule Unchanged for Rest of 2026" ($7,000 wage base; 2.7% for most new employers; Premium Rate Table 6 for 2026); FLSA, 29 U.S.C. 206 (Tennessee has no state minimum wage) ($7.25 minimum wage; weekly overtime only).
 
-### us-sd 2026.1, South Dakota (draft)
+### us-sd 2026.1, South Dakota
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| South Dakota reemployment assistance (SD_UI, employer, DLR) | 1.2% default; employer enters its own rate, on the first $15,000 | for Greg's review |
-| South Dakota investment fee (SD_FEE, employer, DLR) | 0.55% default; employer enters its own rate, on the first $15,000 | for Greg's review |
-| Quarterly report | Quarterly Contribution, Investment Fee and Wage Report, filed and paid quarterly | for Greg's review |
-| Minimum wage | $11.85 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | No state law | for Greg's review |
-| New-hire report | Within 20 days to South Dakota New Hire Reporting Center | for Greg's review |
+| South Dakota reemployment assistance (SD_UI, employer, DLR) | 1.2% default; employer enters its own rate, on the first $15,000 | ✅ |
+| South Dakota investment fee (SD_FEE, employer, DLR) | 0.55% default; employer enters its own rate, on the first $15,000 | ✅ |
+| Quarterly report | Quarterly Contribution, Investment Fee and Wage Report, filed and paid quarterly | ✅ |
+| Minimum wage | $11.85 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to South Dakota New Hire Reporting Center | ✅ |
 
 - ⚠️ SB 26 (2026) lowers reemployment contribution rates; sources disagree on whether from July 1, 2026 or January 1, 2027. Employers enter their own rate from the DLR notice, so a rate change needs no pack change, but the new-employer default may.
 - ⚠️ No statewide paid sick leave.
@@ -226,18 +228,18 @@ Sources: TDLWD, UI Tax Rates page; Bloomberg Tax, "Tennessee UI Tax Schedule Unc
 
 Sources: SD DLR employer handbook, as summarised by TimeTrex and Paylocity ($15,000 wage base; 1.2% new-employer rate plus 0.55% investment fee; 0.08% administrative fee once rated); SDCL 60-11-3 (CPI-indexed) ($11.85 minimum wage from January 1, 2026).
 
-### us-wy 2026.1, Wyoming (draft)
+### us-wy 2026.1, Wyoming
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| Wyoming UI (WY_UI, employer, DWS) | 0% default; employer enters its own rate (required before a paycheck), on the first $33,800 | for Greg's review |
-| Quarterly report | Unemployment Insurance Quarterly Summary and Wage Report, filed and paid quarterly | for Greg's review |
-| Minimum wage | $7.25 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | No state law | for Greg's review |
-| New-hire report | Within 20 days to Wyoming New Hire Reporting Center | for Greg's review |
+| Wyoming UI (WY_UI, employer, DWS) | 0% default; employer enters its own rate (required before a paycheck), on the first $33,800 | ✅ |
+| Quarterly report | Unemployment Insurance Quarterly Summary and Wage Report, filed and paid quarterly | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to Wyoming New Hire Reporting Center | ✅ |
 
 - ⚠️ No default rate: a pay run waits until the employer enters its rate, because new-employer rates range from about 2.3% to 9.8% by industry.
 - ⚠️ Wyoming's state-run workers' compensation premiums are reported with the same quarterly filing but are not calculated by TrailBook yet.
@@ -246,19 +248,19 @@ Sources: SD DLR employer handbook, as summarised by TimeTrex and Paylocity ($15,
 
 Sources: Wyoming DWS 2026 taxable wage base; Experian, 2026 Unemployment Tax Outlook ($33,800 wage base; new-employer rates by industry); FLSA, 29 U.S.C. 206 (Wyoming's own $5.15 is below it) ($7.25 minimum wage; weekly overtime only).
 
-### us-nh 2026.1, New Hampshire (draft)
+### us-nh 2026.1, New Hampshire
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| New Hampshire UI (NH_UI, employer, NHES) | 1.3% default; employer enters its own rate, on the first $14,000 | for Greg's review |
-| New Hampshire administrative contribution (NH_ADMIN, employer, NHES) | 0.4% default; employer enters its own rate, on the first $14,000 | for Greg's review |
-| Quarterly report | Employer Quarterly Tax and Wage Report, filed and paid quarterly | for Greg's review |
-| Minimum wage | $7.25 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | No state law | for Greg's review |
-| New-hire report | Within 20 days to New Hampshire Employment Security (New Hire Reporting) | for Greg's review |
+| New Hampshire UI (NH_UI, employer, NHES) | 1.3% default; employer enters its own rate, on the first $14,000 | ✅ |
+| New Hampshire administrative contribution (NH_ADMIN, employer, NHES) | 0.4% default; employer enters its own rate, on the first $14,000 | ✅ |
+| Quarterly report | Employer Quarterly Tax and Wage Report, filed and paid quarterly | ✅ |
+| Minimum wage | $7.25 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | No state law | ✅ |
+| New-hire report | Within 20 days to New Hampshire Employment Security (New Hire Reporting) | ✅ |
 
 - ⚠️ NHES may change rates each quarter; Q3-Q4 2026 rates weren't published when this was written.
 - ⚠️ New Hampshire taxes interest and dividends only until 2025 and has no wage tax; no sales tax either, so invoices there correctly carry none.
@@ -266,19 +268,19 @@ Sources: Wyoming DWS 2026 taxable wage base; Experian, 2026 Unemployment Tax Out
 
 Sources: NHES 2026 Q1-Q2 rate chart, as reproduced by TimeTrex and Paylocity; RSA 282-A:69 ($14,000 wage base; new employers 1.3% UI plus 0.4% administrative contribution); RSA 279:21 (adopts the federal minimum wage) ($7.25 minimum wage).
 
-### us-ak 2026.1, Alaska (draft)
+### us-ak 2026.1, Alaska
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| Alaska UI (employee) (AK_UI_EE, employee, AKDOL) | 0.5%, on the first $54,200 | for Greg's review |
-| Alaska UI (AK_UI, employer, AKDOL) | 1% default; employer enters its own rate, on the first $54,200 | for Greg's review |
-| Quarterly report | Employer's Quarterly Contribution Report (TQ01C), filed and paid quarterly | for Greg's review |
-| Minimum wage | $13, then $14 from 2026-07-01 | for Greg's review |
-| Exempt salary floor (a year) | $54,080, then $58,240 from 2026-07-01 | for Greg's review |
-| Overtime | After 40 hours a week; after 8 hours a day | for Greg's review |
-| Paid sick leave | 1 hour per 30 worked, up to 56 hours; 40 hours for under 15 employees | for Greg's review |
-| New-hire report | Within 20 days to Alaska Child Support Services Division (New Hire Reporting) | for Greg's review |
+| Alaska UI (employee) (AK_UI_EE, employee, AKDOL) | 0.5%, on the first $54,200 | ✅ |
+| Alaska UI (AK_UI, employer, AKDOL) | 1% default; employer enters its own rate, on the first $54,200 | ✅ |
+| Quarterly report | Employer's Quarterly Contribution Report (TQ01C), filed and paid quarterly | ✅ |
+| Minimum wage | $13, then $14 from 2026-07-01 | ✅ |
+| Exempt salary floor (a year) | $54,080, then $58,240 from 2026-07-01 | ✅ |
+| Overtime | After 40 hours a week; after 8 hours a day | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 56 hours; 40 hours for under 15 employees | ✅ |
+| New-hire report | Within 20 days to Alaska Child Support Services Division (New Hire Reporting) | ✅ |
 
 - ⚠️ Daily overtime applies only to employers with 4 or more employees; TrailBook applies it to everyone, which only matters when daily hours are entered.
 - ⚠️ Paid sick leave caps are read as both a use and an accrual cap; check the statute's carryover rule.
@@ -287,22 +289,22 @@ Sources: NHES 2026 Q1-Q2 rate chart, as reproduced by TimeTrex and Paylocity; RS
 
 Sources: Alaska DOLWD, 2026 Unemployment Insurance Tax Rates; Research and Analysis memo, November 2025 ($54,200 wage base; employee rate 0.50%; employer rate 1.00% for new employers); Ballot Measure 1 (2024), AS 23.10.065 ($13.00 minimum wage, $14.00 from July 1, 2026, $15.00 from July 1, 2027; paid sick leave from July 1, 2025); AS 23.10.055, 23.10.060 (exempt salary twice the minimum wage for 40 hours; daily and weekly overtime).
 
-### us-wa 2026.1, Washington (draft)
+### us-wa 2026.1, Washington
 
 | Item | Figure | Status |
 |---|---|---|
 | State income tax on wages | None | ✅ |
-| Washington Paid Leave (employee) (WA_PFML_EE, employee, ESD) | 0.8072%, on the first $184,500 | for Greg's review |
-| WA Cares (WA_CARES, employee, ESD) | 0.58%, no wage base | for Greg's review |
-| Washington UI (WA_UI, employer, ESD) | 0% default; employer enters its own rate (required before a paycheck), on the first $78,200 | for Greg's review |
-| Washington Paid Leave (employer) (WA_PFML_ER, employer, ESD) | 0% default; employer enters its own rate, on the first $184,500 | for Greg's review |
-| Quarterly report | Unemployment Insurance Quarterly Tax and Wage Report, filed and paid quarterly | for Greg's review |
-| Quarterly report | Paid Family and Medical Leave and WA Cares Quarterly Report, filed and paid quarterly | for Greg's review |
-| Minimum wage | $17.13 | for Greg's review |
-| Exempt salary floor (a year) | $80,168.4 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | 1 hour per 40 worked, no cap | for Greg's review |
-| New-hire report | Within 20 days to Washington Division of Child Support (New Hire Reporting) | for Greg's review |
+| Washington Paid Leave (employee) (WA_PFML_EE, employee, ESD) | 0.8072%, on the first $184,500 | ✅ |
+| WA Cares (WA_CARES, employee, ESD) | 0.58%, no wage base | ✅ |
+| Washington UI (WA_UI, employer, ESD) | 0% default; employer enters its own rate (required before a paycheck), on the first $78,200 | ✅ |
+| Washington Paid Leave (employer) (WA_PFML_ER, employer, ESD) | 0% default; employer enters its own rate, on the first $184,500 | ✅ |
+| Quarterly report | Unemployment Insurance Quarterly Tax and Wage Report, filed and paid quarterly | ✅ |
+| Quarterly report | Paid Family and Medical Leave and WA Cares Quarterly Report, filed and paid quarterly | ✅ |
+| Minimum wage | $17.13 | ✅ |
+| Exempt salary floor (a year) | $80,168.4 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 40 worked, no cap | ✅ |
+| New-hire report | Within 20 days to Washington Division of Child Support (New Hire Reporting) | ✅ |
 
 - ⚠️ Workers' compensation through L&I is charged per hour worked by risk class, partly withheld from employees, and reported quarterly. TrailBook doesn't calculate it yet; this is the main gap before releasing Washington.
 - ⚠️ WA Cares exemptions (employees approved by ESD) aren't modelled: everyone pays the 0.58%.
@@ -312,23 +314,23 @@ Sources: Alaska DOLWD, 2026 Unemployment Insurance Tax Rates; Research and Analy
 
 Sources: ESD, "Paid Family & Medical Leave premium rate increases to 1.13% in 2026"; paidleave.wa.gov updates (1.13% total, employees 71.43% (0.8072%), employers 28.57% (0.3228%) for 50+ employees; up to the Social Security wage base ($184,500)); RCW 50B.04.080 (WA Cares) (0.58% employee premium on all wages); ESD 2026 taxable wage base (Bloomberg Tax) ($78,200 UI wage base; new employers by industry); L&I, 2026 minimum wage and exempt salary ($17.13 minimum wage; $80,168.40 exempt salary).
 
-## us-az 2026.1 (`src/rules/us-az-2026.ts`), draft, awaiting Greg's review
+## us-az 2026.1 (`src/rules/us-az-2026.ts`), released 2026-10-29
 
 Added 2026-10-29. Arizona withholding is the flat percentage the employee elects on Form A-4, so no tables are needed. Oregon and New York were added the same day, below.
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | Employee elects 0.5%, 1%, 1.5%, 2%, 2.5%, 3%, 3.5% on Form A-4; 2% without one; 0% may be elected (ADOR) | for Greg's review |
-| Withholding deposits | On the federal schedule if last year's quarterly average was over $1,500; otherwise with the A1-QRT | for Greg's review |
-| Arizona UI (AZ_UI, employer, DES) | 2% default; employer enters its own rate, on the first $8,000 | for Greg's review |
-| Arizona job training tax (AZ_JTT, employer, DES) | 0% default; employer enters its own rate, on the first $8,000 | for Greg's review |
-| Quarterly report | Arizona Quarterly Withholding Tax Return (A1-QRT), filed and paid quarterly | for Greg's review |
-| Quarterly report | Unemployment Tax and Wage Report (UC-018), filed and paid quarterly | for Greg's review |
-| Minimum wage | $15.15 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | 1 hour per 30 worked, up to 40 hours; 24 hours for under 15 employees | for Greg's review |
-| New-hire report | Within 20 days to Arizona New Hire Reporting Center | for Greg's review |
+| State income tax on wages | Employee elects 0.5%, 1%, 1.5%, 2%, 2.5%, 3%, 3.5% on Form A-4; 2% without one; 0% may be elected (ADOR) | ✅ |
+| Withholding deposits | On the federal schedule if last year's quarterly average was over $1,500; otherwise with the A1-QRT | ✅ |
+| Arizona UI (AZ_UI, employer, DES) | 2% default; employer enters its own rate, on the first $8,000 | ✅ |
+| Arizona job training tax (AZ_JTT, employer, DES) | 0% default; employer enters its own rate, on the first $8,000 | ✅ |
+| Quarterly report | Arizona Quarterly Withholding Tax Return (A1-QRT), filed and paid quarterly | ✅ |
+| Quarterly report | Unemployment Tax and Wage Report (UC-018), filed and paid quarterly | ✅ |
+| Minimum wage | $15.15 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours; 24 hours for under 15 employees | ✅ |
+| New-hire report | Within 20 days to Arizona New Hire Reporting Center | ✅ |
 
 - ⚠️ A new employee who files no A-4 is withheld at 2.0%. An employee may elect 0% only if they expect no Arizona tax for the year; TrailBook takes that election as given.
 - ⚠️ UI and job training tax rates are per employer: enter them from the DES rate notice. New employers pay 2.0% UI and no job training tax.
@@ -341,7 +343,7 @@ Added 2026-10-29. Arizona withholding is the flat percentage the employee elects
 
 Sources: Bloomberg Law, "Arizona's 2026 Withholding Rates Unchanged From 2025"; A.R.S. 43-401 (A-4 choices 0.5% to 3.5% in half-point steps; 2.0% when no A-4 is filed; 0% may be elected when no Arizona tax is expected); Arizona DES 2026 UI rates, as summarised by Avionté and FirstHR ($8,000 wage base; 2.0% new-employer rate; 0.04% to 9.72% range); A.R.S. 23-769 (job training tax) (0.1% on the UI wage base for rated employers; not charged to new employers or those with a negative balance); A.R.S. 23-363 (Proposition 206, CPI-indexed); Industrial Commission of Arizona ($15.15 minimum wage from January 1, 2026); A.R.S. 23-371 to 23-381 (Fair Wages and Healthy Families Act) (earned paid sick time: 1 hour per 30 worked; 40 hours a year for 15+ employees, 24 for fewer); A.R.S. 43-403, 43-413; ADOR Form A1-QRT and A1-R instructions (quarterly withholding return; deposit timing follows the federal schedule when last year's quarterly average was over $1,500).
 
-## us-or 2026.1 and us-ny 2026.1 (`src/rules/us-or-2026.ts`, `src/rules/us-ny-2026.ts`), draft, awaiting Greg's review
+## us-or 2026.1 and us-ny 2026.1 (`src/rules/us-or-2026.ts`, `src/rules/us-ny-2026.ts`), released 2026-10-29
 
 Added 2026-10-29. Withholding for both states was read from the agencies' own 2026 publications (Oregon 150-206-436 Rev. 12-31-25; NYS-50-T-NYS (1/26)); tests check TrailBook against the publications' worked examples. Both states have minimum wage areas: each employee's work area is picked on the employee form.
 
@@ -349,24 +351,24 @@ Added 2026-10-29. Withholding for both states was read from the agencies' own 20
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | Annual formula from 150-206-436: standard deduction $2,910 single / $5,820 married, federal tax subtraction up to $8,750 phasing out from $125,000 single / $250,000 married, $263 credit per allowance (none above $100,000 / $200,000), 8% without an OR-W-4 | for Greg's review |
-| Oregon withholding and statewide transit tax deposits | On your federal deposit dates | for Greg's review |
-| Oregon statewide transit tax (OR_STT, employee, DOR) | 0.1%, no wage base | for Greg's review |
-| Paid Leave Oregon (employee) (OR_PFML_EE, employee, OED) | 0.6%, on the first $184,500 | for Greg's review |
-| Workers' Benefit Fund (employee) (OR_WBF_EE, employee, DCBS) | 0.90 cents per hour worked, no wage base | for Greg's review |
-| Oregon UI (OR_UI, employer, OED) | 2.4% default; employer enters its own rate, on the first $56,700 | for Greg's review |
-| Workers' Benefit Fund (employer) (OR_WBF_ER, employer, DCBS) | 0.90 cents per hour worked, no wage base | for Greg's review |
-| Paid Leave Oregon (employer) (OR_PFML_ER, employer, OED) | 0% default; employer enters its own rate, on the first $184,500 | for Greg's review |
-| TriMet or Lane transit tax (OR_TRANSIT, employer, DOR) | 0% default; employer enters its own rate, no wage base | for Greg's review |
-| Quarterly report | Oregon Quarterly Tax Report (Form OQ), filed and paid quarterly | for Greg's review |
-| Quarterly report | Paid Leave Oregon Quarterly Contribution Report, filed and paid quarterly | for Greg's review |
-| Minimum wage | $15.05, then $15.55 from 2026-07-01 | for Greg's review |
-| Exempt salary floor (a year) | $35,568 | for Greg's review |
-| Minimum wage, Portland metro | $16.30, then $16.80 from 2026-07-01 | for Greg's review |
-| Minimum wage, Nonurban counties | $14.05, then $14.55 from 2026-07-01 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | 1 hour per 30 worked, up to 80 hours | for Greg's review |
-| New-hire report | Within 20 days to Oregon Department of Justice, Division of Child Support (New Hire Reporting) | for Greg's review |
+| State income tax on wages | Annual formula from 150-206-436: standard deduction $2,910 single / $5,820 married, federal tax subtraction up to $8,750 phasing out from $125,000 single / $250,000 married, $263 credit per allowance (none above $100,000 / $200,000), 8% without an OR-W-4 | ✅ |
+| Oregon withholding and statewide transit tax deposits | On your federal deposit dates | ✅ |
+| Oregon statewide transit tax (OR_STT, employee, DOR) | 0.1%, no wage base | ✅ |
+| Paid Leave Oregon (employee) (OR_PFML_EE, employee, OED) | 0.6%, on the first $184,500 | ✅ |
+| Workers' Benefit Fund (employee) (OR_WBF_EE, employee, DCBS) | 0.90 cents per hour worked, no wage base | ✅ |
+| Oregon UI (OR_UI, employer, OED) | 2.4% default; employer enters its own rate, on the first $56,700 | ✅ |
+| Workers' Benefit Fund (employer) (OR_WBF_ER, employer, DCBS) | 0.90 cents per hour worked, no wage base | ✅ |
+| Paid Leave Oregon (employer) (OR_PFML_ER, employer, OED) | 0% default; employer enters its own rate, on the first $184,500 | ✅ |
+| TriMet or Lane transit tax (OR_TRANSIT, employer, DOR) | 0% default; employer enters its own rate, no wage base | ✅ |
+| Quarterly report | Oregon Quarterly Tax Report (Form OQ), filed and paid quarterly | ✅ |
+| Quarterly report | Paid Leave Oregon Quarterly Contribution Report, filed and paid quarterly | ✅ |
+| Minimum wage | $15.05, then $15.55 from 2026-07-01 | ✅ |
+| Exempt salary floor (a year) | $35,568 | ✅ |
+| Minimum wage, Portland metro | $16.30, then $16.80 from 2026-07-01 | ✅ |
+| Minimum wage, Nonurban counties | $14.05, then $14.55 from 2026-07-01 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 80 hours | ✅ |
+| New-hire report | Within 20 days to Oregon Department of Justice, Division of Child Support (New Hire Reporting) | ✅ |
 
 - ⚠️ Withholding uses the annual formula divided by the pay periods, exactly as the publication describes; amounts aren't rounded to whole dollars (allowed, not required).
 - ⚠️ An employee with no OR-W-4 on file is withheld at a flat 8% (HB 2119), with a warning on the paycheck.
@@ -386,18 +388,18 @@ Sources: Oregon DOR, Withholding Tax Formulas, 150-206-436 (Rev. 12-31-25), effe
 
 | Item | Figure | Status |
 |---|---|---|
-| State income tax on wages | Method II exact calculation tables II-A to II-D for each pay frequency, Method III top rates (10.45%, 11.1%, 11.7%) from $1,077,550 single / $2,155,350 married net; no IT-2104 means single, 0 allowances | for Greg's review |
-| Withholding deposits | Within 3 business days once $700 or more is owed; otherwise with the NY-45 | for Greg's review |
-| NY disability (DBL) (NY_SDI, employee, Carrier) | 0.5%, no wage base, at most $0.60 a week (goes to your insurance carrier) | for Greg's review |
-| NY Paid Family Leave (NY_PFL, employee, Carrier) | 0.432%, on the first $95,349.54 (goes to your insurance carrier) | for Greg's review |
-| New York UI (NY_UI, employer, DOL) | 4.1% default; employer enters its own rate, on the first $17,600 | for Greg's review |
-| Quarterly report | Quarterly Combined Withholding, Wage Reporting, and Unemployment Insurance Return (NY-45), filed and paid quarterly | for Greg's review |
-| Minimum wage | $16.00 | for Greg's review |
-| Exempt salary floor (a year) | $62,353.20 | for Greg's review |
-| Minimum wage, New York City, Long Island and Westchester | $17.00; exempt salary $66,300 | for Greg's review |
-| Overtime | After 40 hours a week | for Greg's review |
-| Paid sick leave | 1 hour per 30 worked, up to 56 hours; 40 hours for under 100 employees | for Greg's review |
-| New-hire report | Within 20 days to New York State Department of Taxation and Finance (New Hire Notification) | for Greg's review |
+| State income tax on wages | Method II exact calculation tables II-A to II-D for each pay frequency, Method III top rates (10.45%, 11.1%, 11.7%) from $1,077,550 single / $2,155,350 married net; no IT-2104 means single, 0 allowances | ✅ |
+| Withholding deposits | Within 3 business days once $700 or more is owed; otherwise with the NY-45 | ✅ |
+| NY disability (DBL) (NY_SDI, employee, Carrier) | 0.5%, no wage base, at most $0.60 a week (goes to your insurance carrier) | ✅ |
+| NY Paid Family Leave (NY_PFL, employee, Carrier) | 0.432%, on the first $95,349.54 (goes to your insurance carrier) | ✅ |
+| New York UI (NY_UI, employer, DOL) | 4.1% default; employer enters its own rate, on the first $17,600 | ✅ |
+| Quarterly report | Quarterly Combined Withholding, Wage Reporting, and Unemployment Insurance Return (NY-45), filed and paid quarterly | ✅ |
+| Minimum wage | $16.00 | ✅ |
+| Exempt salary floor (a year) | $62,353.20 | ✅ |
+| Minimum wage, New York City, Long Island and Westchester | $17.00; exempt salary $66,300 | ✅ |
+| Overtime | After 40 hours a week | ✅ |
+| Paid sick leave | 1 hour per 30 worked, up to 56 hours; 40 hours for under 100 employees | ✅ |
+| New-hire report | Within 20 days to New York State Department of Taxation and Finance (New Hire Notification) | ✅ |
 
 - ⚠️ No IT-2104 on file: withheld as single with no allowances. Married withholding at the higher single rate, and head of household, use the single tables.
 - ⚠️ Withholding over $700 not yet paid is due within 3 business days of the payday; the rest is paid with the NY-45. Check whether your business must use the 5-business-day rule instead.
@@ -449,4 +451,4 @@ Each state is one file in `src/rules` with a `StateRulePack`, added to the regis
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the draft state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the other state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), the Oregon Department of Revenue (withholding formulas 150-206-436, statewide transit tax, TriMet and Lane transit taxes), the Oregon Employment Department (UI, Paid Leave Oregon), DCBS (Workers' Benefit Fund) and BOLI (minimum wage), the New York Department of Taxation and Finance (NYS-50-T-NYS tables, NYS-50), the New York Department of Labor (UI, minimum wage, exempt salary) and DFS / the Workers' Compensation Board (Paid Family Leave and disability contributions), plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

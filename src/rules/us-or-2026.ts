@@ -2,8 +2,7 @@ import type { StateRulePack } from "./types.js";
 
 // Oregon 2026. Withholding follows the Department of Revenue's computer
 // formula (150-206-436, Rev. 12-31-25), read from the publication itself on
-// 2026-10-29. The pack is a draft until Greg reviews it in
-// docs/rule-pack-review.md.
+// 2026-10-29. Greg reviewed and released it on 2026-10-29 (docs/rule-pack-review.md).
 const FED_CAP = "8750";
 
 export const usOregon2026: StateRulePack = {
@@ -14,7 +13,7 @@ export const usOregon2026: StateRulePack = {
   place: { country: "US", region: "OR" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Oregon DOR, Withholding Tax Formulas, 150-206-436 (Rev. 12-31-25), effective January 1, 2026", covers: "brackets, $2,910/$5,820 standard deductions, $263 exemption credit, $8,750 federal tax subtraction and its phase-out, allowance limits, 8% without a certificate, deposits on the federal schedule", basis: "published" },

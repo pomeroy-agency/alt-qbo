@@ -48,8 +48,7 @@ describe("rule packs", () => {
     expect(resolveRules(CA, "2026-06-15", { requireReleased: true }).federal.status).toBe("released");
     for (const p of allRulePacks()) {
       expect(p.sources.length).toBeGreaterThan(0);
-      // New states stay draft until Greg reviews their figures.
-      expect(p.status).toBe(p.id === "us-federal" || p.id === "us-ca" ? "released" : "draft");
+      expect(p.status).toBe("released");
     }
   });
 
