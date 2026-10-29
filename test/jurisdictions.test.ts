@@ -16,13 +16,13 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code)).toEqual(["CA"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "CA", "FL", "NH", "NV", "SD", "TN", "TX", "WA", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
     expect(isLive("US", "CA")).toBe(true);
     expect(isLive("CA", "ON")).toBe(false);
-    expect(isSupportedPlace({ country: "US", region: "TX" })).toBe(false);
+    expect(isSupportedPlace({ country: "US", region: "ID" })).toBe(false);
     expect(() => resolveRules({ country: "CA", region: "BC" }, "2026-06-01")).toThrow(/not launched/);
   });
 
@@ -104,5 +104,71 @@ describe("state deposit rules", () => {
   it("puts California's UI and ETT on the DE 9 date and keeps their deposit keys", () => {
     const d = depositSchedule([run("r1", "2026-08-14", { CA_UI: 100, CA_ETT: 3 })], "monthly", { country: "US", region: "CA" });
     expect(d.find((x) => x.kind === "ca_ui_ett")).toMatchObject({ key: "ca_ui_ett:2026-Q3", dueDate: "2026-11-02" });
+  });
+});
+
+describe("no-income-tax state packs (draft)", () => {
+  const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+  const rulesFor = (region: string, on = "2026-06-01"): ResolvedRules => ({ federal, state: statePackFor({ country: "US", region }, on), provenance: [] });
+  const weekly: EmployeePayInput = {
+    employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "20.00", regularHours: "40",
+    w4: { filingStatus: "single_or_mfs", step2Checked: false },
+  };
+  const tax = (p: ReturnType<typeof calculatePaycheck>, code: string) => p.taxes.find((t) => t.code === code);
+
+  it("are live for books, draft for payroll, and stay out of a released-only run", () => {
+    for (const r of ["TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA"]) {
+      expect(isLive("US", r)).toBe(true);
+      expect(statePackFor({ country: "US", region: r }, "2026-06-01").status).toBe("draft");
+      expect(() => resolveRules({ country: "US", region: r }, "2026-06-01", { requireReleased: true })).toThrow();
+    }
+  });
+
+  it("Texas: no state income tax, no SDI, UI capped at the $9,000 base", () => {
+    const p = calculatePaycheck({ ...weekly, ytd: { stateWages: { TX_UI: 890000n } } }, rulesFor("TX"), {}, "2026-06-05");
+    expect(p.taxes.map((t) => t.code)).toEqual(expect.arrayContaining(["FIT", "TX_UI"]));
+    expect(p.taxes.filter((t) => t.agency !== "IRS").map((t) => t.code)).toEqual(["TX_UI"]);
+    expect(tax(p, "TX_UI")).toMatchObject({ taxableWagesMinor: 10000n, amountMinor: 270n });
+    expect(p.blockers).toEqual([]);
+  });
+
+  it("Alaska withholds employee UI and changes its exempt salary floor on July 1", () => {
+    const p = calculatePaycheck(weekly, rulesFor("AK"), {}, "2026-06-05");
+    expect(tax(p, "AK_UI_EE")).toMatchObject({ amountMinor: 400n }); // 0.5% of $800
+    const salaried: EmployeePayInput = { ...weekly, hourlyRate: undefined, regularHours: undefined, salaryPerPeriod: "1050.00", overtimeExempt: true };
+    expect(calculatePaycheck(salaried, rulesFor("AK"), {}, "2026-06-26").blockers).toEqual([]); // $54,600 ≥ $54,080
+    expect(calculatePaycheck(salaried, rulesFor("AK"), {}, "2026-07-03").blockers[0]).toMatch(/exempt minimum of 58240/);
+  });
+
+  it("Washington needs the employer's own UI rate before a paycheck", () => {
+    const p = calculatePaycheck(weekly, rulesFor("WA"), {}, "2026-06-05");
+    expect(p.blockers.join(" ")).toMatch(/Washington UI rate/);
+    const ok = calculatePaycheck(weekly, rulesFor("WA"), { stateRates: { WA_UI: "0.012" } }, "2026-06-05");
+    expect(ok.blockers).toEqual([]);
+    expect(tax(ok, "WA_UI")!.amountMinor).toBe(960n);
+    expect(tax(ok, "WA_CARES")!.amountMinor).toBe(464n);
+  });
+
+  it("Florida's minimum wage rises on September 30", () => {
+    const fl = statePackFor({ country: "US", region: "FL" }, "2026-06-01").wageHour;
+    expect(minimumWageOn(fl, "2026-09-29")).toBe("14.00");
+    expect(minimumWageOn(fl, "2026-09-30")).toBe("15.00");
+  });
+
+  it("Nevada counts daily overtime after 8 hours, for pay under $18 an hour", () => {
+    const nv = statePackFor({ country: "US", region: "NV" }, "2026-06-01").wageHour;
+    expect(nv.overtime.dailyOnlyBelowHourlyRate).toBe("18.00");
+    expect(splitWorkweek([10, 10, 10, 0, 0, 0, 0], nv)).toEqual({ regular: "24", overtime: "6", doubleTime: "0" });
+  });
+
+  it("Texas files the C-3 quarterly with a TWC deposit key that the database accepts", () => {
+    const tx = statePackFor({ country: "US", region: "TX" }, "2026-06-01");
+    expect(tx.forms.quarterly.map((f) => f.slug)).toEqual(["c3"]);
+    const d = depositSchedule([{ payRunId: "r1", payDate: "2026-08-14", byTax: { TX_UI: 27000n } }], "monthly", { country: "US", region: "TX" });
+    const ui = d.find((x) => x.kind === "tx_c3")!;
+    expect(ui.key).toMatch(/^tx_c3:2026-Q3/);
+    for (const r of ["TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA"]) {
+      for (const k of statePackFor({ country: "US", region: r }, "2026-06-01").payroll.deposits) expect(k.kind).toMatch(/^[a-z]{2}_[a-z0-9_]{2,20}$/);
+    }
   });
 });

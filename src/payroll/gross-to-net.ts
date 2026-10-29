@@ -3,7 +3,7 @@ import type { ResolvedRules } from "../rules/index.js";
 import type { DE4 } from "./california.js";
 import { federalWithholding, type W4 } from "./federal.js";
 import { stateWithholding, type StateWithholding } from "./state-withholding.js";
-import { minimumWageOn } from "../rules/minimum-wage.js";
+import { exemptSalaryOn, minimumWageOn } from "../rules/minimum-wage.js";
 
 export type PayFrequency = "weekly" | "biweekly" | "semimonthly" | "monthly";
 
@@ -75,8 +75,8 @@ export interface SickLeaveInput {
   policy?: SickLeavePolicy;
   /** Hours of sick leave taken in this pay period. */
   usedHours?: string;
-  /** Lower accrual cap where the law allows it for a small employer (Arizona, under 15 employees). */
-  accrualCapHours?: string;
+  /** Lower accrual cap where the law allows it for a small employer (Arizona, under 15 employees); null for none. */
+  accrualCapHours?: string | null;
   /** Front-loading: hours granted for the year with this paycheck; the balance becomes at least this (no carryover required). */
   grantHours?: string;
   /** Exempt and salaried employees: hours they are deemed to work for accrual (40 a week, Labor Code 246(b)(3)). */
@@ -163,9 +163,10 @@ export function calculatePaycheck(
   }
   if (input.salaryPerPeriod) {
     earnings.push({ code: "SALARY", amountMinor: toMinor(input.salaryPerPeriod) });
-    if (input.overtimeExempt && money(input.salaryPerPeriod).mul(periods).lt(wh.exemptAnnualSalaryMinimum)) {
+    const exemptFloor = exemptSalaryOn(wh, onDate);
+    if (input.overtimeExempt && money(input.salaryPerPeriod).mul(periods).lt(exemptFloor)) {
       blockers.push(
-        `annualised salary is below the ${stateName} exempt minimum of ${wh.exemptAnnualSalaryMinimum}; ` +
+        `annualised salary is below the ${stateName} exempt minimum of ${exemptFloor}; ` +
         "the employee cannot be classified exempt from overtime",
       );
     }
@@ -241,7 +242,9 @@ export function calculatePaycheck(
   }
   const stateTax = (t: (typeof st.taxes)[number]) => {
     const wages = t.wageBase ? capped(ficaWages, ytd.stateWages?.[t.code] ?? 0n, t.wageBase) : ficaWages;
-    const r = (t.assignedRate && employer.stateRates?.[t.code]) || t.rate;
+    const own = t.assignedRate ? employer.stateRates?.[t.code] : undefined;
+    if (t.assignedRate?.required && !own) blockers.push(`enter your ${t.label} rate in payroll settings; ${stateName} sets each new employer's rate by industry`);
+    const r = own || t.rate;
     add(t.code, t.agency, t.paidBy, wages, pct(wages, r));
   };
   for (const t of st.taxes) if (t.paidBy === "employee") stateTax(t);
@@ -276,8 +279,9 @@ export function calculatePaycheck(
     let accrued = new D(0);
     if ((sl.policy ?? "accrual") === "accrual") {
       const worked = sl.deemedHoursWorked ? new D(sl.deemedHoursWorked) : reg.add(ot).add(dt);
-      const cap = new D(sl.accrualCapHours ?? law.accrualCapHours);
-      accrued = D.max(D.min(worked.div(law.hoursWorkedPerHourAccrued), cap.sub(after)), 0).toDecimalPlaces(4);
+      const capHours = sl.accrualCapHours !== undefined ? sl.accrualCapHours : law.accrualCapHours;
+      const earned = worked.div(law.hoursWorkedPerHourAccrued);
+      accrued = D.max(capHours === null ? earned : D.min(earned, new D(capHours).sub(after)), 0).toDecimalPlaces(4);
     }
     sickLeave = {
       accruedHours: accrued.toString(), usedHours: used.toString(), ...(granted ? { grantedHours: granted.toString() } : {}),

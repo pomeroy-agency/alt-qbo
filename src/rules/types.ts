@@ -126,7 +126,12 @@ export interface StatePayrollTax {
   /** Annual wage base per employee; null for no limit. */
   wageBase: string | null;
   /** The agency assigns each employer its own rate (UI); the employer enters it in payroll settings. */
-  assignedRate?: { label: string; hint: string };
+  assignedRate?: {
+    label: string;
+    hint: string;
+    /** No usable default (Washington's and Wyoming's new-employer rates depend on the industry): pay runs wait for the employer's rate. */
+    required?: boolean;
+  };
   /** System key of the liability account the tax is credited to. */
   account: string;
 }
@@ -180,21 +185,26 @@ export interface StateWageHourRules {
   minimumWageChanges?: { from: string; rate: string }[];
   /** Exempt (salaried) employees must earn at least this a year; the federal $684 a week where the state sets nothing higher. */
   exemptAnnualSalaryMinimum: string;
+  /** Changes to the exempt salary part-way through the pack's span (it follows the minimum wage in some states). */
+  exemptAnnualSalaryChanges?: { from: string; amount: string }[];
   overtime: {
     weeklyAfter: string;
     /** California-style daily overtime; absent where only the weekly rule applies. */
     dailyAfter?: string;
     dailyDoubleTimeAfter?: string;
     seventhDayDoubleTimeAfter?: string;
+    /** The daily rule applies only to employees paid less than this an hour (Nevada: 1.5 times the minimum wage). */
+    dailyOnlyBelowHourlyRate?: string;
   };
   /** Statewide paid sick leave law; null where there is none. */
   sickLeave: {
     law: string;
     hoursWorkedPerHourAccrued: string;
     annualUseCapHours: string;
-    accrualCapHours: string;
+    /** Most hours a balance can reach; null where the law sets no cap. */
+    accrualCapHours: string | null;
     /** Smaller employers may cap use and accrual lower (Arizona: under 15 employees, 24 hours). */
-    smallEmployer?: { under: number; annualUseCapHours: string; accrualCapHours: string };
+    smallEmployer?: { under: number; annualUseCapHours: string; accrualCapHours: string | null };
   } | null;
   newHireReportDays: number;
   newHireReportTo: string;

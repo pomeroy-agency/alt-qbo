@@ -115,7 +115,11 @@ function payInput(
     for (const w of weeks) {
       let s;
       try {
-        s = splitWorkweek(w.map((h) => Number(h) || 0), wageHour);
+        // Nevada's daily overtime is only for employees paid under 1.5 times the minimum wage.
+        const ot = wageHour.overtime;
+        const daily = !ot.dailyOnlyBelowHourlyRate || new D(e.payRate).lt(ot.dailyOnlyBelowHourlyRate);
+        const rules = daily ? wageHour : { ...wageHour, overtime: { weeklyAfter: ot.weeklyAfter } };
+        s = splitWorkweek(w.map((h) => Number(h) || 0), rules);
       } catch (err) {
         invalid(`${e.name}: ${(err as Error).message}`);
       }

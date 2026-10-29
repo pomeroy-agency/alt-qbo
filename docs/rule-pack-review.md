@@ -122,6 +122,196 @@ How the app applies it (`decideUseTax` and `recordBill` in `src/core/sales-tax.t
 | Where it's reported | the CDTFA-401 for seller's permit holders. Without a permit: a CDTFA use tax return for qualified purchasers (generally $100,000+ gross receipts), otherwise the California income tax return | Rev. & Tax. Code §6225 (qualified purchasers) | ✅ Greg accepted 2026-10-25 (recheck the threshold when ca.gov can be reached) |
 | Resale, and items used outside California | not accrued: the person leaves the box unticked or picks a non-taxable kind | Reg. 1668 | ✅ by design |
 
+## States without a wage income tax (`src/rules/us-states-2026.ts`), draft, awaiting Greg's review
+
+Added 2026-10-29 at Greg's choice of order (these nine first, then Oregon, Arizona and New York). Each pack is `draft`: a business there can keep its books and preview payroll, but saved pay runs are refused until Greg approves the figures below and the pack is `released`. Figures were gathered on 2026-10-28; most state sites can't be opened from TrailBook's build machines, so several come from payroll publishers and each ⚠️ says what to read off the agency's own notice. UI rates are per employer: the pack holds the new-employer rate, and the employer enters its own rate from its notice. Workers' compensation (state-run in Washington and Wyoming) and local minimum wages outside California aren't covered yet. Sales tax in these states isn't worked out: invoices carry no tax unless an owner or accountant sets the rate by hand.
+
+### us-tx 2026.1, Texas (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Texas UI (TX_UI, employer, TWC) | 2.7% default; employer enters its own rate, on the first $9,000 | for Greg's review |
+| Quarterly report | Employer's Quarterly Report (C-3), filed and paid quarterly | for Greg's review |
+| Minimum wage | $7.25 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | No state law | for Greg's review |
+| New-hire report | Within 20 days to Texas Office of the Attorney General (Employer New Hire Reporting) | for Greg's review |
+
+- ⚠️ Some sources say a new employer's rate is the greater of 2.7% or its industry average; TWC's 2026 page says 2.7% for every industry. Employers enter their own rate from the C-22 notice either way.
+- ⚠️ No statewide paid sick leave (the Austin, Dallas and San Antonio ordinances were struck down or preempted).
+- ⚠️ Texas franchise tax (an annual report, no tax due under the $2.47 million revenue threshold) isn't payroll and isn't calculated.
+- ⚠️ Sales tax: TrailBook doesn't work out Texas sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: TWC, 2026 tax rates; Bloomberg Tax, "Texas Publishes 2026 Unemployment Insurance Tax Rates" ($9,000 wage base; 2.7% new-employer rate (rates run 0.32% to 6.32%; the employment and training assessment is included in the rate)); Texas Labor Code ch. 62 (Texas Minimum Wage Act) adopting the FLSA rate ($7.25 minimum wage; weekly overtime only); Texas Family Code 234.102 (new hires reported within 20 days).
+
+### us-fl 2026.1, Florida (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Florida reemployment tax (FL_RT, employer, FDOR) | 2.7% default; employer enters its own rate, on the first $7,000 | for Greg's review |
+| Quarterly report | Employer's Quarterly Report (RT-6), filed and paid quarterly | for Greg's review |
+| Minimum wage | $14, then $15 from 2026-09-30 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | No state law | for Greg's review |
+| New-hire report | Within 20 days to Florida New Hire Reporting Center | for Greg's review |
+
+- ⚠️ Tipped employees ($11.98 cash wage from September 30, 2026) aren't modelled; TrailBook checks the full minimum wage.
+- ⚠️ No statewide paid sick leave.
+- ⚠️ Sales tax: TrailBook doesn't work out Florida sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Florida Department of Revenue, Reemployment Tax Rate Information ($7,000 wage base; 2.7% initial rate for the first 10 quarters; 2026 rates 0.1% to 5.4%); Florida Constitution art. X, §24 (Amendment 2, 2020) ($14.00 minimum wage, $15.00 from September 30, 2026; CPI-indexed from 2027); Florida Statutes 409.2576 (new hires reported within 20 days).
+
+### us-nv 2026.1, Nevada (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Nevada UI (NV_UI, employer, DETR) | 2.95% default; employer enters its own rate, on the first $43,700 | for Greg's review |
+| Nevada Career Enhancement Program (NV_CEP, employer, DETR) | 0.05%, on the first $43,700 | for Greg's review |
+| Quarterly report | Employer's Quarterly Contribution and Wage Report (NUCS-4072), filed and paid quarterly | for Greg's review |
+| Minimum wage | $12 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Overtime | After 40 hours a week; after 8 hours a day for pay under $18.00 an hour | for Greg's review |
+| Paid sick leave | 1 hour per 52 worked, up to 40 hours; 0 hours for under 50 employees | for Greg's review |
+| New-hire report | Within 20 days to Nevada New Hire Reporting (Division of Welfare and Supportive Services) | for Greg's review |
+
+- ⚠️ Daily overtime applies only when the daily hours are entered (the "Daily hours" box on the pay run), and only to employees paid under $18.00 an hour; an employer and employee may agree to four 10-hour days, which TrailBook doesn't know about.
+- ⚠️ Paid leave is counted at 1 hour per 52 worked (0.01923), up to 40 hours a year, for employers with 50 or more employees; smaller employers get no accrual. Check the 40-hour carryover cap reading.
+- ⚠️ The Modified Business Tax (a quarterly Department of Taxation tax on wages over $50,000 a quarter, 1.17% for most businesses) isn't calculated.
+- ⚠️ Sales tax: TrailBook doesn't work out Nevada sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: DETR, Contributions Newsletter June 2026; UI Information for Employers ($43,700 wage base; 2.95% new-employer rate; 0.05% Career Enhancement Program on the same base); NRS 608.250 as amended by AB 456 (2019); 2024 constitutional amendment ($12.00 minimum wage for all employers from July 1, 2024); NRS 608.018; NRS 608.0197 (daily overtime under 1.5 times the minimum wage; paid leave at 0.01923 hours per hour for 50+ employees).
+
+### us-tn 2026.1, Tennessee (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Tennessee UI (TN_UI, employer, TDLWD) | 2.7% default; employer enters its own rate, on the first $7,000 | for Greg's review |
+| Quarterly report | Employer's Quarterly Premium and Wage Report (LB-0456), filed and paid quarterly | for Greg's review |
+| Minimum wage | $7.25 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | No state law | for Greg's review |
+| New-hire report | Within 20 days to Tennessee New Hire Reporting | for Greg's review |
+
+- ⚠️ Some new employers (certain industries) get a different starting rate; employers enter their own from the notice.
+- ⚠️ Check the quarterly report's form number (LB-0456) against the current Jobs4TN filing screens.
+- ⚠️ No statewide paid sick leave for private employers.
+- ⚠️ Sales tax: TrailBook doesn't work out Tennessee sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: TDLWD, UI Tax Rates page; Bloomberg Tax, "Tennessee UI Tax Schedule Unchanged for Rest of 2026" ($7,000 wage base; 2.7% for most new employers; Premium Rate Table 6 for 2026); FLSA, 29 U.S.C. 206 (Tennessee has no state minimum wage) ($7.25 minimum wage; weekly overtime only).
+
+### us-sd 2026.1, South Dakota (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| South Dakota reemployment assistance (SD_UI, employer, DLR) | 1.2% default; employer enters its own rate, on the first $15,000 | for Greg's review |
+| South Dakota investment fee (SD_FEE, employer, DLR) | 0.55% default; employer enters its own rate, on the first $15,000 | for Greg's review |
+| Quarterly report | Quarterly Contribution, Investment Fee and Wage Report, filed and paid quarterly | for Greg's review |
+| Minimum wage | $11.85 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | No state law | for Greg's review |
+| New-hire report | Within 20 days to South Dakota New Hire Reporting Center | for Greg's review |
+
+- ⚠️ SB 26 (2026) lowers reemployment contribution rates; sources disagree on whether from July 1, 2026 or January 1, 2027. Employers enter their own rate from the DLR notice, so a rate change needs no pack change, but the new-employer default may.
+- ⚠️ No statewide paid sick leave.
+- ⚠️ Sales tax: TrailBook doesn't work out South Dakota sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: SD DLR employer handbook, as summarised by TimeTrex and Paylocity ($15,000 wage base; 1.2% new-employer rate plus 0.55% investment fee; 0.08% administrative fee once rated); SDCL 60-11-3 (CPI-indexed) ($11.85 minimum wage from January 1, 2026).
+
+### us-wy 2026.1, Wyoming (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Wyoming UI (WY_UI, employer, DWS) | 0% default; employer enters its own rate (required before a paycheck), on the first $33,800 | for Greg's review |
+| Quarterly report | Unemployment Insurance Quarterly Summary and Wage Report, filed and paid quarterly | for Greg's review |
+| Minimum wage | $7.25 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | No state law | for Greg's review |
+| New-hire report | Within 20 days to Wyoming New Hire Reporting Center | for Greg's review |
+
+- ⚠️ No default rate: a pay run waits until the employer enters its rate, because new-employer rates range from about 2.3% to 9.8% by industry.
+- ⚠️ Wyoming's state-run workers' compensation premiums are reported with the same quarterly filing but are not calculated by TrailBook yet.
+- ⚠️ No statewide paid sick leave.
+- ⚠️ Sales tax: TrailBook doesn't work out Wyoming sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Wyoming DWS 2026 taxable wage base; Experian, 2026 Unemployment Tax Outlook ($33,800 wage base; new-employer rates by industry); FLSA, 29 U.S.C. 206 (Wyoming's own $5.15 is below it) ($7.25 minimum wage; weekly overtime only).
+
+### us-nh 2026.1, New Hampshire (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| New Hampshire UI (NH_UI, employer, NHES) | 1.3% default; employer enters its own rate, on the first $14,000 | for Greg's review |
+| New Hampshire administrative contribution (NH_ADMIN, employer, NHES) | 0.4% default; employer enters its own rate, on the first $14,000 | for Greg's review |
+| Quarterly report | Employer Quarterly Tax and Wage Report, filed and paid quarterly | for Greg's review |
+| Minimum wage | $7.25 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | No state law | for Greg's review |
+| New-hire report | Within 20 days to New Hampshire Employment Security (New Hire Reporting) | for Greg's review |
+
+- ⚠️ NHES may change rates each quarter; Q3-Q4 2026 rates weren't published when this was written.
+- ⚠️ New Hampshire taxes interest and dividends only until 2025 and has no wage tax; no sales tax either, so invoices there correctly carry none.
+- ⚠️ No statewide paid sick leave.
+
+Sources: NHES 2026 Q1-Q2 rate chart, as reproduced by TimeTrex and Paylocity; RSA 282-A:69 ($14,000 wage base; new employers 1.3% UI plus 0.4% administrative contribution); RSA 279:21 (adopts the federal minimum wage) ($7.25 minimum wage).
+
+### us-ak 2026.1, Alaska (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Alaska UI (employee) (AK_UI_EE, employee, AKDOL) | 0.5%, on the first $54,200 | for Greg's review |
+| Alaska UI (AK_UI, employer, AKDOL) | 1% default; employer enters its own rate, on the first $54,200 | for Greg's review |
+| Quarterly report | Employer's Quarterly Contribution Report (TQ01C), filed and paid quarterly | for Greg's review |
+| Minimum wage | $13, then $14 from 2026-07-01 | for Greg's review |
+| Exempt salary floor (a year) | $54,080, then $58,240 from 2026-07-01 | for Greg's review |
+| Overtime | After 40 hours a week; after 8 hours a day | for Greg's review |
+| Paid sick leave | 1 hour per 30 worked, up to 56 hours; 40 hours for under 15 employees | for Greg's review |
+| New-hire report | Within 20 days to Alaska Child Support Services Division (New Hire Reporting) | for Greg's review |
+
+- ⚠️ Daily overtime applies only to employers with 4 or more employees; TrailBook applies it to everyone, which only matters when daily hours are entered.
+- ⚠️ Paid sick leave caps are read as both a use and an accrual cap; check the statute's carryover rule.
+- ⚠️ The employee UI contribution has no box on the W-2; it's shown on pay stubs and the quarterly report.
+- ⚠️ Alaska has no state sales tax (many boroughs and cities do); TrailBook doesn't work out local Alaska sales tax yet.
+
+Sources: Alaska DOLWD, 2026 Unemployment Insurance Tax Rates; Research and Analysis memo, November 2025 ($54,200 wage base; employee rate 0.50%; employer rate 1.00% for new employers); Ballot Measure 1 (2024), AS 23.10.065 ($13.00 minimum wage, $14.00 from July 1, 2026, $15.00 from July 1, 2027; paid sick leave from July 1, 2025); AS 23.10.055, 23.10.060 (exempt salary twice the minimum wage for 40 hours; daily and weekly overtime).
+
+### us-wa 2026.1, Washington (draft)
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | None | ✅ |
+| Washington Paid Leave (employee) (WA_PFML_EE, employee, ESD) | 0.8072%, on the first $184,500 | for Greg's review |
+| WA Cares (WA_CARES, employee, ESD) | 0.58%, no wage base | for Greg's review |
+| Washington UI (WA_UI, employer, ESD) | 0% default; employer enters its own rate (required before a paycheck), on the first $78,200 | for Greg's review |
+| Washington Paid Leave (employer) (WA_PFML_ER, employer, ESD) | 0% default; employer enters its own rate, on the first $184,500 | for Greg's review |
+| Quarterly report | Unemployment Insurance Quarterly Tax and Wage Report, filed and paid quarterly | for Greg's review |
+| Quarterly report | Paid Family and Medical Leave and WA Cares Quarterly Report, filed and paid quarterly | for Greg's review |
+| Minimum wage | $17.13 | for Greg's review |
+| Exempt salary floor (a year) | $80,168.4 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | 1 hour per 40 worked, no cap | for Greg's review |
+| New-hire report | Within 20 days to Washington Division of Child Support (New Hire Reporting) | for Greg's review |
+
+- ⚠️ Workers' compensation through L&I is charged per hour worked by risk class, partly withheld from employees, and reported quarterly. TrailBook doesn't calculate it yet; this is the main gap before releasing Washington.
+- ⚠️ WA Cares exemptions (employees approved by ESD) aren't modelled: everyone pays the 0.58%.
+- ⚠️ The year-end 40-hour sick leave carryover cap isn't applied; balances keep growing. Front-loading grants 40 hours.
+- ⚠️ Seattle, SeaTac, Tukwila, Renton, Bellingham, Burien, Everett and King County have higher local minimum wages that TrailBook doesn't check yet.
+- ⚠️ Sales tax: TrailBook doesn't work out Washington sales tax yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: ESD, "Paid Family & Medical Leave premium rate increases to 1.13% in 2026"; paidleave.wa.gov updates (1.13% total, employees 71.43% (0.8072%), employers 28.57% (0.3228%) for 50+ employees; up to the Social Security wage base ($184,500)); RCW 50B.04.080 (WA Cares) (0.58% employee premium on all wages); ESD 2026 taxable wage base (Bloomberg Tax) ($78,200 UI wage base; new employers by industry); L&I, 2026 minimum wage and exempt salary ($17.13 minimum wage; $80,168.40 exempt salary).
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
@@ -160,4 +350,4 @@ Each state is one file in `src/rules` with a `StateRulePack`, added to the regis
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the draft state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

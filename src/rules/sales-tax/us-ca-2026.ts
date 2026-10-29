@@ -1,4 +1,5 @@
 import type { RulePackMeta } from "../types.js";
+import { isLive, regionOf } from "../jurisdictions.js";
 
 // Which California sales are taxable, by the kind of thing sold. Rates are
 // not here: they depend on the delivery address and come from the CDTFA's
@@ -20,7 +21,8 @@ export interface TaxCategory {
 }
 
 export interface SalesTaxRulePack extends RulePackMeta {
-  kind: "us-ca-sales-tax";
+  /** "state-sales-tax-manual" is the stand-in for a live state whose sales tax TrailBook doesn't work out yet. */
+  kind: "us-ca-sales-tax" | "state-sales-tax-manual";
   /** Statewide base rate; district taxes are added on top for most addresses. */
   statewideRate: string;
   /** Sanity bounds for a looked-up combined rate. */
@@ -163,12 +165,33 @@ export const usCaliforniaSalesTax2027: SalesTaxRulePack = {
 
 const PACKS: readonly SalesTaxRulePack[] = [usCaliforniaSalesTax2026, usCaliforniaSalesTax2027];
 
+/**
+ * For a live state without its own sales-tax pack yet: the same kinds of
+ * sale, but no rates or taxability. Invoices there carry no tax unless an
+ * owner or accountant sets the rate by hand.
+ */
+function manualOnlyPack(region: string): SalesTaxRulePack {
+  const name = regionOf("US", region)?.name ?? region;
+  return Object.freeze({
+    kind: "state-sales-tax-manual", id: `us-${region.toLowerCase()}-sales-tax-manual`, version: "0", place: { country: "US", region },
+    effectiveFrom: "2000-01-01", effectiveTo: "2999-12-31", status: "released", sources: [],
+    reviewNotes: [`TrailBook doesn't work out ${name} sales tax yet.`],
+    statewideRate: "0", maxCombinedRate: "0.15000",
+    categories: Object.fromEntries(Object.entries(usCaliforniaSalesTax2026.categories).map(([id, c]) => [id, {
+      label: c.label, help: `TrailBook doesn't know ${name}'s sales tax rules yet; if this is taxable there, an owner or accountant can set the rate on the invoice.`,
+      taxable: true, cite: "", ...(c.digitalProduct ? { digitalProduct: true } : {}),
+    }])),
+  }) as SalesTaxRulePack;
+}
+
+const manualOnly = (region: string | null) => (region && region !== "CA" && isLive("US", region) ? manualOnlyPack(region) : null);
+
 /** The sales-tax pack in force in a state on a date. */
 export function salesTaxRules(region: string | null, onDate: string): SalesTaxRulePack | null {
-  return PACKS.find((p) => p.place.region === region && p.effectiveFrom <= onDate && onDate <= p.effectiveTo) ?? null;
+  return PACKS.find((p) => p.place.region === region && p.effectiveFrom <= onDate && onDate <= p.effectiveTo) ?? manualOnly(region);
 }
 
 /** The newest sales-tax pack for a state, for choices that aren't tied to a date. */
 export function latestSalesTaxRules(region: string | null): SalesTaxRulePack | null {
-  return PACKS.filter((p) => p.place.region === region).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0] ?? null;
+  return PACKS.filter((p) => p.place.region === region).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0] ?? manualOnly(region);
 }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "../core/audit.js";
 import { usCalifornia2026 } from "./us-ca-2026.js";
 import { usFederal2026 } from "./us-federal-2026.js";
+import { NO_INCOME_TAX_STATES_2026 } from "./us-states-2026.js";
 import { isLive } from "./jurisdictions.js";
 import type { FederalRulePack, Place, RulePack, StateRulePack } from "./types.js";
 
@@ -16,7 +17,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia2026]);
+const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia2026, ...NO_INCOME_TAX_STATES_2026]);
 
 
 export class JurisdictionError extends Error {

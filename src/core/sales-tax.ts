@@ -1,4 +1,5 @@
 import type { Tx } from "../db/pool.js";
+import { regionOf } from "../rules/jurisdictions.js";
 import { latestSalesTaxRules, salesTaxRules, type SalesTaxRulePack } from "../rules/sales-tax/us-ca-2026.js";
 import { appendAudit } from "./audit.js";
 import { LedgerError, translateDbError } from "./errors.js";
@@ -103,6 +104,7 @@ export function explainTax(t: Pick<TaxDecision, "rate" | "source" | "jurisdictio
   const pct = `${new D(t.rate).mul(100).toFixed(3).replace(/\.?0+$/, "")}%`;
   switch (t.source) {
     case "not_taxable": return "No sales tax: nothing on this invoice is taxable in California.";
+    case "none": return t.note ? `No sales tax: ${t.note}.` : "No sales tax.";
     case "direct_pay": return `No sales tax on software: ${t.note ?? "the buyer pays California use tax directly"}.`;
     case "resale": return `No sales tax: ${t.note ?? "sale for resale"}.`;
     case "out_of_state": return `No sales tax: delivered outside California${t.address ? ` (${t.address})` : ""}.`;
@@ -214,6 +216,9 @@ export async function decideSalesTax(
   if (input.manual) {
     return decision("manual", manualRate(pack, input.manual, "sales tax"), { jurisdiction: "Set by hand", note: [input.manual.reason.trim().slice(0, 300), ...notes].join(". ") });
   }
+  if (pack.kind === "state-sales-tax-manual") {
+    return decision("none", "0.00000", { note: `TrailBook doesn't work out ${regionOf("US", ent.region)?.name ?? ent.region} sales tax yet; if this sale is taxable there, an owner or accountant can set the rate by hand` });
+  }
   if (!taxable.some(Boolean)) {
     return exemptions.includes("direct_pay") ? decision("direct_pay", "0.00000", { note: directPayNote }) : decision("not_taxable");
   }
@@ -235,7 +240,7 @@ function manualRate(pack: SalesTaxRulePack, manual: { ratePercent: string; reaso
   if (!manual.reason.trim()) throw new LedgerError("INVALID", "say why the rate is being set by hand");
   if (!/^\d{1,2}(\.\d{1,3})?$/.test(manual.ratePercent.trim())) throw new LedgerError("INVALID", "enter the rate as a percentage like 8.625");
   const rate = new D(manual.ratePercent.trim()).div(100);
-  if (rate.gt(pack.maxCombinedRate)) throw new LedgerError("INVALID", `no California rate is that high (the top is under ${new D(pack.maxCombinedRate).mul(100)}%)`);
+  if (rate.gt(pack.maxCombinedRate)) throw new LedgerError("INVALID", `no ${pack.place.region === "CA" ? "California" : "US"} rate is that high (the top is under ${new D(pack.maxCombinedRate).mul(100)}%)`);
   return rate.toFixed(5);
 }
 
@@ -396,6 +401,9 @@ export async function decideUseTax(
     rate, source, jurisdiction: null, address: where ? formatAddress(where) : null, note: null, taxable, rules, ...extra,
   });
   if (!taxable.some(Boolean)) return decision("not_taxable");
+  if (pack.kind === "state-sales-tax-manual" && !input.manual) {
+    throw new LedgerError("INVALID", `TrailBook doesn't work out ${regionOf("US", ent.region)?.name ?? ent.region} use tax yet; an owner or accountant can set the rate by hand`);
+  }
   if (input.manual) {
     return decision("manual", manualRate(pack, input.manual, "use tax"), { jurisdiction: "Set by hand", note: input.manual.reason.trim().slice(0, 300) });
   }

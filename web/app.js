@@ -1867,7 +1867,7 @@ async function payrollView(id) {
       </form>`).join("")}
       ${sick ? `<form data-form="sick-policy" class="row" style="margin-top:12px">
         <label>Paid sick leave<select name="sickLeavePolicy" ${["owner", "admin", "accountant"].includes(state.org.role) ? "" : "disabled"}>
-          <option value="accrual" ${sickLeavePolicy !== "front_load" ? "selected" : ""}>Accrual: 1 hour per ${esc(sick.hoursWorkedPerHourAccrued)} worked, up to ${esc(sick.accrualCapHours)}</option>
+          <option value="accrual" ${sickLeavePolicy !== "front_load" ? "selected" : ""}>Accrual: 1 hour per ${esc(sick.hoursWorkedPerHourAccrued)} worked${sick.accrualCapHours ? `, up to ${esc(sick.accrualCapHours)}` : ", no cap"}</option>
           <option value="front_load" ${sickLeavePolicy === "front_load" ? "selected" : ""}>Front-load: ${esc(sick.annualUseCapHours)} hours at the start of each year</option>
         </select></label>
         ${["owner", "admin", "accountant"].includes(state.org.role) ? `<button type="submit" class="secondary">Save</button>` : ""}
