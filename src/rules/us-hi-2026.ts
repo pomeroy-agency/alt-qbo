@@ -11,8 +11,8 @@ function table(rows: [over: number, base: number, rate: number][]) {
 // 2026), read from it on 2026-10-29: the year's wages less $1,144 for each
 // HW-4 allowance and the $4,350 lump sum allowance, through the annual table
 // (1.4% rising to 7.9%), divided by the pay periods. TDI is shared with the
-// employee, up to 0.5% of weekly wages and $7.50 a week. Drafted 2026-10-29
-// for Greg's review (docs/rule-pack-review.md).
+// employee, up to 0.5% of weekly wages and $7.50 a week. Released
+// 2026-10-29 after Greg's review (docs/rule-pack-review.md).
 export const usHawaii2026: StateRulePack = {
   kind: "state",
   id: "us-hi",
@@ -21,7 +21,7 @@ export const usHawaii2026: StateRulePack = {
   place: { country: "US", region: "HI" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Hawaii Department of Taxation, Booklet A Employer's Tax Guide (Rev. 2025), Appendix Part 1, Annualized Income Tax Withholding (effective December 5, 2025 for withholding January 1, 2026 and after)", covers: "$1,144 per HW-4 allowance; $4,350 extra lump sum allowance; annual tables single (including unmarried heads of household) 1.4% to $9,600, $134 + 3.2% to $14,400, $288 + 5.5% to $19,200, $552 + 6.4% to $24,000, $859 + 6.8% to $36,000, $1,675 + 7.2% to $48,000, $2,539 + 7.6% to $125,000, $8,391 + 7.9% above; married at twice the brackets ($269, $576, $1,104, $1,718, $3,350, $5,078, $16,782); the $500 weekly example ($9.58)", basis: "published" },

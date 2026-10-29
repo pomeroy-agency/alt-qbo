@@ -10,8 +10,8 @@ function table(rows: [over: number, base: number, rate: number][]) {
 // 2026), read from it on 2026-10-29: the year's wages less $2,440 for each
 // W-4N allowance, through Table 7 for the annual payroll period (nothing up
 // to $3,430 single or $8,190 married, then 2.26% rising to 4.6%), divided by
-// the pay periods. Drafted 2026-10-29 for Greg's review
-// (docs/rule-pack-review.md).
+// the pay periods. Released 2026-10-29 after Greg's
+// review (docs/rule-pack-review.md).
 export const usNebraska2026: StateRulePack = {
   kind: "state",
   id: "us-ne",
@@ -20,7 +20,7 @@ export const usNebraska2026: StateRulePack = {
   place: { country: "US", region: "NE" },
   effectiveFrom: "2026-01-01",
   effectiveTo: "2026-12-31",
-  status: "draft",
+  status: "released",
   calendar: "weekends",
   sources: [
     { ref: "Nebraska Department of Revenue, 2026 Nebraska Circular EN (8-429-1998 Rev. 11-2025), Percentage Method and Table 7 (annual payroll period)", covers: "$2,440 per W-4N allowance; single (including head of household) nothing to $3,430, 2.26% to $6,710, $74.13 + 3.22% to $21,810, $560.35 + 4.21% to $31,610, $972.93 + 4.35% to $40,130, $1,343.55 + 4.48% to $75,370, $2,922.30 + 4.6% above; married (including surviving spouse) $8,190, $13,010 ($108.93), $32,400 ($733.29), $50,400 ($1,491.09), $62,530 ($2,018.75), $82,920 ($2,932.22); withholding below 1.5% of wages must be raised to at least half of what a single employee with one allowance (married, two) would have withheld; no W-4N means single with no allowances", basis: "published" },
