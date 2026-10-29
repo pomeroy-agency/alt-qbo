@@ -312,6 +312,35 @@ Sources: Alaska DOLWD, 2026 Unemployment Insurance Tax Rates; Research and Analy
 
 Sources: ESD, "Paid Family & Medical Leave premium rate increases to 1.13% in 2026"; paidleave.wa.gov updates (1.13% total, employees 71.43% (0.8072%), employers 28.57% (0.3228%) for 50+ employees; up to the Social Security wage base ($184,500)); RCW 50B.04.080 (WA Cares) (0.58% employee premium on all wages); ESD 2026 taxable wage base (Bloomberg Tax) ($78,200 UI wage base; new employers by industry); L&I, 2026 minimum wage and exempt salary ($17.13 minimum wage; $80,168.40 exempt salary).
 
+## us-az 2026.1 (`src/rules/us-az-2026.ts`), draft, awaiting Greg's review
+
+Added 2026-10-29. Arizona withholding is the flat percentage the employee elects on Form A-4, so no tables are needed. Oregon and New York follow once their 2026 withholding formula publications can be read.
+
+| Item | Figure | Status |
+|---|---|---|
+| State income tax on wages | Employee elects 0.5%, 1%, 1.5%, 2%, 2.5%, 3%, 3.5% on Form A-4; 2% without one; 0% may be elected (ADOR) | for Greg's review |
+| Withholding deposits | On the federal schedule if last year's quarterly average was over $1,500; otherwise with the A1-QRT | for Greg's review |
+| Arizona UI (AZ_UI, employer, DES) | 2% default; employer enters its own rate, on the first $8,000 | for Greg's review |
+| Arizona job training tax (AZ_JTT, employer, DES) | 0% default; employer enters its own rate, on the first $8,000 | for Greg's review |
+| Quarterly report | Arizona Quarterly Withholding Tax Return (A1-QRT), filed and paid quarterly | for Greg's review |
+| Quarterly report | Unemployment Tax and Wage Report (UC-018), filed and paid quarterly | for Greg's review |
+| Minimum wage | $15.15 | for Greg's review |
+| Exempt salary floor (a year) | $35,568 | for Greg's review |
+| Overtime | After 40 hours a week | for Greg's review |
+| Paid sick leave | 1 hour per 30 worked, up to 40 hours; 24 hours for under 15 employees | for Greg's review |
+| New-hire report | Within 20 days to Arizona New Hire Reporting Center | for Greg's review |
+
+- ⚠️ A new employee who files no A-4 is withheld at 2.0%. An employee may elect 0% only if they expect no Arizona tax for the year; TrailBook takes that election as given.
+- ⚠️ UI and job training tax rates are per employer: enter them from the DES rate notice. New employers pay 2.0% UI and no job training tax.
+- ⚠️ Deposits: if last year's average quarterly Arizona withholding was over $1,500, deposits are due on the federal schedule; otherwise with the A1-QRT. Check ADOR's current threshold.
+- ⚠️ Flagstaff ($18.35) and Tucson ($15.45) have higher local minimum wages that TrailBook doesn't check yet.
+- ⚠️ Tipped employees ($12.15 cash wage) aren't modelled; TrailBook checks the full minimum wage.
+- ⚠️ Paid sick time caps are read as both a use and an accrual cap (A.R.S. 23-372 allows carrying over up to 40 hours, or 24 for small employers).
+- ⚠️ The A1-R annual reconciliation and W-2 state copies are prepared from the W-2 data; the A1-R itself isn't produced yet.
+- ⚠️ Sales tax: Arizona's transaction privilege tax isn't worked out yet; invoices carry none unless an owner or accountant sets the rate by hand.
+
+Sources: Bloomberg Law, "Arizona's 2026 Withholding Rates Unchanged From 2025"; A.R.S. 43-401 (A-4 choices 0.5% to 3.5% in half-point steps; 2.0% when no A-4 is filed; 0% may be elected when no Arizona tax is expected); Arizona DES 2026 UI rates, as summarised by Avionté and FirstHR ($8,000 wage base; 2.0% new-employer rate; 0.04% to 9.72% range); A.R.S. 23-769 (job training tax) (0.1% on the UI wage base for rated employers; not charged to new employers or those with a negative balance); A.R.S. 23-363 (Proposition 206, CPI-indexed); Industrial Commission of Arizona ($15.15 minimum wage from January 1, 2026); A.R.S. 23-371 to 23-381 (Fair Wages and Healthy Families Act) (earned paid sick time: 1 hour per 30 worked; 40 hours a year for 15+ employees, 24 for fewer); A.R.S. 43-403, 43-413; ADOR Form A1-QRT and A1-R instructions (quarterly withholding return; deposit timing follows the federal schedule when last year's quarterly average was over $1,500).
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
@@ -350,4 +379,4 @@ Each state is one file in `src/rules` with a `StateRulePack`, added to the regis
 
 ## Monitoring
 
-A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the draft state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.
+A scheduled task runs every morning. It checks the IRS, SSA, EDD, DIR, CDTFA, FTB and city minimum wage ordinances, and for the draft state packs: the Texas Workforce Commission, Florida Department of Revenue (reemployment tax), Nevada DETR and Labor Commissioner, Tennessee Department of Labor and Workforce Development, South Dakota Department of Labor and Regulation, Wyoming Department of Workforce Services, New Hampshire Employment Security, Alaska Department of Labor and Workforce Development, Washington ESD (UI, Paid Family and Medical Leave, WA Cares) and Labor and Industries (minimum wage, exempt salary), the Arizona Department of Revenue (A-4 rates, A1-QRT), Arizona DES (UI and job training tax) and the Industrial Commission of Arizona (minimum wage, earned paid sick time), plus each state's new-hire reporting rules and minimum wage notices, for new or changed figures that these packs use (and new-year figures), and when something changes it opens a pull request that updates the pack, its sources and this checklist, and tells Greg. Rule changes are not merged without Greg's review, because they change paychecks and tax.

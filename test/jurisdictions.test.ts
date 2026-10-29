@@ -16,7 +16,7 @@ describe("jurisdictions", () => {
     expect(canada.regions).toHaveLength(13);
     expect(canada.status).toBe("planned");
     expect(canada.currency).toBe("CAD");
-    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "CA", "FL", "NH", "NV", "SD", "TN", "TX", "WA", "WY"]);
+    expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AZ", "CA", "FL", "NH", "NV", "SD", "TN", "TX", "WA", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
@@ -170,5 +170,34 @@ describe("no-income-tax state packs (draft)", () => {
     for (const r of ["TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA"]) {
       for (const k of statePackFor({ country: "US", region: r }, "2026-06-01").payroll.deposits) expect(k.kind).toMatch(/^[a-z]{2}_[a-z0-9_]{2,20}$/);
     }
+  });
+});
+
+describe("Arizona (draft)", () => {
+  const federal = resolveRules({ country: "US", region: "CA" }, "2026-06-01").federal;
+  const rules: ResolvedRules = { federal, state: statePackFor({ country: "US", region: "AZ" }, "2026-06-01"), provenance: [] };
+  const weekly: EmployeePayInput = {
+    employeeId: "e1", name: "Pat", payFrequency: "weekly", hourlyRate: "20.00", regularHours: "40",
+    w4: { filingStatus: "single_or_mfs", step2Checked: false },
+  };
+
+  it("withholds the A-4 percentage, 2% without one, and charges UI at the new-employer rate", () => {
+    const p = calculatePaycheck(weekly, rules, {}, "2026-06-05");
+    expect(p.taxes.find((t) => t.code === "AZ_WH")!.amountMinor).toBe(1600n); // 2% of $800
+    expect(p.taxes.find((t) => t.code === "AZ_UI")!.amountMinor).toBe(1600n);
+    expect(p.taxes.find((t) => t.code === "AZ_JTT")?.amountMinor ?? 0n).toBe(0n);
+    const elected = calculatePaycheck({ ...weekly, stateWithholding: { rate: "0.035" } }, rules, { stateRates: { AZ_JTT: "0.001" } }, "2026-06-05");
+    expect(elected.taxes.find((t) => t.code === "AZ_WH")!.amountMinor).toBe(2800n);
+    expect(elected.taxes.find((t) => t.code === "AZ_JTT")!.amountMinor).toBe(80n);
+    expect(calculatePaycheck({ ...weekly, hourlyRate: "15.00" }, rules, {}, "2026-06-05").blockers[0]).toMatch(/Arizona minimum wage of 15.15/);
+  });
+
+  it("files the A1-QRT and UC-018, and deposits withholding on the federal schedule after a big year", () => {
+    expect(rules.state.forms.quarterly.map((f) => f.slug)).toEqual(["a1-qrt", "uc018"]);
+    const runs: RunTaxes[] = [{ payRunId: "r1", payDate: "2026-08-14", byTax: { FIT: 50000n, AZ_WH: 300000n, AZ_UI: 10000n } }];
+    const small = depositSchedule(runs, "monthly", { country: "US", region: "AZ" }, { priorQuarterlyAverageMinor: 100000n });
+    const big = depositSchedule(runs, "monthly", { country: "US", region: "AZ" }, { priorQuarterlyAverageMinor: 200000n });
+    expect(small.find((d) => d.kind === "az_wh")!.dueDate).toBe("2026-11-02");
+    expect(big.find((d) => d.kind === "az_wh")!.dueDate).toBe("2026-09-15");
   });
 });
