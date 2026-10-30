@@ -1,0 +1,26 @@
+<!-- PA-NEWS-V1: TrailBook News sign-up (double opt-in through the app), 2026-10-29 -->
+<style>
+.pa-news{background:var(--paper);border-top:1px solid var(--rule-soft);padding:56px 0}
+.pa-news .shell{max-width:760px}
+.pa-news h2{font-family:var(--serif);font-weight:400;font-size:clamp(26px,3.4vw,34px);line-height:1.15;margin:0 0 10px;color:var(--ink)}
+.pa-news p{color:var(--ink-warm);font-size:16px;line-height:1.6;margin:0 0 18px}
+.pa-news form{display:flex;gap:10px;flex-wrap:wrap;position:relative}
+.pa-news input[type=email]{flex:1 1 260px;min-width:0;padding:13px 14px;font:inherit;font-size:15px;border:1px solid var(--rule);border-radius:3px;background:#fff;color:var(--ink)}
+.pa-news input[type=email]:focus{outline:2px solid var(--gold-edge);border-color:var(--gold)}
+.pa-news button{cursor:pointer}
+.pa-news .pa-news-trap{position:absolute;left:-9999px;top:0}
+.pa-news .fine{font-size:13px;color:var(--ink-muted);margin:12px 0 0}
+.pa-news a{color:var(--gold);text-decoration:underline}
+</style>
+<section class="pa-news" id="trailbook-news">
+<div class="shell">
+<h2>TrailBook News</h2>
+<p>One short email a week on the tax, payroll and labor changes that matter to a small business, plus a sales tip. We'll email you to confirm.</p>
+<form method="post" action="%%APP%%/api/newsletter/subscribe" target="_top">
+<input type="email" name="email" required autocomplete="email" maxlength="254" placeholder="you@yourbusiness.com" aria-label="Your email">
+<div class="pa-news-trap" aria-hidden="true"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+<button type="submit" class="btn btn-gold" data-pa-event="newsletter_signup_submit" data-pa-label="trailbook_site">Subscribe</button>
+</form>
+<p class="fine">You can unsubscribe from any issue. See the <a href="%%APP%%/privacy.html" target="_top">TrailBook Privacy Policy</a>.</p>
+</div>
+</section>

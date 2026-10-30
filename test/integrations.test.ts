@@ -146,7 +146,7 @@ describe("connecting MilePost with OAuth", () => {
     const auth = bearer(t.access_token);
 
     const company = await call("/api/v1/company", { headers: auth });
-    expect(company.data).toMatchObject({ id: s.entityId, name: "Link Studio LLC", currency: "USD", subscription: { active: true, status: "trialing" } });
+    expect(company.data).toMatchObject({ id: s.entityId, org_id: s.orgId, name: "Link Studio LLC", currency: "USD", subscription: { active: true, status: "trialing" } });
 
     expect((await call("/api/v1/company")).status).toBe(401);
     expect((await call("/api/v1/company", { headers: bearer("tb_at_nope") })).data.error.code).toBe("invalid_token");

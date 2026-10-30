@@ -286,7 +286,8 @@ async function route(req: Request, path: string, ctx: Ctx): Promise<Response> {
     requireScope(ctx, "company:read");
     const e = await tenant(ctx, async (tx) => (await tx.query("SELECT legal_name, functional_currency FROM entities WHERE id = $1", [grant.entityId])).rows[0]);
     const subscription = await subscriptionStatus(ctx.pool, grant.orgId, ctx.opts.billing ?? {}, pacificToday());
-    return json({ id: grant.entityId, name: e.legal_name, currency: e.functional_currency.trim(), subscription });
+    // id (and the company_id from OAuth) is the business; org_id is the TrailBook organisation that holds it and pays.
+    return json({ id: grant.entityId, org_id: grant.orgId, name: e.legal_name, currency: e.functional_currency.trim(), subscription });
   }
 
   if (path === "/api/v1/customers") {

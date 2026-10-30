@@ -14,6 +14,7 @@ Until these are set, nothing changes for anyone: every organisation keeps full u
 | `BILLING_SELLER_ORG_ID`, `BILLING_SELLER_ENTITY_ID` | The TrailBook organisation and business whose books get each subscription invoice and payment: your California LLC. That organisation is never charged. | Open the business in TrailBook; the address bar shows `#/e/<entity id>/…`. The organisation id is in `GET /api/me`. |
 | `BILLING_BANK_ACCOUNT` | Optional. The bank account code card payments are recorded to, such as a "Stripe" clearing account you add under Chart of accounts. Default: the operating account. | Chart of accounts |
 | `BILLING_ENFORCE` | `true` pauses changes (never reading or downloading) for an organisation whose trial ended unpaid, whose payment is 14 days overdue, or whose subscription ended. It also keeps payroll changes to Books + Payroll. Leave it off until card payments work end to end. | `true` |
+| `ACCOUNT_HUB_URL`, `ACCOUNT_HUB_SECRET` | Optional. Tell the Pomeroy account hub each organisation's status, and let it read status and set complimentary periods (see `docs/account-hub.md`). Leave unset until the hub exists. | `https://account.pomeroyagency.com`, and `openssl rand -base64 48` for the secret; the hub gets the same secret |
 | `MILEPOST_OAUTH_CLIENT_ID`, `MILEPOST_OAUTH_CLIENT_SECRET` | Let MilePost connect to a business with OAuth (see `docs/milepost-integration.md`). Without them the MilePost tile says it isn't available yet. | `milepost`, and `openssl rand -base64 32` for the secret; MilePost gets the same pair |
 
 `PII_KEY` (already set) now also seals the two-factor secrets and MilePost API keys.
@@ -31,7 +32,7 @@ Until these are set, nothing changes for anyone: every organisation keeps full u
 | Function | When (UTC) | What it does |
 | --- | --- | --- |
 | `nightly-backups` | 10:00 (2 to 3 a.m. Pacific) | Encrypted copy of every business except practice examples, stored in Netlify Blobs (store `backups`), read back and checked, kept 30 days |
-| `billing-run` | 16:00 (8 to 9 a.m. Pacific) | Renewals, people billed monthly on yearly payroll plans, retries every 3 days, receipts and failure emails |
+| `billing-run` | 16:00 (8 to 9 a.m. Pacific) | Renewals, people billed monthly on yearly payroll plans, retries every 3 days, receipts and failure emails. Then, with the account hub set up, sends the hub every organisation whose status changed |
 | `deposit-reminders` | 15:00 | Unchanged |
 
 ## Things done by hand for now

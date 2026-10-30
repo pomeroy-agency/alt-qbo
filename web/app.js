@@ -252,6 +252,7 @@ async function authView(mode, error = "", notice = "") {
             <div class="consent">
               <label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
               <label class="check multi muted"><input type="checkbox" name="adOptOut"><span>Don't share my sign-up with Google or Meta for ad measurement.</span></label>
+              <label class="check multi muted"><input type="checkbox" name="newsletter"><span>Send me TrailBook News: one short email a week on tax, payroll and labor changes, plus a sales tip. We'll email you to confirm; unsubscribe any time.</span></label>
             </div>` : ""}
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>
@@ -2474,7 +2475,11 @@ async function billingView() {
   const per = interval === "month" ? "a month" : "a year";
   const price = (minor) => usd(minor).replace(/\.00$/, "");
   const status = {
-    trialing: b.access.level === "full"
+    trialing: b.comped && !b.compUntil
+      ? `<span class="pill">Complimentary</span> ${PLAN_LABEL[b.plan]} is included${b.compReason ? ` with ${esc(b.compReason)}` : ""}, with nothing charged, people paid included, for as long as that lasts.`
+      : b.comped
+      ? `<span class="pill">Complimentary</span> ${PLAN_LABEL[b.plan]} is free until ${longDate(b.compUntil)}${b.compReason ? ` (${esc(b.compReason)})` : ""}. Nothing is charged until then, people paid included.${b.card ? " Your card is charged the day after." : " Add a card before then to keep making changes afterwards."}`
+      : b.access.level === "full"
       ? `<span class="pill">Free trial</span> Everything is included until ${longDate(b.trialEndsOn)}.${b.card ? " Your card is charged the day after." : " Add a card before then to keep making changes."}`
       : `<span class="pill bad">Trial ended</span> Your books are read-only. Add a card to keep going; nothing has been deleted.`,
     active: b.cancelAtPeriodEnd
@@ -3217,7 +3222,7 @@ document.addEventListener("submit", async (ev) => {
     } else if (kind === "login" || kind === "signup") {
       let r;
       try {
-        r = await api(`/api/auth/${kind}`, { body: kind === "signup" ? { ...d, acceptTerms: d.acceptTerms === "on", adOptOut: d.adOptOut === "on", attribution: attribution() } : d });
+        r = await api(`/api/auth/${kind}`, { body: kind === "signup" ? { ...d, acceptTerms: d.acceptTerms === "on", adOptOut: d.adOptOut === "on", newsletter: d.newsletter === "on", attribution: attribution() } : d });
       } catch (err) {
         return authView(kind, err.message);
       }

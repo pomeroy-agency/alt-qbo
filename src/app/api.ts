@@ -19,6 +19,7 @@ import {
   runBilling, saveBillingDetails, saveCard, type BillingConfig,
 } from "../billing/billing.js";
 import { GatewayError } from "../billing/gateway.js";
+import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
 import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
@@ -47,7 +48,7 @@ import { handleOAuth, handlePublicApi } from "./public-api.js";
 import {
   checkKey, cleanApiKey, getKeyLink, listContacts as listMilePostContacts, needsRecheck, recordCheck, removeKey, saveKey, type MilePostOptions,
 } from "./milepost.js";
-import { NewsletterError, addNote, approveIssue, cancelIssue, discardIssue, getIssue, newsletterOverview, removeNote, retryItem, saveIssue, sendTest, setItemStatus, type NewsletterConfig } from "../newsletter/newsletter.js";
+import { NewsletterError, requestSubscription, addNote, approveIssue, cancelIssue, discardIssue, getIssue, newsletterOverview, removeNote, retryItem, saveIssue, sendTest, setItemStatus, type NewsletterConfig } from "../newsletter/newsletter.js";
 import { BrevoError } from "../newsletter/brevo.js";
 import type { NewsletterTask } from "../newsletter/config.js";
 import {
@@ -76,6 +77,8 @@ export interface ApiOptions {
   milepost?: MilePostOptions;
   /** TrailBook News, shown only in the operator's own organisation. */
   newsletter?: NewsletterConfig;
+  /** The Pomeroy account hub: where TrailBook reports each organisation's status (hub.ts). */
+  hub?: HubOptions;
   /** Starts the newsletter's background worker. */
   startNewsletterJob?: (task: NewsletterTask) => Promise<void>;
 }
@@ -390,12 +393,14 @@ route("POST", "/api/orgs/:org/billing/plan", async (req, _p, ctx) => {
   const today = pacificToday();
   const out = await withSystem(ctx.pool, (tx) => choosePlan(tx, ctx.orgId, today, b.plan, b.interval));
   if (out.upgradeChargeId) await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
   return json({ ok: true });
 });
 
 route("POST", "/api/orgs/:org/billing/cancel", async (_req, _p, ctx) => {
   requireRole(ctx, ["owner"]);
   await withSystem(ctx.pool, (tx) => cancelSubscription(tx, ctx.orgId, pacificToday()));
+  await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
   return json({ ok: true });
 });
 
@@ -404,6 +409,7 @@ route("POST", "/api/orgs/:org/billing/resume", async (_req, _p, ctx) => {
   const today = pacificToday();
   await withSystem(ctx.pool, (tx) => resumeSubscription(tx, ctx.orgId, today));
   await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
   return json({ ok: true });
 });
 
@@ -439,6 +445,7 @@ route("POST", "/api/orgs/:org/billing/card/confirm", async (req, _p, ctx) => {
   });
   // Anything due (a trial that already ended, a failed payment) is charged to the new card straight away.
   const run = await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
+  await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
   return json({ ok: true, card: { brand: card.brand, last4: card.last4 }, charged: run.charged, failed: run.failed });
 });
 
@@ -2067,6 +2074,10 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       await recordSignup(pool, opts.adEvents, { ...attributionFromRequest(req, b.attribution, b.adOptOut, opts.adEvents?.ga4MeasurementId), userId, orgId: created });
     }
     if (opts.mailer) await sendEmailLink(req, pool, opts, email, "verify");
+    // TrailBook News, only when they ticked the box; Brevo still asks them to confirm.
+    if (b.newsletter === true && opts.newsletter?.doubleOptIn) {
+      await requestSubscription(pool, opts.newsletter, email, "app_signup").catch((err) => console.error(`newsletter sign-up failed: ${(err as Error).message}`));
+    }
     const s = await createSession(pool, userId);
     return json({ ok: true, joined }, 201, { "set-cookie": sessionCookie(s.token, s.maxAge) });
   }
@@ -2147,13 +2158,43 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
 }
 
 /** Handles one API request. Framework-free so it runs in a Netlify Function, a test, or a local server. */
+/**
+ * The sign-up form. A plain HTML form (from any site) gets a redirect to the
+ * "check your inbox" page; a script sending JSON gets JSON. A filled-in hidden
+ * "website" field marks a bot, which is thanked and ignored.
+ */
+async function newsletterSignup(req: Request, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
+  const type = req.headers.get("content-type") ?? "";
+  const isForm = type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data");
+  let fields: Record<string, unknown>;
+  if (isForm) fields = Object.fromEntries((await req.formData()).entries());
+  else fields = await body(req);
+  const done = () => isForm
+    ? new Response(null, { status: 303, headers: { location: `${appUrl(req, opts)}/subscribe-check.html`, "cache-control": "no-store" } })
+    : json({ ok: true });
+  if (fields.website) return done();
+  if (!opts.newsletter) throw new HttpError(503, "newsletter sign-up isn't open yet");
+  try {
+    await requestSubscription(pool, opts.newsletter, fields.email, "website");
+  } catch (err) {
+    if (isForm && err instanceof NewsletterError) {
+      return new Response(`${err.message}. Go back and try again.`, { status: err.status, headers: { "content-type": "text/plain; charset=utf-8" } });
+    }
+    throw err;
+  }
+  return done();
+}
+
 export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = {}): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "");
   try {
     // Connected apps: OAuth and the token-authenticated API. Neither uses the session cookie.
-    const app = (await handleOAuth(req, path, pool, opts)) ?? (await handlePublicApi(req, path, pool, opts));
+    const app = (await handleOAuth(req, path, pool, opts)) ?? (await handlePublicApi(req, path, pool, opts))
+      ?? (await handleHub(req, path, pool, { hub: opts.hub, billing: opts.billing }));
     if (app) return app;
+    // TrailBook News sign-up: public, posted by forms on this site and on pomeroyagency.com.
+    if (req.method === "POST" && path === "/api/newsletter/subscribe") return await newsletterSignup(req, pool, opts);
     if (req.method !== "GET") {
       // Cookie-authenticated writes must come from this site.
       const origin = req.headers.get("origin");

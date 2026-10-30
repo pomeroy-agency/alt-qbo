@@ -68,3 +68,22 @@ export function brevoCampaigns(apiKey: string, senderId: number, replyTo?: strin
     },
   };
 }
+
+/**
+ * Brevo's double opt-in: Brevo emails the person a confirmation link (the
+ * template must carry the "optin" tag and a {{ doubleoptin }} link), and only
+ * adds them to the list once they click it. That click is the consent record
+ * CASL and good practice ask for.
+ */
+export type DoubleOptIn = (email: string) => Promise<void>;
+
+export function brevoDoubleOptIn(apiKey: string, listId: number, templateId: number, redirectionUrl: string, fetcher: typeof fetch = fetch): DoubleOptIn {
+  return async (email) => {
+    const res = await fetcher("https://api.brevo.com/v3/contacts/doubleOptinConfirmation", {
+      method: "POST",
+      headers: { "api-key": apiKey, accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ email, includeListIds: [listId], templateId, redirectionUrl }),
+    });
+    if (!res.ok) throw new BrevoError(`Brevo said ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  };
+}
