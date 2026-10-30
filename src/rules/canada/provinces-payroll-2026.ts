@@ -78,7 +78,7 @@ function province(region: string, name: string, td1: string, opts: {
     place: { country: "CA", region },
     effectiveFrom: "2026-07-01",
     effectiveTo: "2026-12-31",
-    status: "draft",
+    status: "released",
     calendar: "weekends",
     sources: [SECONDARY_WAGES, SECONDARY_WCB, EMPLOYMENT_STANDARDS, ...(opts.sources ?? [])],
     reviewNotes: [...NOTES, ...(opts.notes ?? [])],

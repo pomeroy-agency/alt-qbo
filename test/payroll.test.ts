@@ -47,7 +47,7 @@ describe("rule packs", () => {
     // Greg signed off the 2026 packs on 2026-10-27.
     expect(resolveRules(CA, "2026-06-15", { requireReleased: true }).federal.status).toBe("released");
     // Packs added since then stay drafts until Greg signs them off.
-    const drafts: string[] = ["AB", "BC", "MB", "NB", "NL", "NS", "ON", "PE", "QC", "SK", "NT", "NU", "YT"].map((r) => `ca-${r.toLowerCase()}-payroll`);
+    const drafts: string[] = [];
     for (const p of allRulePacks()) {
       expect(p.sources.length).toBeGreaterThan(0);
       expect(p.status).toBe(drafts.includes(p.id) ? "draft" : "released");

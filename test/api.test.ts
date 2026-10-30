@@ -828,12 +828,11 @@ describe("a Canadian business", () => {
     expect(emp.status).toBe(201);
     expect(emp.data).toMatchObject({ ssnLast4: "2544", td1: { federalClaim: "16452" } });
     const list = await call(`${base}/employees`, { cookie: s.cookie });
-    expect(list.data.state).toMatchObject({ country: "CA", code: "BC", incomeTax: { method: "canada", certificate: "TD1BC" }, status: "draft" });
+    expect(list.data.state).toMatchObject({ country: "CA", code: "BC", incomeTax: { method: "canada", certificate: "TD1BC" }, status: "released" });
     expect(list.data.state.agencies).toContain("CRA");
     expect(list.data.stateRates).toEqual({ BC_WCB: "0.0155" });
-    // Saved runs wait until the Canadian packs are released.
+    // Saved runs use the released Canadian packs.
     const run = await call(`${base}/pay-runs`, { cookie: s.cookie, body: { periodStart: "2026-08-01", periodEnd: "2026-08-14", payDate: "2026-08-21", lines: [{ employeeId: emp.data.id }] } });
-    expect(run.status).toBeGreaterThanOrEqual(400);
-    expect(run.data.error).toMatch(/must be released/);
+    expect(run.status).toBe(201);
   });
 });

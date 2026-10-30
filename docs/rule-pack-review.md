@@ -1566,9 +1566,9 @@ Not yet built (next parts): TD1 and TP-1015.3 forms on employees, CAD pay runs a
 
 Privacy, for Greg's legal review: PIPEDA for employee data of Canadian customers; Quebec's Law 25 (privacy officer, privacy impact assessment before personal information leaves Quebec, since TrailBook's servers are in the US; confidentiality incident reporting); CASL for any marketing email to Canadians.
 
-## Canada, second part: payroll (`src/rules/canada/provinces-payroll-2026.ts`), draft
+## Canada, second part: payroll (`src/rules/canada/provinces-payroll-2026.ts`), released 2026-10-30
 
-**Status: draft, awaiting Greg's review.** This part puts Canada live in the country picker (all ten provinces and three territories) and lets a Canadian business set up, add employees and preview pay runs. Saved pay runs stay refused until these 13 packs are released, which happens only on Greg's "approve, merge and publish".
+**Sign-off, 2026-10-30.** Greg approved this part as it stands, ⚠️ items included ("approve, merge and publish"), and the 13 province payroll packs are now `released`. Canada is live in the country picker (all ten provinces and three territories): a Canadian business can set up, add employees and run payroll. The ⚠️ items below are for the daily rule watch to confirm against the boards and labour ministries.
 
 What it adds:
 

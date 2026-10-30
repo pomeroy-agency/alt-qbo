@@ -96,8 +96,9 @@ describe("a British Columbia corporation", () => {
     const wcb = await withTenant(pool, org.id, (tx) => accountBalance(tx, entity.id, "workers_comp_payable", "2026-08-31"));
     expect(wcb).toBe(-3100n);
 
-    // Real pay runs wait for the Canadian packs to be released.
-    await expect(withTenant(pool, org.id, (tx) => calculateSavedRun(tx, entity.id, { ...input, payRunId: randomUUID() }))).rejects.toThrow(/must be released/);
+    // Real pay runs use the released Canadian packs.
+    const saved = await withTenant(pool, org.id, (tx) => calculateSavedRun(tx, entity.id, { ...input, payRunId: randomUUID() }));
+    expect(saved.paychecks[0]!.taxes.find((t) => t.code === "CPP_EE")?.amountMinor).toBe(11099n);
   });
 });
 
