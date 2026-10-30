@@ -1566,6 +1566,38 @@ Not yet built (next parts): TD1 and TP-1015.3 forms on employees, CAD pay runs a
 
 Privacy, for Greg's legal review: PIPEDA for employee data of Canadian customers; Quebec's Law 25 (privacy officer, privacy impact assessment before personal information leaves Quebec, since TrailBook's servers are in the US; confidentiality incident reporting); CASL for any marketing email to Canadians.
 
+## Canada, second part: payroll (`src/rules/canada/provinces-payroll-2026.ts`), released 2026-10-30
+
+**Sign-off, 2026-10-30.** Greg approved this part as it stands, ⚠️ items included ("approve, merge and publish"), and the 13 province payroll packs are now `released`. Canada is live in the country picker (all ten provinces and three territories): a Canadian business can set up, add employees and run payroll. The ⚠️ items below are for the daily rule watch to confirm against the boards and labour ministries.
+
+What it adds:
+
+- **Company setup.** Entity types for a Canadian sole proprietor (T2125), partnership (T5013) and corporation (T2); ASPE, CAD, six-year retention; a `ca-service` chart of accounts with GIFI codes (`src/rules/coa/ca-service.ts`); the CRA business number where a US business keeps its EIN; Canadian postal codes (A1A 1A1) in every address.
+- **Employees.** The SIN (Luhn-checked, sealed like an SSN), the TD1 and provincial TD1 (Quebec: TP-1015.3) claim amounts, extra tax, Ontario dependants, northern residents deduction, and CPP/QPP, EI and QPIP exemptions; RRSP and registered pension deductions at source; earlier-this-year figures read as federal tax, provincial tax, CPP/QPP, EI and QPIP.
+- **Pay runs.** CPP or QPP (and the second contributions), EI, QPIP and federal and provincial income tax from the released rules core, plus each province's employer charges below. Liabilities go to "CRA source deductions payable" (2340) or "Revenu Québec source deductions payable" (2345), workers' compensation (2350), health taxes (2355) and territorial payroll tax (2360).
+
+| Pack | Employer and employee charges | Minimum wage | Overtime | Status |
+|---|---|---|---|---|
+| ca-ab-payroll Alberta | WCB, employer rate required, to $110,900 | $15.00 | 8 a day, 44 a week | ⚠️ secondary |
+| ca-bc-payroll British Columbia | WorkSafeBC to $127,500; Employer Health Tax rate entered by the employer (0 under the $1M exemption) | $18.25 | 8 a day, double after 12; 40 a week | ⚠️ secondary |
+| ca-mb-payroll Manitoba | WCB to $171,500; Health and Post-Secondary Education levy entered by the employer | $16.00, $16.40 from Oct 1 | 8 a day, 40 a week | ⚠️ secondary |
+| ca-nb-payroll New Brunswick | WorkSafeNB to $85,800 | $15.90 | 44 a week | ⚠️ secondary |
+| ca-nl-payroll Newfoundland and Labrador | WorkplaceNL to $80,935; HAPSET entered by the employer | $16.35 | 40 a week | ⚠️ secondary |
+| ca-ns-payroll Nova Scotia | WCB to $79,900 | $16.50, $17.00 from Oct 1 | 48 a week | ⚠️ secondary |
+| ca-on-payroll Ontario | WSIB to $121,700; Employer Health Tax entered by the employer (0 under the $1M exemption) | $17.60, $17.95 from Oct 1 | 44 a week | ⚠️ secondary |
+| ca-pe-payroll Prince Edward Island | WCB to $89,300 | $16.50, $17.30 from Oct 1 | 48 a week | ⚠️ secondary |
+| ca-qc-payroll Quebec | CNESST to $103,000; health services fund 1.65% (rate entered from the employer's payroll size); CNT 0.06% to $103,000; WSDRF (0 under $2M of payroll) | $16.60 | 40 a week | ⚠️ secondary |
+| ca-sk-payroll Saskatchewan | WCB to $108,223 | $15.35, $15.70 from Oct 1 | 8 a day, 40 a week | ⚠️ secondary |
+| ca-nt-payroll Northwest Territories | WSCC to $116,000; 2% payroll tax (employee) | $16.95, $17.20 from Sep 1 | 8 a day, 40 a week | ⚠️ secondary |
+| ca-nu-payroll Nunavut | WSCC to $117,300; 2% payroll tax (employee) | $19.75, $20.17 from Sep 1 | 8 a day, 40 a week | ⚠️ secondary |
+| ca-yt-payroll Yukon | WCB to $107,599 | $18.51 | 8 a day, 40 a week | ⚠️ secondary |
+
+⚠️ Minimum wages and workers' compensation ceilings come from secondary publishers (CFIB, payroll firms, news) because the provincial sites refuse automated downloads; the daily rule watch should check them against each board and labour ministry. GIFI codes in the Canadian chart of accounts are from working knowledge of CRA guide RC4088 and need checking. Health taxes are a flat rate on all wages, without the annual exemption worked out; the employer enters 0 below the threshold.
+
+**Not in this part (next):** CRA and Revenu Québec remittance due dates and reminders, the T4, RL-1 and ROE, direct deposit files for Canadian banks (CPA 005), vacation pay and statutory holiday pay, and GST/HST/PST/QST. Billing still takes US addresses only (Stripe in USD), so a Canadian business can set up and trial but not subscribe yet.
+
+**Gaps for Greg's legal review before Canadian customers:** the Terms of Service and Privacy Policy name only US law; Canada needs PIPEDA language, Quebec's Law 25 (privacy officer, impact assessment before Quebec employee data goes to US servers, incident reporting) and CASL for marketing email. TrailBook selling to Canadian businesses may also need GST/HST registration under the non-resident digital services rules.
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
@@ -1596,7 +1628,7 @@ A worksheet for the business's own CDTFA-401, built on the sales tax report. Tra
 
 ## Chart of accounts tax lines (`src/rules/coa/us-service.ts`)
 
-Tax-line codes for Schedule C, 1065, 1120S and 1120 are from working knowledge and need checking against the current forms and against each Intuit product's trial-balance import layout.
+Tax-line codes for Schedule C, 1065, 1120S and 1120 (and the GIFI codes in `src/rules/coa/ca-service.ts`) are from working knowledge and need checking against the current forms and against each Intuit product's trial-balance import layout.
 
 ## Adding a state
 

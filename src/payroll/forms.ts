@@ -4,7 +4,7 @@ import { LedgerError } from "../core/errors.js";
 import type { Actor, Role } from "../core/ledger.js";
 import { D, toMajor, toMinor } from "../core/money.js";
 import { unseal } from "../core/pii.js";
-import { resolveRules, statePackFor, type Place, type StateQuarterlyForm, type StateRulePack } from "../rules/index.js";
+import { resolveRules, usFederal, statePackFor, type Place, type StateQuarterlyForm, type StateRulePack } from "../rules/index.js";
 import { addDays, endOfNextMonth, onOrNextBusinessDay, onOrPreviousBusinessDay, quarterEnd, quarterOf, type Calendar } from "./business-days.js";
 import type { DepositKind } from "./deposits.js";
 import type { Paycheck } from "./gross-to-net.js";
@@ -159,7 +159,7 @@ export async function form941(tx: Tx, entityId: string, year: number, q: number)
   checkQuarter(year, q);
   const { from, to, months } = quarterRange(year, q);
   const { runs, employer } = await load(tx, entityId, from, to);
-  const rates = resolveRules(await placeOf(tx, entityId), to).federal.payroll;
+  const rates = usFederal(resolveRules(await placeOf(tx, entityId), to)).payroll;
   const ssRate = new D(rates.socialSecurity.employeeRate).add(rates.socialSecurity.employerRate).toString();
   const medRate = new D(rates.medicare.employeeRate).add(rates.medicare.employerRate).toString();
   const ssWages = sumTax(runs, "SS_EE", "taxableWagesMinor");
@@ -227,7 +227,7 @@ export async function form941(tx: Tx, entityId: string, year: number, q: number)
 export async function form940(tx: Tx, entityId: string, year: number): Promise<PreparedForm> {
   checkQuarter(year, 1);
   const { runs, employer, place } = await load(tx, entityId, `${year}-01-01`, `${year}-12-31`);
-  const futa = resolveRules(place, `${year}-12-31`).federal.payroll.futa;
+  const futa = usFederal(resolveRules(place, `${year}-12-31`)).payroll.futa;
   const st = employer.state;
   const l3 = runs.reduce((s, r) => s + r.paychecks.reduce((t, p) => t + p.grossMinor, 0n), 0n);
   const l4 = sumDeduction(runs, "section125");
@@ -566,6 +566,8 @@ function stateFormDue(spec: StateQuarterlyForm, quarterEndDate: string, calendar
 /** The forms due for a business, newest period first, so the page can list them. */
 export function formsFor(year: number, today: string, state: StateRulePack) {
   const out: { form: string; slug: string; period: string; year: number; quarter?: number; dueDate: string }[] = [];
+  // Canada's T4, RL-1 and ROE come in a later release.
+  if (state.place.country !== "US") return out;
   for (const q of [4, 3, 2, 1]) {
     const end = quarterEnd(year, q);
     if (addDays(end, -92) > today) continue;

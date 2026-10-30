@@ -312,8 +312,10 @@ export async function booksHealth(tx: Tx, entityId: string, today: string): Prom
   out.push({ key: "periods_closed", ok: openOld === 0, warn: true, title: "Past months closed",
     detail: openOld ? `${openOld} month${openOld === 1 ? " is" : "s are"} still open more than a month after they ended. Close each month after reconciling so past figures can't change.` : "Past months are closed.", go: "periods" });
 
-  const ein = (await tx.query("SELECT ein FROM entities WHERE id = $1", [entityId])).rows[0]?.ein;
-  out.push({ key: "ein", ok: Boolean(ein), warn: true, title: "EIN on file",
-    detail: ein ? "Recorded for this business." : "Add the business's EIN so it appears on prepared forms and exports." });
+  const ent = (await tx.query("SELECT ein, country FROM entities WHERE id = $1", [entityId])).rows[0];
+  // A Canadian business keeps its CRA business number in the same place.
+  const what = ent?.country === "CA" ? "business number" : "EIN";
+  out.push({ key: "ein", ok: Boolean(ent?.ein), warn: true, title: `${what === "EIN" ? "EIN" : "Business number"} on file`,
+    detail: ent?.ein ? "Recorded for this business." : `Add the business's ${what} so it appears on prepared forms and exports.` });
   return out;
 }

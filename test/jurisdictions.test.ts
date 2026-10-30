@@ -10,21 +10,26 @@ import { formsFor } from "../src/payroll/forms.js";
 import { D } from "../src/core/money.js";
 
 describe("jurisdictions", () => {
-  it("lists every US state and DC, and Canada's provinces and territories as coming later", () => {
+  it("lists every US state and DC, and Canada's provinces and territories", () => {
     const us = COUNTRIES.find((c) => c.code === "US")!;
     const canada = COUNTRIES.find((c) => c.code === "CA")!;
     expect(us.regions).toHaveLength(51);
     expect(canada.regions).toHaveLength(13);
-    expect(canada.status).toBe("planned");
+    expect(canada.status).toBe("live");
+    expect(canada.regions.every((r) => r.status === "live")).toBe(true);
     expect(canada.currency).toBe("CAD");
     expect(us.regions.filter((r) => r.status === "live").map((r) => r.code).sort()).toEqual(["AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY"]);
   });
 
   it("keeps Canada's CA (no country live) apart from California", () => {
     expect(isLive("US", "CA")).toBe(true);
-    expect(isLive("CA", "ON")).toBe(false);
+    expect(isLive("CA", "ON")).toBe(true);
+    expect(isLive("CA", "CA")).toBe(false);
     expect(isSupportedPlace({ country: "US", region: "PR" })).toBe(false);
-    expect(() => resolveRules({ country: "CA", region: "BC" }, "2026-06-01")).toThrow(/not launched/);
+    expect(isSupportedPlace({ country: "MX", region: "JA" })).toBe(false);
+    expect(() => resolveRules({ country: "MX", region: "JA" }, "2026-08-01")).toThrow(/not launched/);
+    // Canada's packs start with the July 2026 T4127.
+    expect(() => resolveRules({ country: "CA", region: "BC" }, "2026-06-01")).toThrow(/no rule pack in force/);
   });
 
   it("finds the nearest state pack for labels outside its dates", () => {

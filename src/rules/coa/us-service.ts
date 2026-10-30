@@ -1,9 +1,12 @@
+import { caServiceTemplate, gifiBs } from "./ca-service.js";
+
 // US chart-of-accounts template for service businesses. Each account maps to
 // a US GAAP statement line and a cash-flow class, and carries tax-line codes
 // per return type for the trial-balance export to Intuit tax software.
 // Tax-line codes name the form and line ("SchC.L8" = Schedule C line 8).
 
-export type ReturnType = "sch_c" | "f1065" | "f1120s" | "f1120";
+/** US returns, then Canadian ones (T2125 for a sole proprietor, T5013 for a partnership, T2 for a corporation). */
+export type ReturnType = "sch_c" | "f1065" | "f1120s" | "f1120" | "t2125" | "t5013" | "t2";
 
 export interface TemplateAccount {
   code: string;
@@ -74,18 +77,19 @@ export const usServiceTemplate: readonly TemplateAccount[] = [
  * A state's payroll tax liability accounts (src/rules: each state pack lists
  * them), shaped like the template's other payroll tax liabilities.
  */
-export function stateTaxAccounts(accounts: readonly { code: string; name: string; systemKey: string }[]): TemplateAccount[] {
+export function stateTaxAccounts(accounts: readonly { code: string; name: string; systemKey: string }[], country = "US"): TemplateAccount[] {
   return accounts.map((a) => ({
     code: a.code, name: a.name, type: "liability", subtype: "payroll_tax", statementLine: "BS.CurrentLiabilities.Taxes", cashFlowClass: "operating",
-    taxLines: bs(undefined, "1065.L.L17", "1120S.L.L18", "1120.L.L18"), systemKey: a.systemKey,
+    taxLines: country === "CA" ? gifiBs("2680") : bs(undefined, "1065.L.L17", "1120S.L.L18", "1120.L.L18"), systemKey: a.systemKey,
   }));
 }
 
 export const COA_TEMPLATES: Record<string, readonly TemplateAccount[]> = {
   "us-service": usServiceTemplate,
+  "ca-service": caServiceTemplate,
 };
 
-/** Return type implied by a US entity type, for picking tax-line codes. */
+/** Return type implied by an entity type, for picking tax-line codes. */
 export function returnTypeFor(entityType: string): ReturnType {
   switch (entityType) {
     case "sole_prop":
@@ -99,6 +103,12 @@ export function returnTypeFor(entityType: string): ReturnType {
       return "f1120s";
     case "c_corp":
       return "f1120";
+    case "ca_sole_prop":
+      return "t2125";
+    case "ca_partnership":
+      return "t5013";
+    case "ca_corporation":
+      return "t2";
     default:
       throw new Error(`unknown entity type ${entityType}`);
   }

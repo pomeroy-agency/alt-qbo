@@ -1,8 +1,9 @@
 import { D, type Dec, maxBig, minBig, toMajor, toMinor } from "../core/money.js";
-import type { ResolvedRules } from "../rules/index.js";
+import { usFederal, type ResolvedRules } from "../rules/index.js";
 import type { DE4 } from "./california.js";
 import { federalWithholding, type W4 } from "./federal.js";
 import { localWithholding, stateWithholding, type StateWithholding } from "./state-withholding.js";
+import { canadaTaxLines, type CanadaTd1 } from "./canada.js";
 import { exemptSalaryOn, minimumWageOn, wageAreaName, wageHourFor } from "../rules/minimum-wage.js";
 
 export type PayFrequency = "weekly" | "biweekly" | "semimonthly" | "monthly";
@@ -20,7 +21,9 @@ export type DeductionKind =
   /** Traditional 401(k) deferral: exempt from FIT and state income tax only. */
   | "traditional401k"
   /** After-tax deduction (Roth, union dues, garnishment). */
-  | "post_tax";
+  | "post_tax"
+  /** Canada: registered pension plan or RRSP contribution at source: exempt from income tax, not from CPP or EI. */
+  | "registered_retirement";
 
 export interface Deduction {
   kind: DeductionKind;
@@ -35,6 +38,8 @@ export interface YearToDate {
   futaWages: bigint;
   /** Wages already taxed this year by each capped state tax, by tax code (CA_UI, TX_UI...). */
   stateWages?: Record<string, bigint>;
+  /** Each tax code's amount so far this year (Canada: CPP, EI and QPIP stop at the year's maximums). */
+  taxesPaid?: Record<string, bigint>;
 }
 
 export interface EmployeePayInput {
@@ -59,6 +64,8 @@ export interface EmployeePayInput {
   de4?: DE4;
   /** Other states' withholding certificate (Arizona A-4...). */
   stateWithholding?: StateWithholding | null;
+  /** Canada: the employee's TD1 forms (TP-1015.3 in Quebec). */
+  td1?: CanadaTd1 | null;
   /** Where they work, in states with minimum wage areas (Portland metro, New York City...). */
   workArea?: string | null;
   deductions?: Deduction[];
@@ -132,7 +139,6 @@ export function calculatePaycheck(
   /** The date the minimum wage is checked on (the period's last day); the pack's start when omitted. */
   onDate: string = rules.state.effectiveFrom,
 ): Paycheck {
-  const fed = rules.federal.payroll;
   const st = rules.state.payroll;
   const area = wageAreaName(rules.state.wageHour, input.workArea);
   const wh = wageHourFor(rules.state.wageHour, area);
@@ -209,7 +215,7 @@ export function calculatePaycheck(
   }));
   const sumKind = (k: DeductionKind) => deductions.filter((d) => d.kind === k).reduce((s, d) => s + d.amountMinor, 0n);
   const s125 = sumKind("section125");
-  const k401 = sumKind("traditional401k");
+  const k401 = sumKind("traditional401k") + sumKind("registered_retirement");
 
   const ficaWages = maxBig(grossMinor - s125, 0n);
   const incomeTaxWages = maxBig(grossMinor - s125 - k401, 0n);
@@ -219,6 +225,7 @@ export function calculatePaycheck(
     medicareWages: input.ytd?.medicareWages ?? 0n,
     futaWages: input.ytd?.futaWages ?? 0n,
     stateWages: input.ytd?.stateWages ?? {},
+    taxesPaid: input.ytd?.taxesPaid ?? {},
   };
   const capped = (wages: bigint, ytdWages: bigint, base: string) =>
     minBig(wages, maxBig(toMinor(base) - ytdWages, 0n));
@@ -229,35 +236,6 @@ export function calculatePaycheck(
     taxes.push({ code, agency, paidBy, taxableWagesMinor: wages, amountMinor: amount });
   };
 
-  // Federal
-  const fit = federalWithholding(fed.incomeTax, input.w4, toMajor(incomeTaxWages), periods);
-  add("FIT", "IRS", "employee", incomeTaxWages, toMinor(fit));
-  const ssWages = capped(ficaWages, ytd.socialSecurityWages, fed.socialSecurity.wageBase);
-  add("SS_EE", "IRS", "employee", ssWages, pct(ssWages, fed.socialSecurity.employeeRate));
-  add("MEDICARE_EE", "IRS", "employee", ficaWages, pct(ficaWages, fed.medicare.employeeRate));
-  const threshold = toMinor(fed.medicare.additionalThreshold);
-  const addlWages = maxBig(ytd.medicareWages + ficaWages - maxBig(threshold, ytd.medicareWages), 0n);
-  if (addlWages > 0n) add("ADDL_MEDICARE_EE", "IRS", "employee", addlWages, pct(addlWages, fed.medicare.additionalRate));
-
-  // State income tax, then the state's other wage taxes (SDI, UI, ETT...), all on wages less section 125.
-  if (st.incomeTaxAgency) {
-    // Massachusetts takes the employee's Social Security and Medicare off first, up to $2,000 a year.
-    const ficaThisPeriod = taxes.filter((t) => t.paidBy === "employee" && t.code !== "FIT").reduce((sum, t) => sum + t.amountMinor, 0n);
-    const fica = {
-      thisPeriod: toMajor(ficaThisPeriod),
-      yearToDate: toMajor(ytd.socialSecurityWages).mul(fed.socialSecurity.employeeRate).add(toMajor(ytd.medicareWages).mul(fed.medicare.employeeRate)),
-    };
-    const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding, w4Status: input.w4.filingStatus }, toMajor(incomeTaxWages), periods, fit, fica);
-    if (st.incomeTax.method === "or_formula" && !input.stateWithholding) {
-      warnings.push(`no ${st.incomeTax.certificate} on file: ${stateName} income tax withheld at the flat ${new D(st.incomeTax.noCertificateRate).mul(100)}%`);
-    }
-    add(st.incomeTaxAgency.code, st.incomeTaxAgency.agency, "employee", incomeTaxWages, toMinor(sit));
-    // City income taxes (New York City, Yonkers) for employees whose record says they apply.
-    for (const local of st.localIncomeTaxes ?? []) {
-      const amount = localWithholding(local, st.incomeTax, input.stateWithholding, toMajor(incomeTaxWages), periods, onDate);
-      if (amount.gt(0)) add(local.code, local.agency, "employee", incomeTaxWages, toMinor(amount));
-    }
-  }
   // Hours worked for taxes charged by the hour; a salaried employee counts as 40 hours a week.
   const hoursWorked = input.hourlyRate ? money(input.regularHours).add(money(input.overtimeHours)).add(money(input.doubleTimeHours)) : new D(2080).div(periods);
   const stateTax = (t: (typeof st.taxes)[number]) => {
@@ -269,13 +247,60 @@ export function calculatePaycheck(
     if (t.perWeekCap) amount = minBig(amount, toMinor(new D(t.perWeekCap).mul(52).div(periods)));
     add(t.code, t.agency, t.paidBy, wages, amount);
   };
+  const canada = rules.federal.kind === "ca-federal" && rules.province
+    ? canadaTaxLines(rules.federal, rules.province, input.td1 ?? {}, {
+      grossMinor, retirementMinor: k401, periodsPerYear: periods, ytdTaxes: ytd.taxesPaid ?? {}, ytdWages: ytd.stateWages ?? {},
+    })
+    : null;
+  if (canada) {
+    // Canada: income tax, CPP or QPP, EI and QPIP together (src/payroll/canada.ts).
+    taxes.push(...canada.filter((t) => t.paidBy === "employee"));
+    if (!input.td1 && st.incomeTax.method === "canada") warnings.push(`no TD1 or ${st.incomeTax.certificate} on file: tax worked out on the basic personal amounts`);
+  } else {
+    const fed = usFederal(rules).payroll;
+    // Federal
+    const fit = federalWithholding(fed.incomeTax, input.w4, toMajor(incomeTaxWages), periods);
+    add("FIT", "IRS", "employee", incomeTaxWages, toMinor(fit));
+    const ssWages = capped(ficaWages, ytd.socialSecurityWages, fed.socialSecurity.wageBase);
+    add("SS_EE", "IRS", "employee", ssWages, pct(ssWages, fed.socialSecurity.employeeRate));
+    add("MEDICARE_EE", "IRS", "employee", ficaWages, pct(ficaWages, fed.medicare.employeeRate));
+    const threshold = toMinor(fed.medicare.additionalThreshold);
+    const addlWages = maxBig(ytd.medicareWages + ficaWages - maxBig(threshold, ytd.medicareWages), 0n);
+    if (addlWages > 0n) add("ADDL_MEDICARE_EE", "IRS", "employee", addlWages, pct(addlWages, fed.medicare.additionalRate));
+
+    // State income tax, then the state's other wage taxes (SDI, UI, ETT...), all on wages less section 125.
+    if (st.incomeTaxAgency) {
+      // Massachusetts takes the employee's Social Security and Medicare off first, up to $2,000 a year.
+      const ficaThisPeriod = taxes.filter((t) => t.paidBy === "employee" && t.code !== "FIT").reduce((sum, t) => sum + t.amountMinor, 0n);
+      const fica = {
+        thisPeriod: toMajor(ficaThisPeriod),
+        yearToDate: toMajor(ytd.socialSecurityWages).mul(fed.socialSecurity.employeeRate).add(toMajor(ytd.medicareWages).mul(fed.medicare.employeeRate)),
+      };
+      const sit = stateWithholding(st.incomeTax, { de4: input.de4, state: input.stateWithholding, w4Status: input.w4.filingStatus }, toMajor(incomeTaxWages), periods, fit, fica);
+      if (st.incomeTax.method === "or_formula" && !input.stateWithholding) {
+        warnings.push(`no ${st.incomeTax.certificate} on file: ${stateName} income tax withheld at the flat ${new D(st.incomeTax.noCertificateRate).mul(100)}%`);
+      }
+      add(st.incomeTaxAgency.code, st.incomeTaxAgency.agency, "employee", incomeTaxWages, toMinor(sit));
+      // City income taxes (New York City, Yonkers) for employees whose record says they apply.
+      for (const local of st.localIncomeTaxes ?? []) {
+        const amount = localWithholding(local, st.incomeTax, input.stateWithholding, toMajor(incomeTaxWages), periods, onDate);
+        if (amount.gt(0)) add(local.code, local.agency, "employee", incomeTaxWages, toMinor(amount));
+      }
+    }
+  }
   for (const t of st.taxes) if (t.paidBy === "employee") stateTax(t);
 
-  // Employer
-  add("SS_ER", "IRS", "employer", ssWages, pct(ssWages, fed.socialSecurity.employerRate));
-  add("MEDICARE_ER", "IRS", "employer", ficaWages, pct(ficaWages, fed.medicare.employerRate));
-  const futaWages = capped(ficaWages, ytd.futaWages, fed.futa.wageBase);
-  add("FUTA", "IRS", "employer", futaWages, pct(futaWages, fed.futa.rate));
+  if (canada) {
+    taxes.push(...canada.filter((t) => t.paidBy === "employer"));
+  } else {
+    const fed = usFederal(rules).payroll;
+    // Employer
+    const ssWages = capped(ficaWages, ytd.socialSecurityWages, fed.socialSecurity.wageBase);
+    add("SS_ER", "IRS", "employer", ssWages, pct(ssWages, fed.socialSecurity.employerRate));
+    add("MEDICARE_ER", "IRS", "employer", ficaWages, pct(ficaWages, fed.medicare.employerRate));
+    const futaWages = capped(ficaWages, ytd.futaWages, fed.futa.wageBase);
+    add("FUTA", "IRS", "employer", futaWages, pct(futaWages, fed.futa.rate));
+  }
   for (const t of st.taxes) if (t.paidBy === "employer") stateTax(t);
 
   const employeeTaxMinor = taxes.filter((t) => t.paidBy === "employee").reduce((s, t) => s + t.amountMinor, 0n);

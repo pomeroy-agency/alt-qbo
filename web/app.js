@@ -77,16 +77,27 @@ const AGING_LABEL = { current: "Not yet due", d1_30: "1 to 30 days", d31_60: "31
 const ENTITY_TYPES = {
   llc_single: "Single-member LLC", sole_prop: "Sole proprietorship", llc_partnership: "Multi-member LLC",
   llc_s_corp: "LLC taxed as S corp", s_corp: "S corporation", c_corp: "C corporation", partnership: "Partnership",
+  ca_sole_prop: "Sole proprietorship", ca_partnership: "Partnership", ca_corporation: "Corporation",
 };
-const RETURN_LABEL = { sch_c: "Schedule C", f1065: "Form 1065", f1120s: "Form 1120-S", f1120: "Form 1120" };
+// Which entity types each country offers (src/core/tenancy.ts).
+const ENTITY_TYPES_BY_COUNTRY = {
+  US: ["llc_single", "sole_prop", "llc_partnership", "llc_s_corp", "s_corp", "c_corp", "partnership"],
+  CA: ["ca_corporation", "ca_sole_prop", "ca_partnership"],
+};
+const entityTypeOptions = (country) => (ENTITY_TYPES_BY_COUNTRY[country] ?? []).map((k) => `<option value="${k}">${ENTITY_TYPES[k]}</option>`).join("");
+const RETURN_LABEL = { sch_c: "Schedule C", f1065: "Form 1065", f1120s: "Form 1120-S", f1120: "Form 1120", t2125: "T2125", t5013: "T5013", t2: "T2" };
 const TAX_LABEL = {
   FIT: "Federal income tax", SS_EE: "Social Security", MEDICARE_EE: "Medicare", ADDL_MEDICARE_EE: "Additional Medicare",
   CA_PIT: "CA income tax", CA_SDI: "CA SDI", SS_ER: "Social Security (employer)", MEDICARE_ER: "Medicare (employer)",
   FUTA: "FUTA", CA_UI: "CA UI", CA_ETT: "CA ETT",
+  // Canada
+  CA_FIT: "Federal income tax", QC_PIT: "Quebec income tax", CPP_EE: "CPP", CPP2_EE: "CPP2", QPP_EE: "QPP", QPP2_EE: "QPP2", EI_EE: "EI", QPIP_EE: "QPIP",
+  CPP_ER: "CPP (employer)", CPP2_ER: "CPP2 (employer)", QPP_ER: "QPP (employer)", QPP2_ER: "QPP2 (employer)", EI_ER: "EI (employer)", QPIP_ER: "QPIP (employer)",
 };
 
 /** A tax code's name: federal and California ones above, the business's state's from the server, else the code. */
 function taxLabel(code, labels) {
+  if (code === "CA_PIT" && pay.state?.country === "CA") return `${pay.state.name} income tax`;
   return TAX_LABEL[code] ?? labels?.[code] ?? pay.state?.taxLabels?.[code] ?? code.replace(/_/g, " ");
 }
 
@@ -320,11 +331,11 @@ async function homeView() {
       <p class="muted">The principal place of business sets the accounting framework, currency, chart of accounts and tax rules. ${esc(liveSummary())}</p>
       <form data-form="entity" class="grid">
         <label>Legal name<input name="legalName" required placeholder="Sunset Design Studio LLC"></label>
-        <label>Entity type<select name="entityType">${Object.entries(ENTITY_TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
+        <label>Entity type<select name="entityType">${entityTypeOptions("US")}</select></label>
         <label>Country<select name="country">${(state.org.countries ?? []).map((c) => `<option value="${esc(c.code)}" ${c.status === "live" ? "" : "disabled"}>${esc(c.name)}${c.status === "live" ? "" : " (coming later)"}</option>`).join("")}</select></label>
         <label><span data-region-label>${esc(countryOf("US")?.regionLabel ?? "State")}</span><select name="region">${regionOptions("US")}</select></label>
         <label>First fiscal year<select name="firstFiscalYear">${Array.from({ length: Number(today().slice(0, 4)) - 2025 }, (_, i) => 2026 + i).reverse().map((y) => `<option>${y}</option>`).join("")}</select></label>
-        <label>EIN (optional)<input name="ein" placeholder="12-3456789"></label>
+        <label><span data-ein-label>EIN (optional)</span><input name="ein" placeholder="12-3456789"></label>
         <label>&nbsp;<button type="submit">Create business</button></label>
       </form>
     </div>` : ""}`);
@@ -1387,7 +1398,7 @@ async function overviewView(id) {
           <p><strong>Add your business address.</strong> <span class="muted">TrailBook uses it for the sales tax rate when a customer has no address of their own.</span></p>
           <div class="row">
             <label>Street<input name="line1" required placeholder="123 Main St"></label><label>City<input name="city" required style="width:140px"></label>
-            <label>State<input name="state" value="CA" maxlength="2" style="width:56px"></label><label>ZIP<input name="zip" required inputmode="numeric" style="width:90px"></label>
+            <label>${e.country === "CA" ? "Province" : "State"}<input name="state" value="${esc(e.country === "CA" ? e.region : "CA")}" maxlength="2" style="width:56px"></label><label>${e.country === "CA" ? "Postal code" : "ZIP"}<input name="zip" required style="width:90px"></label>
             <button type="submit">Save</button>
           </div></form>` : ""}
       </div>
@@ -1407,7 +1418,8 @@ async function overviewView(id) {
         <td>${!c.ok && c.go ? `<a href="${go(c.go)}">Go there</a>` : ""}</td></tr>`).join("")}</tbody>
     </table></div>
     ${einMissing && canSettings ? `<form data-form="ein" class="row" style="margin-top:12px">
-        <label>Add the EIN<input name="ein" placeholder="12-3456789" required pattern="\\d{2}-?\\d{7}" class="mono"></label>
+        ${e.country === "CA" ? `<label>Add the business number<input name="ein" placeholder="123456789" required pattern="\\d{9}" class="mono"></label>`
+          : `<label>Add the EIN<input name="ein" placeholder="12-3456789" required pattern="\\d{2}-?\\d{7}" class="mono"></label>`}
         <button type="submit">Save</button>
       </form>` : ""}
     </details>
@@ -1768,7 +1780,26 @@ function payLabel(e) {
   return e.payType === "salary" ? `${usd(Math.round(Number(e.payRate) * 100))} a year` : `${usd(Math.round(Number(e.payRate) * 100))} an hour`;
 }
 
+/** Canada: the TD1 claim (and Quebec's TP-1015.3) in place of the W-4 and state forms. */
+function td1Fields(e, v) {
+  const t = e?.td1 ?? {};
+  const qc = pay.state?.code === "QC";
+  const prov = pay.state?.incomeTax.certificate ?? "TD1";
+  return `<p class="hash">Leave a claim blank to use the basic personal amount (what applies when no TD1 was filed).</p>
+      <label>TD1 total claim amount ($)<input name="td1Federal" value="${v(t.federalClaim)}" inputmode="decimal" placeholder="Basic personal amount"></label>
+      <label>${esc(prov)} total claim amount ($)<input name="td1Provincial" value="${v(t.provincialClaim)}" inputmode="decimal" placeholder="Basic personal amount"></label>
+      <label>Extra federal tax each pay ($)<input name="td1ExtraFederal" value="${v(t.extraFederalTax)}" inputmode="decimal" placeholder="0"></label>
+      ${qc ? `<label>Extra Quebec tax each pay ($)<input name="td1ExtraProvincial" value="${v(t.extraProvincialTax)}" inputmode="decimal" placeholder="0"></label>` : ""}
+      ${pay.state?.code === "ON" ? `<label>Ontario dependants (TD1ON)<input name="td1OnDependants" value="${v(t.ontarioDependants)}" inputmode="numeric" placeholder="0"></label>` : ""}
+      <label>Northern residents deduction ($ a year)<input name="td1Northern" value="${v(t.northernDeduction)}" inputmode="decimal" placeholder="0"></label>
+      <label class="check"><input type="checkbox" name="td1TaxExempt" ${t.taxExempt ? "checked" : ""}> Income below the claim: no income tax deducted</label>
+      <label class="check"><input type="checkbox" name="td1CppExempt" ${t.cppExempt ? "checked" : ""}> Not required to contribute to ${qc ? "the QPP" : "the CPP"}</label>
+      <label class="check"><input type="checkbox" name="td1EiExempt" ${t.eiExempt ? "checked" : ""}> Not in insurable employment (no EI)</label>
+      ${qc ? `<label class="check"><input type="checkbox" name="td1QpipExempt" ${t.qpipExempt ? "checked" : ""}> Not covered by QPIP</label>` : ""}`;
+}
+
 function employeeForm(e = null) {
+  const canada = pay.state?.country === "CA";
   const v = (x) => esc(x ?? "");
   const sel = (name, opts, cur) => `<select name="${name}">${opts.map(([k, l]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${l}</option>`).join("")}</select>`;
   const ded = (kind) => e?.deductions.find((d) => d.kind === kind)?.amount ?? "";
@@ -1787,48 +1818,57 @@ function employeeForm(e = null) {
         : pay.workCities.length || e?.workCity ? `<label>City where they work<input name="workCity" value="${v(e?.workCity)}" list="work-cities" placeholder="e.g. San Jose"><span class="hash">Some cities have a higher minimum wage than the state.</span></label>` : ""}
       <label data-only="hourly" ${hourly ? "" : "hidden"}>Usual hours each pay period<input name="usualHours" value="${v(e?.usualHours)}" inputmode="decimal" placeholder="80"></label>
       <label class="check" data-only="salary" ${hourly ? "hidden" : ""}><input type="checkbox" name="overtimeExempt" ${e ? (e.overtimeExempt ? "checked" : "") : "checked"}> Exempt from overtime</label>
-      <label>Social Security number<input name="ssn" autocomplete="off" inputmode="numeric" placeholder="${e?.ssnLast4 ? `On file, ends ${e.ssnLast4}` : "123-45-6789"}"></label>
+      ${canada ? `<label>Social Insurance Number<input name="sin" autocomplete="off" inputmode="numeric" placeholder="${e?.ssnLast4 ? `On file, ends ${e.ssnLast4}` : "123 456 789"}"></label>`
+        : `<label>Social Security number<input name="ssn" autocomplete="off" inputmode="numeric" placeholder="${e?.ssnLast4 ? `On file, ends ${e.ssnLast4}` : "123-45-6789"}"></label>`}
     </div>
-    <h3>Home address <span class="muted">(for the W-2)</span></h3>
+    <h3>Home address <span class="muted">(for the ${canada ? (pay.state?.code === "QC" ? "T4 and RL-1" : "T4") : "W-2"})</span></h3>
     <div class="row">
       <label>Street<input name="line1" value="${v(e?.address?.line1)}"></label>
       <label>City<input name="city" value="${v(e?.address?.city)}" style="width:140px"></label>
-      <label>State<input name="state" value="${v(e?.address?.state ?? pay.state?.code ?? "CA")}" maxlength="2" style="width:56px"></label>
-      <label>ZIP<input name="zip" value="${v(e?.address?.zip)}" inputmode="numeric" style="width:90px"></label>
+      <label>${canada ? "Province" : "State"}<input name="state" value="${v(e?.address?.state ?? pay.state?.code ?? "CA")}" maxlength="2" style="width:56px"></label>
+      <label>${canada ? "Postal code" : "ZIP"}<input name="zip" value="${v(e?.address?.zip)}" ${canada ? "" : `inputmode="numeric"`} style="width:90px"></label>
     </div>
     <h3>Tax forms</h3>
     <div class="grid">
-      <label>W-4 filing status${sel("w4Status", [["single_or_mfs", "Single or married filing separately"], ["mfj", "Married filing jointly"], ["hoh", "Head of household"]], e?.w4.filingStatus ?? "single_or_mfs")}</label>
+      ${canada ? td1Fields(e, v) : `<label>W-4 filing status${sel("w4Status", [["single_or_mfs", "Single or married filing separately"], ["mfj", "Married filing jointly"], ["hoh", "Head of household"]], e?.w4.filingStatus ?? "single_or_mfs")}</label>
       <label class="check"><input type="checkbox" name="w4Step2" ${e?.w4.step2Checked ? "checked" : ""}> W-4 step 2 box checked</label>
       <label>W-4 step 3 credits ($ a year)<input name="w4Step3" value="${v(e?.w4.step3Credits)}" inputmode="decimal" placeholder="0"></label>
       <label>W-4 step 4(a) other income ($ a year)<input name="w4Step4a" value="${v(e?.w4.step4aOtherIncome)}" inputmode="decimal" placeholder="0"></label>
       <label>W-4 step 4(b) deductions ($ a year)<input name="w4Step4b" value="${v(e?.w4.step4bDeductions)}" inputmode="decimal" placeholder="0"></label>
       <label>W-4 step 4(c) extra each paycheck ($)<input name="w4Step4c" value="${v(e?.w4.step4cExtraWithholding)}" inputmode="decimal" placeholder="0"></label>
-      ${stateCertificateFields(e, v, sel)}
+      ${stateCertificateFields(e, v, sel)}`}
     </div>
-    <h3>Direct deposit <span class="muted">(leave blank for a paper check)</span></h3>
+    ${canada ? `<p class="hash">Direct deposit files for Canadian banks aren't ready yet; pay by cheque or through your bank for now.</p>` : `<h3>Direct deposit <span class="muted">(leave blank for a paper check)</span></h3>
     <div class="row">
       <label>Routing number<input name="ddRouting" value="${v(e?.directDeposit?.routing)}" inputmode="numeric" maxlength="9" placeholder="9 digits" style="width:120px"></label>
       <label>Account number<input name="ddAccount" autocomplete="off" inputmode="numeric" placeholder="${e?.directDeposit ? `On file, ends ${e.directDeposit.accountLast4}` : "From their voided check"}"></label>
       <label>Type${sel("ddType", [["checking", "Checking"], ["savings", "Savings"]], e?.directDeposit?.accountType ?? "checking")}</label>
-    </div>
-    <h3>Taken from each paycheck</h3>
+    </div>`}
+    <h3>Taken from each ${canada ? "pay" : "paycheck"}</h3>
     <div class="grid">
-      <label>401(k) ($)<input name="k401" value="${v(ded("traditional401k"))}" inputmode="decimal" placeholder="0"></label>
-      <label>Health premium, pre-tax ($)<input name="section125" value="${v(ded("section125"))}" inputmode="decimal" placeholder="0"></label>
+      ${canada ? `<label>RRSP or registered pension plan ($)<input name="rrsp" value="${v(ded("registered_retirement"))}" inputmode="decimal" placeholder="0"></label>`
+        : `<label>401(k) ($)<input name="k401" value="${v(ded("traditional401k"))}" inputmode="decimal" placeholder="0"></label>
+      <label>Health premium, pre-tax ($)<input name="section125" value="${v(ded("section125"))}" inputmode="decimal" placeholder="0"></label>`}
       <label>After-tax deduction ($)<input name="postTax" value="${v(ded("post_tax"))}" inputmode="decimal" placeholder="0"></label>
       ${pay.state?.sickLeave === null ? "" : `<label>Sick leave balance (hours)<input name="sickBalanceHours" value="${v(e?.sickBalanceHours ?? "0")}" inputmode="decimal"></label>`}
     </div>
     <details ${o.wages ? "open" : ""}><summary>Paid earlier this year, before TrailBook</summary>
-      <p class="hash">If you switched from another payroll service mid-year, enter this year's totals so far. They keep Social Security and unemployment taxes from going over their yearly limits, and they go on the W-2.</p>
+      <p class="hash">If you switched from another payroll service mid-year, enter this year's totals so far. ${canada
+        ? `They keep ${pay.state?.code === "QC" ? "QPP, EI and QPIP" : "CPP and EI"} from going over their yearly maximums, and they go on the ${pay.state?.code === "QC" ? "T4 and RL-1" : "T4"}.`
+        : "They keep Social Security and unemployment taxes from going over their yearly limits, and they go on the W-2."}</p>
       <div class="grid">
         <label>Year<input name="ytdYear" value="${v(o.year ?? bookDate().slice(0, 4))}" inputmode="numeric"></label>
         <label>Wages ($)<input name="ytdWages" value="${v(o.wages)}" inputmode="decimal" placeholder="0"></label>
+        ${canada ? `<label>Federal income tax deducted ($)<input name="ytdFit" value="${v(o.federalIncomeTax)}" inputmode="decimal" placeholder="0"></label>
+        <label>${esc(pay.state?.name ?? "Provincial")} income tax deducted ($)<input name="ytdPit" value="${v(o.caIncomeTax)}" inputmode="decimal" placeholder="0"></label>
+        <label>${pay.state?.code === "QC" ? "QPP" : "CPP"} contributions, including the second ones ($)<input name="ytdSs" value="${v(o.socialSecurityTax)}" inputmode="decimal" placeholder="0"></label>
+        <label>EI premiums ($)<input name="ytdMed" value="${v(o.medicareTax)}" inputmode="decimal" placeholder="0"></label>
+        ${pay.state?.code === "QC" ? `<label>QPIP premiums ($)<input name="ytdSdi" value="${v(o.caSdi)}" inputmode="decimal" placeholder="0"></label>` : ""}` : `
         <label>Federal income tax withheld ($)<input name="ytdFit" value="${v(o.federalIncomeTax)}" inputmode="decimal" placeholder="0"></label>
         <label>Social Security withheld ($)<input name="ytdSs" value="${v(o.socialSecurityTax)}" inputmode="decimal" placeholder="0"></label>
         <label>Medicare withheld ($)<input name="ytdMed" value="${v(o.medicareTax)}" inputmode="decimal" placeholder="0"></label>
         ${pay.state?.incomeTax.method === "none" ? "" : `<label>${esc(pay.state?.code ?? "CA")} income tax withheld ($)<input name="ytdPit" value="${v(o.caIncomeTax)}" inputmode="decimal" placeholder="0"></label>`}
-        ${(pay.state?.code ?? "CA") === "CA" ? `<label>CA SDI withheld ($)<input name="ytdSdi" value="${v(o.caSdi)}" inputmode="decimal" placeholder="0"></label>` : ""}
+        ${(pay.state?.code ?? "CA") === "CA" ? `<label>CA SDI withheld ($)<input name="ytdSdi" value="${v(o.caSdi)}" inputmode="decimal" placeholder="0"></label>` : ""}`}
       </div>
     </details>
     <div class="row" style="margin-top:12px"><button type="submit">${e ? "Save" : "Add employee"}</button>
@@ -1839,6 +1879,26 @@ function employeeForm(e = null) {
 /** The API body for an employee form. */
 function employeeBody(f) {
   const d = formData(f);
+  const checked = (n) => Boolean(f.querySelector(`[name=${n}]`)?.checked);
+  if (pay.state?.country === "CA") {
+    const money = (x) => x?.replace(/[$,\s]/g, "") || undefined;
+    const body = {
+      name: d.name, email: d.email, hireDate: d.hireDate, payType: d.payType, payRate: d.payRate.replace(/[$,\s]/g, ""), payFrequency: d.payFrequency,
+      usualHours: d.payType === "hourly" ? d.usualHours : "", overtimeExempt: d.payType === "salary" && checked("overtimeExempt"),
+      address: addressOf(d), ...(d.workCity !== undefined ? { workCity: d.workCity.trim() } : {}),
+      td1: {
+        federalClaim: money(d.td1Federal), provincialClaim: money(d.td1Provincial), extraFederalTax: money(d.td1ExtraFederal), extraProvincialTax: money(d.td1ExtraProvincial),
+        ontarioDependants: d.td1OnDependants || undefined, northernDeduction: money(d.td1Northern),
+        taxExempt: checked("td1TaxExempt"), cppExempt: checked("td1CppExempt"), eiExempt: checked("td1EiExempt"), qpipExempt: checked("td1QpipExempt"),
+      },
+      deductions: [{ kind: "registered_retirement", amount: d.rrsp }, { kind: "post_tax", amount: d.postTax }],
+      openingYtd: d.ytdWages ? { year: d.ytdYear, wages: d.ytdWages, federalIncomeTax: d.ytdFit, socialSecurityTax: d.ytdSs, medicareTax: d.ytdMed, caIncomeTax: d.ytdPit, caSdi: d.ytdSdi } : null,
+      sickBalanceHours: d.sickBalanceHours || "0",
+    };
+    if (d.terminationDate !== undefined) body.terminationDate = d.terminationDate;
+    if (d.sin?.trim()) body.sin = d.sin.trim();
+    return body;
+  }
   const body = {
     name: d.name, email: d.email, hireDate: d.hireDate, payType: d.payType, payRate: d.payRate.replace(/[$,\s]/g, ""), payFrequency: d.payFrequency,
     usualHours: d.payType === "hourly" ? d.usualHours : "", overtimeExempt: d.payType === "salary" && f.querySelector("[name=overtimeExempt]").checked,
@@ -1962,7 +2022,7 @@ async function payrollView(id) {
       ${pay.adding ? `<div class="emp">${employeeForm()}</div>` : ""}
       <div class="table-wrap"><table>
         <thead><tr><th>Name</th><th>Pay</th><th>Paid</th><th>Status</th><th></th></tr></thead>
-        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">SSN ends ${e.ssnLast4}</div>` : `<div class="hash">No SSN on file yet</div>`}<div class="hash">${e.directDeposit ? `Direct deposit to ${e.directDeposit.accountType} ending ${esc(e.directDeposit.accountLast4)}` : "Paid by check"}</div></td>
+        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">${pay.state?.country === "CA" ? "SIN" : "SSN"} ends ${e.ssnLast4}</div>` : `<div class="hash">No ${pay.state?.country === "CA" ? "SIN" : "SSN"} on file yet</div>`}<div class="hash">${e.directDeposit ? `Direct deposit to ${e.directDeposit.accountType} ending ${esc(e.directDeposit.accountLast4)}` : "Paid by check"}</div></td>
             <td>${payLabel(e)}${e.payType === "salary" && !e.overtimeExempt ? `<div class="hash">gets overtime</div>` : ""}${e.belowLocalMinimum ? `<div class="alert warn">Below the ${esc(e.belowLocalMinimum.place)} minimum wage of ${usd(Math.round(Number(e.belowLocalMinimum.rate) * 100))} an hour</div>` : ""}</td><td>${FREQ_LABEL[e.payFrequency]}</td>
             <td>${e.status === "active" ? `<span class="pill">Active</span>` : `<span class="pill grey">Left ${e.terminationDate}</span>`}</td>
             <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="emp-edit" data-id="${e.id}">Edit</button>` : ""}</td></tr>
@@ -1983,8 +2043,10 @@ async function payrollView(id) {
         <span class="hash">${esc(st.name)} requires at least ${esc(sick.annualUseCapHours)} hours a year${sick.smallEmployer ? ` (${esc(sick.smallEmployer.annualUseCapHours)} for employers with fewer than ${sick.smallEmployer.under} employees)` : ""}. Salaried exempt employees accrue as if they work 40 hours a week. Front-loaded hours don't carry over.</span>
       </form>` : `<p class="hash" style="margin-top:12px">${esc(st?.name ?? "")} has no statewide paid sick leave law, so TrailBook doesn't track sick hours.</p>`}
     </div>
-    ${taxDepositsPanel(deposits, canWrite, canSetUpBank)}
-    ${directDepositPanel(directDeposit, canSetUpBank)}
+    ${st.country === "CA" ? `<div class="panel"><h2>Remittances</h2>
+      <p class="muted">Each approved pay run books what you owe ${st.code === "QC" ? "the CRA (federal tax and EI) and Revenu Québec (Quebec tax, QPP, QPIP and the employer contributions)" : "the CRA (income tax, CPP and EI)"} and your workers' compensation board. Remittance due dates and reminders, and the T4${st.code === "QC" ? ", RL-1" : ""} and ROE, are coming in the next release; until then, remit through ${st.code === "QC" ? "My Business Account and Mon dossier" : "My Business Account"} or your bank.</p></div>`
+      : `${taxDepositsPanel(deposits, canWrite, canSetUpBank)}
+    ${directDepositPanel(directDeposit, canSetUpBank)}`}
     ${canWrite && active.length ? `<div class="panel">
       <h2>Run payroll</h2>
       <div class="row" style="margin-bottom:12px">
@@ -2770,6 +2832,9 @@ document.addEventListener("change", (ev) => {
   if (t.name === "country" && t.closest("form[data-form=entity]")) {
     t.form.elements.namedItem("region").innerHTML = regionOptions(t.value);
     t.form.querySelector("[data-region-label]").textContent = countryOf(t.value)?.regionLabel ?? "State";
+    t.form.elements.namedItem("entityType").innerHTML = entityTypeOptions(t.value);
+    t.form.querySelector("[data-ein-label]").textContent = t.value === "CA" ? "Business number (optional)" : "EIN (optional)";
+    t.form.elements.namedItem("ein").placeholder = t.value === "CA" ? "123456789" : "12-3456789";
   }
   if (t.name === "payType" && t.closest("form[data-form=employee]")) {
     const hourly = t.value === "hourly";
@@ -3256,7 +3321,7 @@ document.addEventListener("submit", async (ev) => {
       await periodsView(state.entity.entity.id);
     } else if (kind === "ein") {
       await api(entPath("/settings"), { body: { ein: d.ein } });
-      toast("EIN saved");
+      toast(state.entity.entity.country === "CA" ? "Business number saved" : "EIN saved");
       await overviewView(state.entity.entity.id);
     } else if (kind === "tb") {
       await trialBalanceView(state.entity.entity.id, d.asOf);

@@ -43,11 +43,12 @@ const CANADA_REGIONS: [string, string][] = [
 ];
 
 /** Regions launched so far, by country. */
-const LIVE: Record<string, string[]> = { US: ["CA", "TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA", "AZ", "OR", "NY", "IL", "CO", "NC", "GA", "UT", "ID", "MI", "VA", "MA", "NJ", "PA", "OH", "IN", "MD", "MO", "WI", "MN", "SC", "AL", "LA", "KY", "OK", "CT", "IA", "AR", "DE", "KS", "MS", "ND", "MT", "NM", "RI", "VT", "WV", "HI", "NE", "ME", "DC"] };
+const LIVE: Record<string, string[]> = { US: ["CA", "TX", "FL", "NV", "TN", "SD", "WY", "NH", "AK", "WA", "AZ", "OR", "NY", "IL", "CO", "NC", "GA", "UT", "ID", "MI", "VA", "MA", "NJ", "PA", "OH", "IN", "MD", "MO", "WI", "MN", "SC", "AL", "LA", "KY", "OK", "CT", "IA", "AR", "DE", "KS", "MS", "ND", "MT", "NM", "RI", "VT", "WV", "HI", "NE", "ME", "DC"],
+  CA: ["AB", "BC", "MB", "NB", "NL", "NS", "ON", "PE", "QC", "SK", "NT", "NU", "YT"] };
 
 export const COUNTRIES: readonly Country[] = ([
   { code: "US", name: "United States", currency: "USD", regionLabel: "State", status: "live", regions: planned(US_REGIONS) },
-  { code: "CA", name: "Canada", currency: "CAD", regionLabel: "Province or territory", status: "planned", regions: planned(CANADA_REGIONS) },
+  { code: "CA", name: "Canada", currency: "CAD", regionLabel: "Province or territory", status: "live", regions: planned(CANADA_REGIONS) },
 ] as Country[]).map((c) => ({ ...c, regions: c.regions.map((r) => (LIVE[c.code]?.includes(r.code) ? { ...r, status: "live" as const } : r)) }));
 
 export function countryOf(code: string): Country | undefined {

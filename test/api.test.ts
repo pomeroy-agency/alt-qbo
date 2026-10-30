@@ -805,3 +805,34 @@ describe("terms of service", () => {
     expect(pub.data).toEqual({ version: TERMS_VERSION, company: null });
   });
 });
+
+describe("a Canadian business", () => {
+  it("sets up in British Columbia with a business number, payroll account, SIN and TD1", async () => {
+    const s = await signup();
+    const bad = await call(`/api/orgs/${s.orgId}/entities`, { cookie: s.cookie, body: { legalName: "Coast LLC", entityType: "llc_single", country: "CA", region: "BC", firstFiscalYear: 2026 } });
+    expect(bad.status).toBe(422);
+    const r = await call(`/api/orgs/${s.orgId}/entities`, { cookie: s.cookie, body: { legalName: "Coast Ltd", entityType: "ca_corporation", country: "CA", region: "BC", firstFiscalYear: 2026 } });
+    expect(r.status).toBe(201);
+    expect(r.data).toMatchObject({ country: "CA", region: "BC", functionalCurrency: "CAD", taxReturnType: "t2" });
+    const base = `/api/orgs/${s.orgId}/entities/${r.data.id}`;
+    expect((await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "12-3456789" } })).status).toBe(400);
+    expect((await call(`${base}/settings`, { cookie: s.cookie, body: { ein: "123 456 789" } })).data.ein).toBe("123456789");
+    expect((await call(`${base}/address`, { cookie: s.cookie, body: { address: { line1: "1 Water St", city: "Vancouver", state: "BC", zip: "v6b1a1" } } })).data.address.zip).toBe("V6B 1A1");
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { stateEmployerAccount: "123456789" } })).status).toBe(400);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { stateEmployerAccount: "123456789 RP 0001", stateRatesPercent: { BC_WCB: "1.55" } } })).status).toBe(200);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { federalDepositSchedule: "monthly" } })).status).toBe(400);
+    const emp = await call(`${base}/employees`, {
+      cookie: s.cookie,
+      body: { name: "Avery Chen", hireDate: "2026-07-01", payType: "salary", payFrequency: "biweekly", payRate: "52000", sin: "130 692 544", td1: { federalClaim: "16452" } },
+    });
+    expect(emp.status).toBe(201);
+    expect(emp.data).toMatchObject({ ssnLast4: "2544", td1: { federalClaim: "16452" } });
+    const list = await call(`${base}/employees`, { cookie: s.cookie });
+    expect(list.data.state).toMatchObject({ country: "CA", code: "BC", incomeTax: { method: "canada", certificate: "TD1BC" }, status: "released" });
+    expect(list.data.state.agencies).toContain("CRA");
+    expect(list.data.stateRates).toEqual({ BC_WCB: "0.0155" });
+    // Saved runs use the released Canadian packs.
+    const run = await call(`${base}/pay-runs`, { cookie: s.cookie, body: { periodStart: "2026-08-01", periodEnd: "2026-08-14", payDate: "2026-08-21", lines: [{ employeeId: emp.data.id }] } });
+    expect(run.status).toBe(201);
+  });
+});

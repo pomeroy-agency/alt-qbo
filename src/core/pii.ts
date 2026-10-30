@@ -43,3 +43,18 @@ export function cleanSsn(v: string): string {
   }
   return digits;
 }
+
+/** Checks and normalises a Canadian Social Insurance Number to nine digits (the Luhn check digit, and no 0 or 8 first). */
+export function cleanSin(v: string): string {
+  const digits = v.replace(/[\s-]/g, "");
+  if (!/^\d{9}$/.test(digits)) throw new LedgerError("INVALID", "a Social Insurance Number has nine digits, like 130 692 544");
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    let d = Number(digits[i]) * (i % 2 ? 2 : 1);
+    if (d > 9) d -= 9;
+    sum += d;
+  }
+  // 0 is for fictitious numbers and 8 for business numbers; neither is a person's SIN.
+  if (sum % 10 !== 0 || digits[0] === "0" || digits[0] === "8") throw new LedgerError("INVALID", "that isn't a valid Social Insurance Number");
+  return digits;
+}

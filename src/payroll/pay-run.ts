@@ -3,6 +3,7 @@ import { appendAudit } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { getEntry, postJournal, type Actor, type LineInput, type PostedEntry, type Role } from "../core/ledger.js";
 import { resolveRules, type Place } from "../rules/index.js";
+import { CANADA_TAX_ACCOUNT } from "./canada.js";
 import { calculatePaycheck, type EmployeePayInput, type EmployerSettings, type Paycheck } from "./gross-to-net.js";
 
 export interface PayRunInput {
@@ -45,7 +46,7 @@ export function calculatePayRun(input: PayRunInput): PayRun {
   const rules = resolveRules(input.place, input.payDate, { requireReleased: input.live });
   const paychecks = input.employees.map((e) => calculatePaycheck(e, rules, input.employer, input.periodEnd));
   const st = rules.state.payroll;
-  const taxAccounts: Record<string, string> = { ...FEDERAL_TAX_ACCOUNT };
+  const taxAccounts: Record<string, string> = { ...(rules.federal.kind === "ca-federal" ? CANADA_TAX_ACCOUNT : FEDERAL_TAX_ACCOUNT) };
   if (st.incomeTaxAgency) taxAccounts[st.incomeTaxAgency.code] = st.incomeTaxAgency.account;
   for (const t of [...(st.localIncomeTaxes ?? []), ...st.taxes]) taxAccounts[t.code] = t.account;
   const byTax: Record<string, bigint> = {};
@@ -91,6 +92,7 @@ const DEDUCTION_ACCOUNT: Record<string, string> = {
   section125: "section125_payable",
   traditional401k: "retirement_401k_payable",
   post_tax: "post_tax_deductions_payable",
+  registered_retirement: "retirement_401k_payable",
 };
 
 /** Journal lines for a pay run: expenses on the debit side, a liability per tax and deduction on the credit side. */

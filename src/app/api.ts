@@ -31,7 +31,7 @@ import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./
 import { beginMfaSetup, checkSecondFactor, disableMfa, enableMfa, issueMfaTicket, mfaStatus, redeemMfaTicket, regenerateRecoveryCodes } from "./mfa.js";
 import type { Mailer } from "./mail.js";
 import { TERMS_VERSION, acceptTerms, orgsAccepted } from "./terms.js";
-import { addConnection, createEntity, createOrganization, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
+import { addConnection, createEntity, createOrganization, ENTITY_TYPES_BY_COUNTRY, getEntity, type ConnectionKind, type EntityType } from "../core/tenancy.js";
 import { COUNTRIES, JurisdictionError, allRulePacks, resolveRules, statePackFor, type Place, type StateRulePack } from "../rules/index.js";
 import { minimumWageOn } from "../rules/minimum-wage.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove } from "../rules/local-minimum-wage.js";
@@ -145,7 +145,7 @@ function uuid(v: unknown, message: string): string {
   return v;
 }
 
-const ENTITY_TYPES: EntityType[] = ["sole_prop", "llc_single", "llc_partnership", "llc_s_corp", "s_corp", "c_corp", "partnership"];
+const ENTITY_TYPES: EntityType[] = Object.values(ENTITY_TYPES_BY_COUNTRY).flat();
 
 interface Ctx {
   pool: pg.Pool;
@@ -283,7 +283,7 @@ route("POST", "/api/orgs/:org/entities", async (req, _p, ctx) => {
       orgId: ctx.orgId,
       legalName: str(b.legalName, "legal name"),
       entityType,
-      place: { country: str(b.country ?? "US", "country"), region: str(b.region ?? "CA", "state") },
+      place: { country: str(b.country ?? "US", "country"), region: str(b.region ?? (b.country && b.country !== "US" ? undefined : "CA"), "state or province") },
       firstFiscalYear: year,
       ein: typeof b.ein === "string" && b.ein ? b.ein : undefined,
       actor: ctx.actor,
@@ -1350,10 +1350,18 @@ route("POST", "/api/orgs/:org/entities/:entity/settings", async (req, p, ctx) =>
   requireRole(ctx, ["owner", "admin"]);
   const b = await body(req);
   const ein = str(b.ein, "EIN", 20);
-  if (!/^\d{2}-?\d{7}$/.test(ein)) throw new HttpError(400, "EIN must look like 12-3456789");
-  const formatted = `${ein.replace("-", "").slice(0, 2)}-${ein.replace("-", "").slice(2)}`;
+  let formatted = "";
   await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
+    const country = (await tx.query("SELECT country FROM entities WHERE id = $1", [p.entity])).rows[0].country;
+    // A Canadian business keeps its nine-digit CRA business number here.
+    if (country === "CA") {
+      formatted = ein.replace(/\s/g, "");
+      if (!/^\d{9}$/.test(formatted)) throw new HttpError(400, "the business number is the nine digits at the start of your CRA account numbers");
+    } else {
+      if (!/^\d{2}-?\d{7}$/.test(ein)) throw new HttpError(400, "EIN must look like 12-3456789");
+      formatted = `${ein.replace("-", "").slice(0, 2)}-${ein.replace("-", "").slice(2)}`;
+    }
     const before = (await tx.query("SELECT ein FROM entities WHERE id = $1", [p.entity])).rows[0].ein;
     await tx.query("UPDATE entities SET ein = $2 WHERE id = $1", [p.entity, formatted]);
     await appendAudit(tx, {
@@ -1451,7 +1459,7 @@ function taxLabels(pack: StateRulePack): Record<string, string> {
 function payrollProfile(pack: StateRulePack, today: string) {
   const it = pack.payroll.incomeTax;
   return {
-    code: pack.place.region, name: pack.name,
+    country: pack.place.country, code: pack.place.region, name: pack.name,
     incomeTax: it.method === "none" ? { method: "none" as const }
       : it.method === "elected_percent" ? { method: it.method, certificate: it.certificate, choices: it.choices, defaultRate: it.defaultRate, zeroAllowed: it.zeroAllowed }
       : it.method === "or_formula" ? { method: it.method, certificate: it.certificate, noCertificateRate: it.noCertificateRate }
@@ -1468,7 +1476,8 @@ function payrollProfile(pack: StateRulePack, today: string) {
     })),
     taxLabels: taxLabels(pack),
     wageAreas: pack.wageHour.areas ? [pack.wageHour.defaultAreaName ?? "Rest of the state", ...pack.wageHour.areas.map((a) => a.name)] : [],
-    agencies: [...new Set([pack.payroll.incomeTaxAgency?.agency, ...pack.payroll.taxes.filter((t) => !t.paidToCarrier).map((t) => t.agency)].filter(Boolean))],
+    // In Canada, source deductions go to the CRA (Quebec: Revenu Québec too); the pack lists the provincial ones.
+    agencies: [...new Set([...(it.method === "canada" ? ["CRA", ...(pack.place.region === "QC" ? ["Revenu Québec"] : [])] : []), pack.payroll.incomeTaxAgency?.agency, ...pack.payroll.taxes.filter((t) => !t.paidToCarrier).map((t) => t.agency)].filter(Boolean))],
     assignedRates: pack.payroll.taxes.filter((t) => t.assignedRate).map((t) => ({ code: t.code, label: t.assignedRate!.label, hint: t.assignedRate!.hint, newEmployerRate: t.rate })),
     employerAccount: pack.payroll.employerAccount,
     minimumWage: minimumWageOn(pack.wageHour, today),
@@ -1497,13 +1506,13 @@ function withLocalMinimums(place: Place, employees: Employee[], today: string) {
 /** The parts of an employee in a request; a field left out is left alone. Checked in payroll/employees.ts. */
 function employeeFields(b: Record<string, any>): EmployeeFields {
   const keys = ["name", "email", "address", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours",
-    "overtimeExempt", "w4", "de4", "stateWithholding", "deductions", "sickBalanceHours", "ssn", "openingYtd", "directDeposit"] as const;
+    "overtimeExempt", "w4", "de4", "stateWithholding", "td1", "deductions", "sickBalanceHours", "ssn", "sin", "openingYtd", "directDeposit"] as const;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
-  for (const k of ["name", "email", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn"]) {
+  for (const k of ["name", "email", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn", "sin"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "string") throw new HttpError(400, `${k} should be text`);
   }
-  for (const k of ["w4", "de4", "stateWithholding", "openingYtd", "address", "directDeposit"]) {
+  for (const k of ["w4", "de4", "stateWithholding", "td1", "openingYtd", "address", "directDeposit"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "object") throw new HttpError(400, `${k} should be an object`);
   }
   return out as EmployeeFields;
@@ -1542,6 +1551,7 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
       await setSickLeavePolicy(tx, { orgId: ctx.orgId, entityId: p.entity!, policy: String(b.sickLeavePolicy), actor: ctx.actor });
     }
     if (b.federalDepositSchedule !== undefined) {
+      if (ent.country !== "US") throw new HttpError(400, "the federal deposit schedule is for US businesses");
       await setFederalDepositSchedule(tx, { orgId: ctx.orgId, entityId: p.entity!, schedule: String(b.federalDepositSchedule), actor: ctx.actor });
     }
   });

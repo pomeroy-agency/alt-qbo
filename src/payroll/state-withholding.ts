@@ -233,6 +233,7 @@ export function stateWithholding(
 ): Dec {
   switch (rules.method) {
     case "none":
+    case "canada": // worked out with CPP and EI in src/payroll/canada.ts
       return new D(0);
     case "ca_method_b":
       if (!cert.de4) throw new Error("a California employee needs a DE 4");

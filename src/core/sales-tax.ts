@@ -80,14 +80,22 @@ function addressOf(r: any): Address | null {
 }
 
 /** Checks and tidies an address typed by a person. All four parts, or none. */
+/** Canada's provinces and territories; none shares a code with a US state. */
+export const CANADIAN_PROVINCES = new Set(["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"]);
+
 export function cleanAddress(a: Partial<Record<keyof Address, unknown>> | null | undefined): Address | null {
   const v = (k: keyof Address) => (typeof a?.[k] === "string" ? (a[k] as string).trim() : "");
   const out = { line1: v("line1"), city: v("city"), state: v("state").toUpperCase(), zip: v("zip") };
   if (!out.line1 && !out.city && !out.zip) return null;
-  if (!out.line1 || !out.city || !out.zip) throw new LedgerError("INVALID", "an address needs a street, a city and a ZIP code");
+  if (!out.line1 || !out.city || !out.zip) throw new LedgerError("INVALID", "an address needs a street, a city and a ZIP or postal code");
   if (!out.state) out.state = "CA";
-  if (!/^[A-Z]{2}$/.test(out.state)) throw new LedgerError("INVALID", "the state should be two letters, like CA");
-  if (!/^\d{5}(-\d{4})?$/.test(out.zip)) throw new LedgerError("INVALID", "the ZIP code should look like 94103 or 94103-1234");
+  if (!/^[A-Z]{2}$/.test(out.state)) throw new LedgerError("INVALID", "the state or province should be two letters, like CA or BC");
+  if (CANADIAN_PROVINCES.has(out.state)) {
+    // Canadian postal codes are kept as A1A 1A1.
+    const pc = out.zip.toUpperCase().replace(/\s+/g, "");
+    if (!/^[A-Z]\d[A-Z]\d[A-Z]\d$/.test(pc)) throw new LedgerError("INVALID", "the postal code should look like V6B 1A1");
+    out.zip = `${pc.slice(0, 3)} ${pc.slice(3)}`;
+  } else if (!/^\d{5}(-\d{4})?$/.test(out.zip)) throw new LedgerError("INVALID", "the ZIP code should look like 94103 or 94103-1234");
   if (out.line1.length > 200 || out.city.length > 100) throw new LedgerError("INVALID", "that address is too long");
   return out;
 }

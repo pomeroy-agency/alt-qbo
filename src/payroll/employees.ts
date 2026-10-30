@@ -3,11 +3,12 @@ import { appendAudit } from "../core/audit.js";
 import { LedgerError, translateDbError } from "../core/errors.js";
 import type { Actor, Role } from "../core/ledger.js";
 import { D, toMinor } from "../core/money.js";
-import { cleanSsn, seal } from "../core/pii.js";
+import { cleanSin, cleanSsn, seal } from "../core/pii.js";
 import { cleanAddress, type Address } from "../core/sales-tax.js";
 import { localWagePlace } from "../rules/local-minimum-wage.js";
 import { cleanAccountNumber, validRouting } from "./nacha.js";
 import type { DE4 } from "./california.js";
+import type { CanadaTd1 } from "./canada.js";
 import type { StateWithholding } from "./state-withholding.js";
 import { statePackFor } from "../rules/index.js";
 import type { W4 } from "./federal.js";
@@ -32,6 +33,10 @@ export interface OpeningYtd {
   caSdi: string;
 }
 
+// In Canada the same figures are read as: federalIncomeTax (federal tax),
+// caIncomeTax (provincial tax, or Quebec tax), socialSecurityTax (CPP or QPP,
+// base and second), medicareTax (EI) and caSdi (QPIP).
+
 export interface Employee {
   id: string;
   name: string;
@@ -52,6 +57,8 @@ export interface Employee {
   de4: DE4;
   /** Withholding certificate for a state other than California; null where none was filed or the state has no income tax. */
   stateWithholding: StateWithholding | null;
+  /** Canada: the TD1 claim (and TP-1015.3 in Quebec); null where none was filed. */
+  td1: CanadaTd1 | null;
   deductions: Deduction[];
   sickBalanceHours: string;
   /** Front-loaded sick leave: the year the hours were last granted. */
@@ -77,17 +84,20 @@ export interface EmployeeFields {
   w4?: Partial<Record<keyof W4, unknown>>;
   de4?: Partial<Record<keyof DE4, unknown>>;
   stateWithholding?: Partial<Record<keyof StateWithholding, unknown>> | null;
+  td1?: Partial<Record<keyof CanadaTd1, unknown>> | null;
   deductions?: { kind?: unknown; amount?: unknown; description?: unknown }[];
   sickBalanceHours?: string;
   /** Write-only: sealed on the way in, only the last four digits come back. */
   ssn?: string | null;
+  /** Canada: the Social Insurance Number, kept like an SSN (write-only, sealed). */
+  sin?: string | null;
   openingYtd?: Partial<Record<keyof OpeningYtd, unknown>> | null;
   /** The account number is write-only, like the SSN; leave it out to keep the one on file. */
   directDeposit?: { routing?: unknown; accountType?: unknown; account?: unknown } | null;
 }
 
 const COLS = `id, name, email, address_line1, address_city, address_state, address_zip, work_city, hire_date::text, termination_date::text,
-  pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, state_withholding, deductions, sick_balance_hours::text, sick_granted_year,
+  pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, state_withholding, td1, deductions, sick_balance_hours::text, sick_granted_year,
   ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4`;
 
 function employeeOf(r: any): Employee {
@@ -98,7 +108,7 @@ function employeeOf(r: any): Employee {
     hireDate: r.hire_date, terminationDate: r.termination_date,
     status: r.termination_date ? "terminated" : "active",
     payType: r.pay_type, payFrequency: r.pay_frequency, payRate: trimZeros(r.pay_rate), usualHours: r.usual_hours ? trimZeros(r.usual_hours) : null,
-    overtimeExempt: r.overtime_exempt, w4: r.w4, de4: r.de4, stateWithholding: r.state_withholding ?? null, deductions: r.deductions,
+    overtimeExempt: r.overtime_exempt, w4: r.w4, de4: r.de4, stateWithholding: r.state_withholding ?? null, td1: r.td1 ?? null, deductions: r.deductions,
     sickBalanceHours: trimZeros(r.sick_balance_hours), sickGrantedYear: r.sick_granted_year, ssnLast4: r.ssn_last4, openingYtd: r.opening_ytd,
     directDeposit: r.dd_routing ? { routing: r.dd_routing, accountType: r.dd_account_type, accountLast4: r.dd_account_last4 } : null,
   };
@@ -109,7 +119,7 @@ function trimZeros(v: string): string {
 }
 
 const FREQUENCIES = Object.keys(PERIODS_PER_YEAR);
-const DEDUCTION_KINDS: DeductionKind[] = ["section125", "traditional401k", "post_tax"];
+const DEDUCTION_KINDS: DeductionKind[] = ["section125", "traditional401k", "post_tax", "registered_retirement"];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function invalid(message: string): never {
@@ -211,6 +221,33 @@ function cleanStateWithholding(w: EmployeeFields["stateWithholding"]): StateWith
   return Object.keys(out).length ? out : null;
 }
 
+function cleanTd1(t: EmployeeFields["td1"]): CanadaTd1 | null {
+  if (!t) return null;
+  const out: CanadaTd1 = {};
+  const claim = (v: unknown, label: string) => {
+    const a = amount(v, label, { optional: true });
+    if (a !== undefined && new D(a).gt(200000)) invalid(`the ${label} looks too high`);
+    return a;
+  };
+  const fed = claim(t.federalClaim, "federal TD1 claim");
+  if (fed !== undefined) out.federalClaim = fed;
+  const prov = claim(t.provincialClaim, "provincial TD1 claim");
+  if (prov !== undefined) out.provincialClaim = prov;
+  const extraF = amount(t.extraFederalTax, "extra federal tax", { optional: true });
+  if (extraF && !new D(extraF).isZero()) out.extraFederalTax = extraF;
+  const extraP = amount(t.extraProvincialTax, "extra provincial tax", { optional: true });
+  if (extraP && !new D(extraP).isZero()) out.extraProvincialTax = extraP;
+  const north = amount(t.northernDeduction, "northern residents deduction", { optional: true });
+  if (north && !new D(north).isZero()) out.northernDeduction = north;
+  if (t.ontarioDependants !== undefined && t.ontarioDependants !== null && t.ontarioDependants !== "") {
+    const n = Number(t.ontarioDependants);
+    if (!Number.isInteger(n) || n < 0 || n > 20) invalid("Ontario dependants should be a whole number");
+    if (n) out.ontarioDependants = n;
+  }
+  for (const k of ["taxExempt", "cppExempt", "eiExempt", "qpipExempt"] as const) if (t[k]) out[k] = true;
+  return Object.keys(out).length ? out : null;
+}
+
 /** An elected rate must be one the state's certificate offers. */
 async function checkStateRate(tx: Tx, entityId: string, cols: Record<string, unknown>) {
   if (typeof cols.state_withholding !== "string") return;
@@ -230,7 +267,7 @@ function cleanDeductions(list: EmployeeFields["deductions"]): Deduction[] {
     if (!amt || new D(amt).isZero()) return [];
     if (!DEDUCTION_KINDS.includes(d.kind as DeductionKind)) invalid("pick what kind of deduction it is");
     const description = typeof d.description === "string" && d.description.trim() ? d.description.trim().slice(0, 60)
-      : { section125: "Health premium (pre-tax)", traditional401k: "401(k)", post_tax: "After-tax deduction" }[d.kind as DeductionKind];
+      : { section125: "Health premium (pre-tax)", traditional401k: "401(k)", post_tax: "After-tax deduction", registered_retirement: "RRSP or pension plan" }[d.kind as DeductionKind];
     return [{ kind: d.kind as DeductionKind, amount: amt, description }];
   });
 }
@@ -307,12 +344,22 @@ function columns(f: EmployeeFields): Record<string, unknown> {
     const sw = cleanStateWithholding(f.stateWithholding);
     out.state_withholding = sw ? JSON.stringify(sw) : null;
   }
+  if (f.td1 !== undefined) {
+    const td1 = cleanTd1(f.td1);
+    out.td1 = td1 ? JSON.stringify(td1) : null;
+  }
   if (f.deductions !== undefined) out.deductions = JSON.stringify(cleanDeductions(f.deductions));
   if (f.sickBalanceHours !== undefined) out.sick_balance_hours = amount(f.sickBalanceHours, "sick leave balance", { places: 4 });
   if (f.ssn !== undefined) {
     const ssn = f.ssn ? cleanSsn(f.ssn) : null;
     out.ssn_last4 = ssn ? ssn.slice(5) : null;
     out.ssn_sealed = ssn ? seal(ssn) : null;
+  }
+  if (f.sin !== undefined) {
+    if (f.ssn) invalid("enter a Social Security number or a SIN, not both");
+    const sin = f.sin ? cleanSin(f.sin) : null;
+    out.ssn_last4 = sin ? sin.slice(5) : null;
+    out.ssn_sealed = sin ? seal(sin) : null;
   }
   if (f.directDeposit !== undefined) Object.assign(out, directDepositColumns(f.directDeposit));
   if (f.openingYtd !== undefined) {
