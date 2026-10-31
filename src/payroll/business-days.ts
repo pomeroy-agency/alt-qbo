@@ -80,14 +80,60 @@ export function californiaHolidays(year: number): Set<string> {
   return cache.get(key)!;
 }
 
-export type Calendar = "federal" | "california" | "weekends";
+/** Easter Sunday (Anonymous Gregorian algorithm). */
+function easter(year: number): string {
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), date = ((h + l - 7 * m + 114) % 31) + 1;
+  return `${year}-${String(month).padStart(2, "0")}-${String(date).padStart(2, "0")}`;
+}
+
+/** The Monday before May 25: Victoria Day, and National Patriots' Day in Quebec. */
+const victoriaDay = (year: number) => addDays(`${year}-05-25`, -(((weekday(`${year}-05-25`) + 6) % 7) || 7));
+
+/**
+ * Canada's general holidays under the Canada Labour Code, on their own dates
+ * (not the observed weekday), for CRA remittance due dates. A due date on a
+ * weekend or public holiday moves to the next business day; counting only
+ * these keeps a date shown from ever being later than the real one.
+ */
+export function canadaHolidays(year: number): Set<string> {
+  const key = `cafed:${year}`;
+  if (!cache.has(key)) {
+    cache.set(key, new Set([
+      `${year}-01-01`, addDays(easter(year), -2), victoriaDay(year), `${year}-07-01`, nthWeekday(year, 9, 1, 1),
+      `${year}-09-30`, // National Day for Truth and Reconciliation
+      nthWeekday(year, 10, 1, 2), // Thanksgiving
+      `${year}-11-11`, `${year}-12-25`, `${year}-12-26`,
+    ]));
+  }
+  return cache.get(key)!;
+}
+
+/** Quebec's statutory holidays, for Revenu Québec due dates (Good Friday stands for the Good Friday or Easter Monday choice). */
+export function quebecHolidays(year: number): Set<string> {
+  const key = `qc:${year}`;
+  if (!cache.has(key)) {
+    cache.set(key, new Set([
+      `${year}-01-01`, addDays(easter(year), -2), victoriaDay(year), `${year}-06-24`, `${year}-07-01`,
+      nthWeekday(year, 9, 1, 1), nthWeekday(year, 10, 1, 2), `${year}-12-25`,
+    ]));
+  }
+  return cache.get(key)!;
+}
+
+export type Calendar = "federal" | "california" | "weekends" | "canada" | "quebec";
+
+const HOLIDAYS: Record<Exclude<Calendar, "weekends">, (year: number) => Set<string>> = {
+  federal: federalHolidays, california: californiaHolidays, canada: canadaHolidays, quebec: quebecHolidays,
+};
 
 export function isBusinessDay(date: string, calendar: Calendar): boolean {
   const w = weekday(date);
   if (w === 0 || w === 6) return false;
   if (calendar === "weekends") return true;
-  const year = Number(date.slice(0, 4));
-  return !(calendar === "federal" ? federalHolidays(year) : californiaHolidays(year)).has(date);
+  return !HOLIDAYS[calendar](Number(date.slice(0, 4))).has(date);
 }
 
 /** The date itself if it's a business day, otherwise the next one. */

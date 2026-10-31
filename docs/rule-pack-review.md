@@ -1598,6 +1598,29 @@ What it adds:
 
 **Gaps for Greg's legal review before Canadian customers:** the Terms of Service and Privacy Policy name only US law; Canada needs PIPEDA language, Quebec's Law 25 (privacy officer, impact assessment before Quebec employee data goes to US servers, incident reporting) and CASL for marketing email. TrailBook selling to Canadian businesses may also need GST/HST registration under the non-resident digital services rules.
 
+## Canada, third part: remittances, T4, RL-1 and ROE (`src/payroll/canada-remittances.ts`, `src/payroll/canada-forms.ts`), draft
+
+**Status: draft, awaiting Greg's review.** No rule packs change in this part; it schedules and reports what the released packs already calculate.
+
+What it adds:
+
+- **Remittances** (CRA guide T4001 chapter 8; Revenu Québec TP-1015.G-V). Each business picks its remitter type on the Payroll page (CRA, and Revenu Québec for Quebec): quarterly (by the 15th after the quarter), regular/monthly (by the 15th of the next month), accelerated threshold 1 (pay dates 1st to 15th by the 25th; 16th to the end by the 10th of the next month) and threshold 2 (1st to 7th, 8th to 14th, 15th to 21st, 22nd to the end, each by the third working day after it closes). A weekend or holiday due date moves to the next business day. CRA gets income tax (federal, and provincial outside Quebec), CPP and EI; Revenu Québec gets Quebec tax, QPP, QPIP, the health services fund and CNESST; the CNT and WSDRF are due once a year with the RL-1 summary, on the last day of February. Payments are recorded and reminders sent through the existing deposits pipeline (`ca_cra_remit`, `qc_rq_remit`, `qc_rlz1s`).
+- **T4 slips and T4 Summary**: boxes 10, 14, 16, 16A, 17, 17A, 18, 20, 22, 24, 26, 28, 45, 55, 56; summary lines 88, 14, 20, 16, 16A, 27, 27A, 18, 19, 22, 80, 82 (remittances recorded), 84/86. Box 45 (dental benefits code 1 to 5) is a payroll setting. Due the last day of February.
+- **RL-1 slips and RLZ-1.S totals** (Quebec only): boxes A, B, B.A, C, D, E, G, H, I, and the summary's QPP, QPIP, Quebec tax, health services fund, CNT, WSDRF and CNESST, less Revenu Québec remittances recorded.
+- **Record of Employment**, one for each employee with a last day: blocks 5, 6, 8 to 12, 15A (insurable hours) and 15C (insurable earnings) over the last 53/27/25/13 pay periods (weekly/biweekly/semi-monthly/monthly), with the period-by-period detail. Due five calendar days after the end of the final pay period. Block 16 (reason) and Block 17 (vacation pay and other money on separation) are entered in ROE Web.
+- **Holidays**: `canadaHolidays` (Canada Labour Code: New Year's Day, Good Friday, Victoria Day, Canada Day, Labour Day, National Day for Truth and Reconciliation, Thanksgiving, Remembrance Day, Christmas, Boxing Day) for CRA dates and `quebecHolidays` (New Year's Day, Good Friday, National Patriots' Day, June 24, Canada Day, Labour Day, Thanksgiving, Christmas) for Revenu Québec dates.
+
+⚠️ Items to check:
+
+- Whether CRA treats every Canada Labour Code holiday as a non-business day for remittances (CRA's own list is "public holidays"); Easter Monday and the provincial civic holidays are not included.
+- T4 box 26 caps pensionable earnings at the YMPE; earnings between the YMPE and YAMPE (CPP2) aren't separately reported. Box 24 caps at the EI maximum insurable earnings; box 56 at the QPIP maximum.
+- Box 20 / RL-1 box D takes the "registered retirement" deduction, which TrailBook doesn't split between RPP and RRSP; a warning says to leave it blank for RRSP.
+- RL-1 box B.A label and the RLZ-1.S line names are from working knowledge, not the current guide (RL-1.G-V).
+- ROE Block 15A counts 40 hours a week for salaried employees without usual hours; Block 15C isn't capped at the yearly maximum insurable earnings.
+- Health services fund on the RL-1 summary uses the rate in payroll settings; Revenu Québec's summary recalculates it from total payroll.
+
+**Not scheduled yet:** workers' compensation outside Quebec, provincial health taxes (ON/BC EHT, MB levy, NL HAPSET) and NT/NU payroll tax have their own schedules and returns; the Payroll page says so. Still to come: CPA 005 direct deposit, vacation and statutory holiday pay, GST/HST/PST/QST.
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.
