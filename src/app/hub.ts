@@ -40,6 +40,9 @@ export interface HubOptions {
   url: string;
   /** Shared with the hub; at least 32 characters. */
   secret: string;
+  /** TrailBook's client id and secret at the hub, for "Sign in with Pomeroy Account" (hub-signin.ts). */
+  clientId?: string;
+  clientSecret?: string;
   /** For tests. */
   fetch?: typeof fetch;
   now?: () => number;
@@ -58,7 +61,9 @@ export function hubFromEnv(env: Record<string, string | undefined> = process.env
     console.error("ACCOUNT_HUB_SECRET is shorter than 32 characters; the account hub link is off");
     return undefined;
   }
-  return { url: url.replace(/\/+$/, ""), secret };
+  const clientId = env.ACCOUNT_HUB_CLIENT_ID?.trim() || undefined;
+  const clientSecret = env.ACCOUNT_HUB_CLIENT_SECRET?.trim() || undefined;
+  return { url: url.replace(/\/+$/, ""), secret, clientId, clientSecret };
 }
 
 const nowSeconds = (hub: HubOptions) => Math.floor((hub.now ?? Date.now)() / 1000);
@@ -297,12 +302,18 @@ export async function handleHub(req: Request, path: string, pool: pg.Pool, opts:
   }
 
   if (path === "/api/hub/signout") {
+    // The hub sends its own user id (user_id) and the email; a connected Pomeroy Account is matched by its id first.
+    const hubUserId = typeof b.user_id === "string" && b.user_id.length >= 1 && b.user_id.length <= 100 ? b.user_id : null;
     const userId = typeof b.trailbook_user_id === "string" && UUID.test(b.trailbook_user_id) ? b.trailbook_user_id : null;
     const email = typeof b.email === "string" && b.email.length <= 320 ? b.email.trim().toLowerCase() : null;
-    if (!userId && !email) return fail(400, "invalid", "send trailbook_user_id or email");
+    if (!hubUserId && !userId && !email) return fail(400, "invalid", "send user_id, trailbook_user_id or email");
     const user = (await pool.query(
-      "SELECT id FROM users WHERE ($1::uuid IS NOT NULL AND id = $1::uuid) OR ($1::uuid IS NULL AND email = $2)",
-      [userId, email],
+      `SELECT id FROM users
+        WHERE ($1::text IS NOT NULL AND hub_user_id = $1)
+           OR ($2::uuid IS NOT NULL AND id = $2::uuid)
+           OR ($3::text IS NOT NULL AND email = $3)
+        ORDER BY (hub_user_id = $1) IS TRUE DESC, (id = $2::uuid) IS TRUE DESC LIMIT 1`,
+      [hubUserId, userId, email],
     )).rows[0];
     // Someone with no TrailBook account has nothing to sign out of.
     const ended = user ? await endAllSessions(pool, user.id) : 0;
