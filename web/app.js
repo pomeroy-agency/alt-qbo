@@ -1305,8 +1305,11 @@ async function docPageView(id, kind, docId) {
       ${invoice ? `<p style="margin-top:8px">${esc(taxExplanation(x))}</p>` : x.useTaxSource !== "none" ? `<p style="margin-top:8px">${esc(useTaxExplanation(x))}</p>` : ""}
       <p class="hash" style="margin-top:8px">Created by ${esc(x.createdBy.replace("user:", ""))}</p>
       ${x.payments.length ? `<h3>Payments</h3>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}` : ""}
+      <h3>Receipts and files</h3><div data-files-box="${x.id}" data-type="document" class="muted">Loading…</div>
       ${x.emails?.length ? `<h3>Emails</h3>${x.emails.map((m) => `<div class="hash">${esc(when(m.sentAt))} · ${m.kind === "reminder" ? `Reminder (${esc(m.stage)})` : "Invoice"} to ${esc(m.sentTo)} · by ${esc(m.sentBy.replace("user:", "").replace("system:", "TrailBook "))}</div>`).join("")}` : ""}
     </div>`);
+  const files = document.querySelector(`[data-files-box="${x.id}"]`);
+  if (files) fillFiles(files).catch((err) => { files.textContent = err.message; });
 }
 
 /** Why a bill has the use tax it has, from what was frozen on it. Mirrors explainUseTax on the server. */
@@ -1428,10 +1431,12 @@ async function bankView(id) {
   const banks = state.entity.accounts.filter((a) => a.is_active && a.subtype === "bank");
   if (!banks.some((a) => a.code === bankUi.account)) bankUi.account = banks[0]?.code ?? null;
   const q = `?account=${encodeURIComponent(bankUi.account ?? "")}&status=${bankUi.status}`;
-  const [{ lines }, inv, bills] = await Promise.all([
+  const [{ lines }, inv, bills, { rules }, { counts: files }] = await Promise.all([
     api(entPath(`/bank-lines${q}`)),
     bankUi.status === "new" ? api(entPath("/invoices")) : { documents: [] },
     bankUi.status === "new" ? api(entPath("/bills")) : { documents: [] },
+    api(entPath("/bank-rules")),
+    api(entPath("/attachments?type=bank_line")),
   ]);
   const open = (docs) => docs.filter((d) => d.status !== "void" && d.dueMinor !== "0");
   const openInv = open(inv.documents), openBills = open(bills.documents);
@@ -1475,15 +1480,92 @@ async function bankView(id) {
           const amount = `<td class="num" style="color:${amt > 0n ? "var(--good-ink)" : "inherit"}">${usd(l.amountMinor)}</td>`;
           if (l.status === "new") return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}
             <td>${canWrite ? choice(l) : ""}</td>
-            <td>${canWrite ? `<div class="row"><button data-action="bank-record" data-id="${l.id}">Record</button><button class="link" data-action="bank-exclude" data-id="${l.id}">Exclude</button></div>` : ""}</td></tr>`;
+            <td>${canWrite ? `<div class="row"><button data-action="bank-record" data-id="${l.id}">Record</button><button class="link" data-action="bank-exclude" data-id="${l.id}">Exclude</button><button class="link" data-action="rule-from-line" data-id="${l.id}" data-text="${esc(ruleWords(l.description))}" data-dir="${amt > 0n ? "in" : "out"}">Make a rule</button>${fileButton("bank_line", l.id, files[l.id])}</div>` : ""}</td></tr>
+            ${fileRow("bank_line", l.id, 5)}`;
           if (l.status === "posted") return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}
             <td>${l.documentNumber ? `Payment · ${esc(l.documentNumber)}` : `${esc(l.categoryAccount)} · ${esc(state.entity.accounts.find((a) => a.code === l.categoryAccount)?.name ?? "")}`}<div class="hash">by ${esc((l.decidedBy ?? "").replace("user:", ""))}</div></td>
-            <td>${canWrite && !l.documentNumber ? `<form data-form="bank-undo" data-id="${l.id}" class="row"><input name="reason" placeholder="Reason" required style="width:140px"><button class="secondary" type="submit">Undo</button></form>` : ""}</td></tr>`;
+            <td><div class="row">${canWrite && !l.documentNumber ? `<form data-form="bank-undo" data-id="${l.id}" class="row"><input name="reason" placeholder="Reason" required style="width:140px"><button class="secondary" type="submit">Undo</button></form>` : ""}${fileButton("bank_line", l.id, files[l.id])}</div></td></tr>
+            ${fileRow("bank_line", l.id, 5)}`;
           return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}<td></td>
             <td>${canWrite ? `<button class="secondary" data-action="bank-restore" data-id="${l.id}">Restore</button>` : ""}</td></tr>`;
         }).join("") || `<tr><td colspan="5" class="muted">${bankUi.status === "new" ? "Nothing to review. Import a statement to get started." : "Nothing here."}</td></tr>`}</tbody>
       </table></div>
-    </div>`);
+    </div>
+    ${rulesPanel(rules, cats, banks, canWrite)}`);
+}
+
+/** The first word or two of a bank description, as a starting point for a rule. */
+function ruleWords(d) {
+  const words = d.replace(/[^A-Za-z0-9&' ]+/g, " ").trim().split(/\s+/).filter((w) => !/^\d+$/.test(w));
+  return words.slice(0, words[0]?.length > 4 ? 1 : 2).join(" ");
+}
+
+function rulesPanel(rules, cats, banks, canWrite) {
+  const dir = { any: "In or out", in: "Money in", out: "Money out" };
+  const range = (r) => (r.minMinor !== null || r.maxMinor !== null ? `${r.minMinor !== null ? usd(r.minMinor) : "any"} to ${r.maxMinor !== null ? usd(r.maxMinor) : "any"}` : "Any amount");
+  return `<div class="panel" id="bank-rules">
+    <h2>Bank rules</h2>
+    <p class="muted">A rule sends lines whose description contains certain words to a category. It can suggest the category for you to confirm, or record matching lines as soon as they're imported. The oldest matching rule wins; invoices and bills with the same amount are suggested first.</p>
+    ${rules.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Description contains</th><th>Direction</th><th>Amount</th><th>Category</th><th>What it does</th><th class="num">Used</th><th></th></tr></thead>
+      <tbody>${rules.map((r) => `<tr class="${r.active ? "" : "muted"}">
+        <td><strong>${esc(r.matchText)}</strong>${r.bankAccount ? `<div class="hash">only account ${esc(r.bankAccount)}</div>` : ""}</td>
+        <td>${dir[r.direction]}</td><td>${range(r)}</td><td>${esc(r.account)} · ${esc(r.accountName)}</td>
+        <td>${r.active ? (r.autoRecord ? "Records on import" : "Suggests") : "Off"}</td><td class="num">${r.appliedCount}</td>
+        <td>${canWrite && r.active ? `<button class="link" data-action="rule-off" data-id="${r.id}">Turn off</button>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div>` : ""}
+    ${canWrite ? `<form data-form="bank-rule" class="row" style="margin-top:12px">
+      <label>Description contains<input name="matchText" required minlength="2" maxlength="100" placeholder="GUSTO"></label>
+      <label>Direction<select name="direction"><option value="any">In or out</option><option value="in">Money in</option><option value="out">Money out</option></select></label>
+      <label>Category<select name="account" required><option value="">Choose…</option>${cats.filter((a) => a.subtype !== "bank").map((a) => `<option value="${a.code}">${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>
+      <label>From $<input name="min" inputmode="decimal" style="width:90px" placeholder="any"></label>
+      <label>To $<input name="max" inputmode="decimal" style="width:90px" placeholder="any"></label>
+      ${banks.length > 1 ? `<label>Bank account<select name="bankAccount"><option value="">Any</option>${banks.map((a) => `<option value="${a.code}">${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>` : ""}
+      <label class="check"><input type="checkbox" name="autoRecord"> Record matching lines on import</label>
+      <button type="submit">Add rule</button>
+    </form>` : ""}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- files
+
+const FILE_ACCEPT = "application/pdf,image/jpeg,image/png,image/webp,image/heic,image/gif,.heic";
+
+/** A paperclip button that shows (and adds) the files on a record. */
+function fileButton(type, id, n = 0) {
+  return `<button class="link" data-action="files-toggle" data-type="${type}" data-id="${id}">${n ? `Files (${n})` : "Attach"}</button>`;
+}
+
+/** The hidden row a fileButton opens, filled when it opens. */
+function fileRow(type, id, cols) {
+  return `<tr hidden data-files="${id}"><td colspan="${cols}"><div data-files-box="${id}" data-type="${type}" class="muted">Loading…</div></td></tr>`;
+}
+
+async function fillFiles(box) {
+  const type = box.dataset.type, id = box.dataset.filesBox;
+  const r = await api(entPath(`/attachments?type=${type}&id=${id}`));
+  const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  box.classList.remove("muted");
+  box.innerHTML = `${r.attachments.map((a) => `<div class="row" style="gap:12px">
+      <a href="${entPath(`/attachments/${a.id}`)}" target="_blank" rel="noopener">${esc(a.fileName)}</a>
+      <span class="hash">${Math.max(1, Math.round(a.sizeBytes / 1024))} KB · ${esc(when(a.uploadedAt))} · ${esc(a.uploadedBy.replace("user:", ""))}</span>
+      ${canWrite ? `<button class="link" data-action="file-remove" data-id="${a.id}" data-box="${id}">Remove</button>` : ""}
+    </div>`).join("") || `<div class="muted">No files yet.</div>`}
+    ${canWrite ? (r.enabled ? `<label class="row" style="margin-top:8px">Add a receipt or PDF (up to 4 MB)<input type="file" accept="${FILE_ACCEPT}" data-upload="${type}" data-id="${id}"></label>`
+      : `<div class="hash">File storage isn't set up on this site yet.</div>`) : ""}`;
+}
+
+async function uploadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 4 * 1024 * 1024) throw new Error("Files can be up to 4 MB. A phone photo saved as JPEG is usually well under.");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  input.disabled = true;
+  await api(entPath("/attachments"), { body: { objectType: input.dataset.upload, objectId: input.dataset.id, fileName: file.name, data: btoa(bin) } });
+  toast(`${file.name} attached`);
+  await fillFiles(document.querySelector(`[data-files-box="${input.dataset.id}"]`));
 }
 
 // ------------------------------------------------------------ overview
@@ -1586,7 +1668,7 @@ function backupPanel(bk) {
 
 // ------------------------------------------------------------- reports
 
-const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"]];
+const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["cf", "Cash flows"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"]];
 const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all" };
 
 const RANGE_PRESETS = [["this-month", "This month"], ["last-month", "Last month"], ["this-quarter", "This quarter"], ["last-quarter", "Last quarter"], ["this-year", "This year to date"], ["last-year", "Last year"], ["custom", "Custom dates"]];
@@ -1630,6 +1712,7 @@ function reportDefaults() {
 
 function reportQuery() {
   if (rep.tab === "pl") return ["/reports/profit-and-loss", `from=${rep.from}&to=${rep.to}`, `profit-and-loss-${rep.from}-to-${rep.to}`];
+  if (rep.tab === "cf") return ["/reports/cash-flow", `from=${rep.from}&to=${rep.to}`, `cash-flow-${rep.from}-to-${rep.to}`];
   if (rep.tab === "bs") return ["/reports/balance-sheet", `asOf=${rep.asOf}`, `balance-sheet-${rep.asOf}`];
   if (rep.tab === "st") return ["/reports/sales-tax", `from=${rep.from}&to=${rep.to}`, `sales-tax-${rep.from}-to-${rep.to}`];
   if (rep.tab === "gl") return ["/reports/general-ledger", `account=${encodeURIComponent(rep.account)}&from=${rep.from}&to=${rep.to}`, `general-ledger-${rep.account}-${rep.from}-to-${rep.to}`];
@@ -1654,7 +1737,7 @@ async function reportsView(id) {
   await loadEntity(id);
   reportDefaults();
   const [path, q] = reportQuery();
-  const range = ["pl", "gl", "st"].includes(rep.tab);
+  const range = ["pl", "cf", "gl", "st"].includes(rep.tab);
   let body;
   if (rep.tab === "pl") {
     const pl = await api(entPath(`${path}?${q}`));
@@ -1674,6 +1757,25 @@ async function reportsView(id) {
       <tr><td></td><td>Current year earnings</td><td class="num">${usd(bs.currentYearEarningsMinor)}</td></tr>
       ${totalRow("Total equity", bs.totalEquityMinor)}</tbody>
       <tfoot><tr><td></td><td>Liabilities and equity</td><td class="num">${usd(BigInt(bs.totalLiabilitiesMinor) + BigInt(bs.totalEquityMinor))}</td></tr></tfoot></table>`;
+  } else if (rep.tab === "cf") {
+    const cf = await api(entPath(`${path}?${q}`));
+    const rows = (xs, prefix = "") => xs.map((r) => `<tr><td class="mono">${r.code}</td><td>${prefix}${esc(r.name)}</td><td class="num">${usd(r.amountMinor)}</td></tr>`).join("");
+    const none = (xs) => (xs.length ? "" : `<tr><td></td><td class="muted">None</td><td></td></tr>`);
+    body = `${cf.tiesOut ? "" : `<div class="alert bad">The net change doesn't match the change in cash. Check the trial balance.</div>`}
+      <p class="muted">Indirect method: net income, adjusted for the change in each balance sheet account. Growth in an asset used cash; growth in a liability or equity brought it in.</p>
+      <table><tbody>
+        <tr><th colspan="3">Operating activities</th></tr>
+        <tr><td></td><td>Net income</td><td class="num">${usd(cf.netIncomeMinor)}</td></tr>
+        ${rows(cf.operating, "Change in ")}
+        ${totalRow("Net cash from operating activities", cf.operatingMinor)}
+        <tr><th colspan="3">Investing activities</th></tr>${rows(cf.investing)}${none(cf.investing)}
+        ${totalRow("Net cash from investing activities", cf.investingMinor)}
+        <tr><th colspan="3">Financing activities</th></tr>${rows(cf.financing)}${none(cf.financing)}
+        ${totalRow("Net cash from financing activities", cf.financingMinor)}
+        ${cf.unclassified.length ? `<tr><th colspan="3">Not classified</th></tr>${rows(cf.unclassified)}${totalRow("Total not classified", cf.unclassifiedMinor)}` : ""}
+        ${totalRow("Net change in cash", cf.netChangeMinor)}
+        <tr><td></td><td>Cash at ${longDate(cf.from)}</td><td class="num">${usd(cf.cashStartMinor)}</td></tr>
+      </tbody><tfoot><tr><td></td><td>Cash at ${longDate(cf.to)}</td><td class="num">${usd(cf.cashEndMinor)}</td></tr></tfoot></table>`;
   } else if (rep.tab === "st") {
     const r = await api(entPath(`${path}?${q}`));
     const line = (label, minor, note = "") => `<tr><td>${label}${note ? `<div class="hash">${note}</div>` : ""}</td><td class="num">${usd(minor)}</td></tr>`;
@@ -2974,6 +3076,7 @@ document.addEventListener("input", (ev) => {
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.dataset.upload) uploadFile(t).catch((err) => { t.disabled = false; toast(err.message); });
   if (t.name === "country" && t.closest("form[data-form=entity]")) {
     t.form.elements.namedItem("region").innerHTML = regionOptions(t.value);
     t.form.querySelector("[data-region-label]").textContent = countryOf(t.value)?.regionLabel ?? "State";
@@ -3159,6 +3262,29 @@ document.addEventListener("click", async (ev) => {
       if (document.querySelectorAll("#doc-lines tr").length > 1) b.closest("tr").remove();
       updateDocTotals();
       if (document.querySelector("form[data-form=document][data-kind=invoice]") || useTaxOn()) scheduleTaxPreview();
+    } else if (a === "files-toggle") {
+      const row = document.querySelector(`tr[data-files="${b.dataset.id}"]`) ?? document.querySelector(`[data-files="${b.dataset.id}"]`);
+      row.hidden = !row.hidden;
+      if (!row.hidden) await fillFiles(row.querySelector("[data-files-box]"));
+    } else if (a === "file-remove") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remove this file? Click again"; return; }
+      b.disabled = true;
+      await api(entPath(`/attachments/${b.dataset.id}/remove`), { body: {} });
+      toast("File removed");
+      await fillFiles(document.querySelector(`[data-files-box="${b.dataset.box}"]`));
+    } else if (a === "rule-from-line") {
+      const form = document.querySelector("form[data-form=bank-rule]");
+      form.elements.namedItem("matchText").value = b.dataset.text;
+      form.elements.namedItem("direction").value = b.dataset.dir;
+      const choice = document.querySelector(`[data-line-choice="${b.dataset.id}"]`)?.value ?? "";
+      if (choice.startsWith("acct:")) form.elements.namedItem("account").value = choice.slice(5);
+      form.scrollIntoView({ behavior: "smooth", block: "center" });
+      form.elements.namedItem("matchText").focus();
+    } else if (a === "rule-off") {
+      b.disabled = true;
+      await api(entPath(`/bank-rules/${b.dataset.id}/off`), { body: {} });
+      toast("Rule turned off");
+      await bankView(state.entity.entity.id);
     } else if (a === "estimate-email") {
       b.disabled = true;
       const r = await api(entPath(`/estimates/${b.dataset.id}/email`), { body: {} });
@@ -3583,8 +3709,12 @@ document.addEventListener("submit", async (ev) => {
       const csv = file ? await file.text() : d.csv;
       if (!csv?.trim()) throw new Error("Choose a CSV file or paste one");
       const r = await api(entPath("/bank-imports"), { body: { bankAccount: bankUi.account, csv, fileName: file?.name ?? "pasted" } });
-      toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
+      toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.autoRecorded ? ` (${r.autoRecorded} recorded by your rules)` : ""}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
       bankUi.status = "new";
+      await bankView(state.entity.entity.id);
+    } else if (kind === "bank-rule") {
+      await api(entPath("/bank-rules"), { body: { ...d, autoRecord: Boolean(f.querySelector("[name=autoRecord]").checked) } });
+      toast(`Rule added. Lines containing "${d.matchText}" now go to ${d.account}`);
       await bankView(state.entity.entity.id);
     } else if (kind === "bank-undo") {
       await api(entPath(`/bank-lines/${f.dataset.id}/undo`), { body: { date: bookDate(), reason: d.reason } });

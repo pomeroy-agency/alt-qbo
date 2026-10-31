@@ -32,6 +32,9 @@ const TABLES: [string, string][] = [
   ["customer_emails", "SELECT * FROM customer_emails WHERE entity_id = $1 ORDER BY sent_at"],
   ["bank_imports", "SELECT * FROM bank_imports WHERE entity_id = $1 ORDER BY created_at"],
   ["bank_lines", "SELECT * FROM bank_lines WHERE entity_id = $1 ORDER BY txn_date, created_at"],
+  ["bank_rules", "SELECT * FROM bank_rules WHERE entity_id = $1 ORDER BY created_at"],
+  // What each attached file is and its hash; the files themselves are in their own store.
+  ["attachments", "SELECT * FROM attachments WHERE entity_id = $1 ORDER BY uploaded_at"],
   ["reconciliations", "SELECT * FROM reconciliations WHERE entity_id = $1 ORDER BY statement_date"],
   ["reconciliation_lines", "SELECT * FROM reconciliation_lines WHERE entity_id = $1 ORDER BY reconciliation_id, journal_line_id"],
   // Social Security and bank account numbers stay out; only their last four digits are copied.

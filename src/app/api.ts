@@ -8,6 +8,8 @@ import {
   FREQUENCIES, acceptEstimate, createEstimate, createRecurring, customerEmailSettings, declineEstimate, documentEmails, emailDocument, emailEstimate,
   firstOwnerEmail, getEstimate, listEstimates, listRecurring, nextDate, setCustomerEmailSettings, stopRecurring, viewByToken, type Frequency,
 } from "../core/invoicing.js";
+import { ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES, addAttachment, attachmentCounts, listAttachments, readAttachment, removeAttachment, type AttachmentObject, type FileStore } from "../core/attachments.js";
+import { createBankRule, listBankRules, switchOffBankRule, type RuleDirection } from "../core/bank-rules.js";
 import { aging, createContact, getDocument, listContacts, listDocuments, priceLine, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import {
   cleanAddress, createItem, currentCategories, decideSalesTax, decideUseTax, explainTax, explainUseTax, issueInvoice, listItems, recordBill, salesTaxReport, setBusinessAddress,
@@ -15,7 +17,7 @@ import {
 } from "../core/sales-tax.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
-import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
+import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv, cashFlowStatement, cashFlowCsv } from "../core/statements.js";
 import { backupEntity } from "../core/backup.js";
 import { listRestorePoints, readRestorePoint, type BackupStore } from "../core/nightly-backups.js";
 import {
@@ -84,6 +86,8 @@ export interface ApiOptions {
   newsletter?: NewsletterConfig;
   /** The Pomeroy account hub: where TrailBook reports each organisation's status (hub.ts). */
   hub?: HubOptions;
+  /** Where receipts and other attached files are kept (Netlify Blobs in production). Without it, files can't be added. */
+  files?: FileStore;
   /** Starts the newsletter's background worker. */
   startNewsletterJob?: (task: NewsletterTask) => Promise<void>;
 }
@@ -1107,6 +1111,98 @@ route("POST", "/api/orgs/:org/entities/:entity/recurring/:template/stop", async 
   json(await tenant(ctx, (tx) => stopRecurring(tx, { orgId: ctx.orgId, entityId: p.entity!, templateId: p.template!, actor: ctx.actor }))),
 );
 
+
+// ---------------------------------------------------------- bank rules
+
+route("GET", "/api/orgs/:org/entities/:entity/bank-rules", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ rules: await listBankRules(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-rules", async (req, p, ctx) => {
+  const b = await body(req);
+  const rule = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createBankRule(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, matchText: str(b.matchText, "words to look for", 100),
+      direction: (["any", "in", "out"].includes(b.direction) ? b.direction : "any") as RuleDirection,
+      min: typeof b.min === "string" ? b.min : undefined, max: typeof b.max === "string" ? b.max : undefined,
+      bankAccount: typeof b.bankAccount === "string" && b.bankAccount ? b.bankAccount.slice(0, 40) : undefined,
+      account: str(b.account, "account", 40), autoRecord: Boolean(b.autoRecord),
+      memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : undefined, actor: ctx.actor,
+    });
+  });
+  return json(rule, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-rules/:rule/off", async (_req, p, ctx) => {
+  await tenant(ctx, (tx) => switchOffBankRule(tx, { orgId: ctx.orgId, entityId: p.entity!, ruleId: p.rule!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
+// ---------------------------------------------------------- attachments
+
+const ATTACH_OBJECTS: AttachmentObject[] = ["document", "bank_line", "journal_entry"];
+
+function filesFor(ctx: Ctx): FileStore {
+  if (!ctx.opts.files) throw new HttpError(503, "file storage isn't set up on this site yet");
+  return ctx.opts.files;
+}
+
+route("GET", "/api/orgs/:org/entities/:entity/attachments", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const type = q.get("type") as AttachmentObject;
+  if (!ATTACH_OBJECTS.includes(type)) throw new HttpError(400, "unknown record type");
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const id = q.get("id");
+    if (!id) return json({ counts: await attachmentCounts(tx, p.entity!, type) });
+    return json({ attachments: await listAttachments(tx, p.entity!, type, uuid(id, "record")), enabled: Boolean(ctx.opts.files) });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/attachments", async (req, p, ctx) => {
+  const b = await body(req);
+  const type = b.objectType as AttachmentObject;
+  if (!ATTACH_OBJECTS.includes(type)) throw new HttpError(400, "unknown record type");
+  if (typeof b.data !== "string" || !b.data) throw new HttpError(400, "choose a file");
+  if (b.data.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4) throw new HttpError(413, "files can be up to 4 MB");
+  const data = new Uint8Array(Buffer.from(b.data, "base64"));
+  const store = filesFor(ctx);
+  const a = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return addAttachment(tx, store, {
+      orgId: ctx.orgId, entityId: p.entity!, objectType: type, objectId: uuid(b.objectId, "record"),
+      fileName: typeof b.fileName === "string" ? b.fileName : "receipt", data, actor: ctx.actor,
+    });
+  });
+  return json(a, 201);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/attachments/:attachment", async (_req, p, ctx) => {
+  const store = filesFor(ctx);
+  const { meta, data } = await tenant(ctx, (tx) => readAttachment(tx, store, p.entity!, p.attachment!));
+  if (!(ATTACHMENT_TYPES as readonly string[]).includes(meta.contentType)) throw new HttpError(415, "unsupported file");
+  return new Response(new Uint8Array(data) as unknown as BodyInit, {
+    headers: {
+      "content-type": meta.contentType,
+      // Opened in its own tab for viewing, but never run as a page.
+      "content-disposition": `inline; filename="${meta.fileName.replace(/[^\w.-]+/g, "-")}"`,
+      "content-security-policy": "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+      "x-content-type-options": "nosniff",
+      "cache-control": "private, no-store",
+    },
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/attachments/:attachment/remove", async (_req, p, ctx) => {
+  const store = filesFor(ctx);
+  await tenant(ctx, (tx) => removeAttachment(tx, store, { orgId: ctx.orgId, entityId: p.entity!, attachmentId: p.attachment!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
 // -------------------------------------------------------------------- bank
 
 const writeOpts = (ctx: Ctx) => ({ allowSoftClosed: ["owner", "admin", "accountant"].includes(ctx.role) });
@@ -1278,6 +1374,16 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/profit-and-loss", async (r
     return profitAndLoss(tx, p.entity!, from, to);
   });
   return q.get("format") === "csv" ? csvResponse(profitAndLossCsv(pl), `profit-and-loss-${from}-to-${to}.csv`) : json(pl);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/reports/cash-flow", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const from = date(q.get("from"), "from"), to = date(q.get("to"), "to");
+  const cf = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return cashFlowStatement(tx, p.entity!, from, to);
+  });
+  return q.get("format") === "csv" ? csvResponse(cashFlowCsv(cf), `cash-flow-${from}-to-${to}.csv`) : json(cf);
 });
 
 route("GET", "/api/orgs/:org/entities/:entity/reports/balance-sheet", async (req, p, ctx) => {

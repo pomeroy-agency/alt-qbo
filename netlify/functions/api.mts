@@ -6,6 +6,7 @@ import { mailerFromEnv } from "../../src/app/mail.js";
 import { cdtfaRateLookup } from "../../src/app/cdtfa.js";
 import { getStore } from "@netlify/blobs";
 import { netlifyBackupStore } from "../../src/app/backup-store.js";
+import type { FileStore } from "../../src/core/attachments.js";
 import { backupKeyFromEnv } from "../../src/core/nightly-backups.js";
 import { billingFromEnv } from "../../src/app/billing-config.js";
 import { hubFromEnv } from "../../src/app/hub.js";
@@ -38,7 +39,20 @@ const newsletter = newsletterFromEnv(process.env, mailer, appUrl);
 // The worker runs on this deploy's own address, so a preview's page starts the preview's worker.
 const workerUrl = process.env.CONTEXT === "production" ? process.env.URL : process.env.DEPLOY_PRIME_URL || process.env.URL;
 
+// Receipts and other attached files: their own Blobs store, apart from the database.
+// The store is opened on first use, inside a request, where Blobs has its context.
+const fileBlobs = () => getStore({ name: "attachments", consistency: "strong" });
+const files: FileStore = {
+  put: async (key, data) => { await fileBlobs().set(key, new Uint8Array(data).buffer as ArrayBuffer); },
+  get: async (key) => {
+    const b = await fileBlobs().get(key, { type: "arrayBuffer" });
+    return b ? new Uint8Array(b) : null;
+  },
+  delete: async (key) => { await fileBlobs().delete(key); },
+};
+
 export default async (req: Request) => handleApi(req, pool, {
+  files,
   signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing, adEvents: billing.adEvents, oauthClients, milepost,
   hub, newsletter, startNewsletterJob: workerUrl ? (task) => startNewsletterJob(workerUrl, task) : undefined,
   backups: backupKey ? { store: netlifyBackupStore(getStore({ name: "backups", consistency: "strong" })), key: backupKey } : undefined,
