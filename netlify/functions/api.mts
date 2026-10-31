@@ -11,10 +11,10 @@ import { billingFromEnv } from "../../src/app/billing-config.js";
 import { hubFromEnv } from "../../src/app/hub.js";
 import { oauthClientsFromEnv } from "../../src/app/oauth.js";
 import { newsletterFromEnv, startNewsletterJob } from "../../src/newsletter/config.js";
-import "../../src/db/pool.js";
+import { strictSsl } from "../../src/db/pool.js";
 
 // One pool per function instance, reused across invocations.
-const pool = new pg.Pool({ connectionString: getConnectionString(), max: 3 });
+const pool = new pg.Pool({ connectionString: strictSsl(getConnectionString()), max: 3 });
 
 const mailer = mailerFromEnv();
 // Links in emails use the site's configured address: APP_URL if set, else Netlify's own URL for this deploy.

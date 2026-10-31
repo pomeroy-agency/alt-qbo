@@ -7,7 +7,7 @@ import { mailerFromEnv } from "../../src/app/mail.js";
 import { heldCharges, runBilling } from "../../src/billing/billing.js";
 import { hubFromEnv, pushChanged } from "../../src/app/hub.js";
 import { pacificToday } from "../../src/payroll/business-days.js";
-import "../../src/db/pool.js";
+import { strictSsl } from "../../src/db/pool.js";
 
 // Every morning: renew subscriptions that are due, bill people paid on yearly
 // payroll plans, and retry failed payments. Charges needing a person are
@@ -23,7 +23,7 @@ export default async () => {
     console.log("billing skipped: STRIPE_SECRET_KEY, BILLING_SELLER_ORG_ID and BILLING_SELLER_ENTITY_ID are needed");
     return;
   }
-  const pool = new pg.Pool({ connectionString: getConnectionString(), max: 2 });
+  const pool = new pg.Pool({ connectionString: strictSsl(getConnectionString()), max: 2 });
   try {
     const today = pacificToday();
     if (cfg.gateway && cfg.seller) {
