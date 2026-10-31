@@ -6,7 +6,7 @@ import { addDays } from "../src/billing/plans.js";
 import { pacificToday } from "../src/payroll/business-days.js";
 import { getDocument } from "../src/core/documents.js";
 import { withTenant } from "../src/db/pool.js";
-import { pool, setupCaliforniaBusiness } from "./helpers.js";
+import { passSecondFactor, pool, setupCaliforniaBusiness } from "./helpers.js";
 
 const BASE = "https://alt-qbo.test";
 const sent: { to: string; subject: string; text: string }[] = [];
@@ -53,7 +53,7 @@ let n = 0;
 async function customer(plan: "books" | "books_payroll" = "books", interval: "month" | "year" = "month") {
   const email = `bill${Date.now()}${n++}@example.com`;
   const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Owner", email, password: "long-enough-pw", orgName: `Billed ${n}`, inviteCode: "c" } });
-  const cookie = su.cookie!;
+  const cookie = await passSecondFactor(su.cookie!);
   const orgId = (await call("/api/me", { cookie })).data.orgs[0].id as string;
   const o = (p: string) => `/api/orgs/${orgId}${p}`;
   expect((await call(o("/billing/details"), { cookie, body: { name: `Billed ${n} LLC`, email, address: { line1: "200 N Spring St", city: "Los Angeles", state: "CA", zip: "90012" } } })).status).toBe(200);

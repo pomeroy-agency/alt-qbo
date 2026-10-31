@@ -26,3 +26,14 @@ export async function setupCaliforniaBusiness(name = "Sunset Design Studio") {
   );
   return { org, entity };
 }
+
+/**
+ * Marks a signed-in test session as having passed the second factor, which
+ * payroll, bank details and tax filings need. Takes the "name=token" cookie.
+ */
+export async function passSecondFactor(cookie: string): Promise<string> {
+  const token = decodeURIComponent(cookie.split("=").slice(1).join("="));
+  const { createHash } = await import("node:crypto");
+  await pool.query("UPDATE sessions SET mfa_at = now() WHERE token_hash = $1", [createHash("sha256").update(token).digest("hex")]);
+  return cookie;
+}

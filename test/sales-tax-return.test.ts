@@ -5,7 +5,7 @@ import { LedgerError } from "../src/core/errors.js";
 import { createContact, voidDocument } from "../src/core/documents.js";
 import { issueInvoice, recordBill, setBusinessAddress, type RateLookup } from "../src/core/sales-tax.js";
 import { prepareSalesTaxReturn, returnPeriod, returnPeriods, salesTaxSettings, setSalesTaxSettings } from "../src/core/sales-tax-return.js";
-import { accountant, bookkeeper, owner, pool, setupCaliforniaBusiness } from "./helpers.js";
+import { accountant, bookkeeper, owner, passSecondFactor, pool, setupCaliforniaBusiness } from "./helpers.js";
 
 const SF = { line1: "1 Market St", city: "San Francisco", state: "CA", zip: "94105" };
 const lookup: RateLookup = async (a) => {
@@ -190,7 +190,7 @@ describe("the business's own sales tax", () => {
       return { status: res.status, data: await res.json(), cookie: res.headers.get("set-cookie")?.split(";")[0] };
     };
     const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `str${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Return Co", inviteCode: "c" } });
-    const cookie = su.cookie!;
+    const cookie = await passSecondFactor(su.cookie!);
     const orgId = (await call("/api/me", { cookie })).data.orgs[0].id;
     const ent = await call(`/api/orgs/${orgId}/entities`, { cookie, body: { legalName: "Return Studio LLC", entityType: "llc_single", region: "CA", firstFiscalYear: 2026 } });
     const base = `/api/orgs/${orgId}/entities/${ent.data.id}`;

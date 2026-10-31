@@ -52,7 +52,7 @@ import { NewsletterError, requestSubscription, addNote, approveIssue, cancelIssu
 import { BrevoError } from "../newsletter/brevo.js";
 import type { NewsletterTask } from "../newsletter/config.js";
 import {
-  AuthError, SESSION_COOKIE, checkSignInAllowed, createSession, recordSignIn, endSession, hashPassword, membershipRole, normaliseEmail,
+  AuthError, SESSION_COOKIE, checkSignInAllowed, createSession, recordSignIn, endSession, hashPassword, markSecondFactor, membershipRole, normaliseEmail,
   sessionUser, verifyPassword, type SessionUser,
 } from "./auth.js";
 
@@ -89,7 +89,7 @@ function appUrl(req: Request, opts: ApiOptions): string {
 }
 
 class HttpError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly code?: string) {
     super(message);
   }
 }
@@ -1894,11 +1894,11 @@ async function sendEmailLink(req: Request, pool: pg.Pool, opts: ApiOptions, emai
 }
 
 /** Signs someone in, joining an invitation if they came through one. */
-async function startSession(pool: pg.Pool, userId: string, inviteToken?: unknown): Promise<Response> {
+async function startSession(pool: pg.Pool, userId: string, inviteToken?: unknown, secondFactor = false): Promise<Response> {
   const joined = typeof inviteToken === "string" && inviteToken
     ? (await withSystem(pool, (tx) => acceptInvitation(tx, { token: inviteToken, userId }))).orgId
     : undefined;
-  const s = await createSession(pool, userId);
+  const s = await createSession(pool, userId, { secondFactor });
   return json({ ok: true, joined }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
 }
 
@@ -1912,6 +1912,32 @@ async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): P
     return json({ ok: true, mfaRequired: true, ticket: await issueMfaTicket(pool, userId) });
   }
   return startSession(pool, userId, inviteToken);
+}
+
+/**
+ * Payroll, bank details and tax filings need a session that passed the
+ * second factor, whatever the organisation's own setting. Reading the
+ * payroll pages stays open; the direct deposit file (bank numbers) and the
+ * prepared filings count as these too. The example business is practice
+ * data, so it's left out.
+ */
+const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings)$/;
+const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return)$/;
+
+export function needsSecondFactor(method: string, path: string): boolean {
+  return method === "GET" ? SECOND_FACTOR_READS.test(path) : SECOND_FACTOR_PATHS.test(path);
+}
+
+async function requireSecondFactor(pool: pg.Pool, orgId: string, user: SessionUser): Promise<void> {
+  if (user.secondFactor) return;
+  const { rows } = await pool.query(
+    "SELECT o.name = $3 AS example, u.totp_enabled_at IS NOT NULL AS has_mfa FROM organizations o, users u WHERE o.id = $1 AND u.id = $2",
+    [orgId, user.id, EXAMPLE_ORG_NAME],
+  );
+  if (rows[0]?.example) return;
+  throw new HttpError(403, rows[0]?.has_mfa
+    ? "payroll, bank details and tax filings need your two-factor code; sign out and sign in again with it"
+    : "payroll, bank details and tax filings need two-factor sign-in; turn it on under Your account first", "second_factor_required");
 }
 
 async function requireMfaIfOrgDoes(pool: pg.Pool, orgId: string, userId: string): Promise<void> {
@@ -1943,6 +1969,8 @@ async function mfaRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOpt
   }
   if (path === "/api/me/mfa/enable") {
     const recoveryCodes = await withSystem(pool, (tx) => enableMfa(tx, user.id, b.code));
+    // The code just entered counts as this session's second factor.
+    await markSecondFactor(pool, cookie(req, SESSION_COOKIE));
     await notify(true);
     return json({ ok: true, recoveryCodes });
   }
@@ -2096,7 +2124,7 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     const b = await body(req);
     const out = await withSystem(pool, (tx) => redeemMfaTicket(tx, b.ticket, b.code));
     if ("error" in out) throw new AuthError(out.error);
-    return startSession(pool, out.userId, b.inviteToken);
+    return startSession(pool, out.userId, b.inviteToken, true);
   }
   if (req.method === "POST" && path === "/api/auth/logout") {
     await endSession(pool, cookie(req, SESSION_COOKIE));
@@ -2214,6 +2242,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       const role = await membershipRole(pool, user.id, params.org!);
       if (!role) throw new HttpError(404, "organisation not found");
       if (!path.endsWith("/leave")) await requireMfaIfOrgDoes(pool, params.org!, user.id);
+      if (needsSecondFactor(req.method, path)) await requireSecondFactor(pool, params.org!, user);
       if (req.method !== "GET" && opts.billing?.enforce && !ALWAYS_ALLOWED.test(path)) {
         const access = await checkAccess(pool, params.org!, opts.billing, pacificToday(), path);
         if (access.level === "read_only") throw new HttpError(402, access.reason!);
@@ -2224,7 +2253,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
     }
     return json({ error: "not found" }, 404);
   } catch (err) {
-    if (err instanceof HttpError) return json({ error: err.message }, err.status);
+    if (err instanceof HttpError) return json(err.code ? { error: err.message, code: err.code } : { error: err.message }, err.status);
     if (err instanceof AuthError) return json({ error: err.message }, err.status);
     if (err instanceof LedgerError) {
       const status = err.code === "FORBIDDEN" ? 403 : err.code === "IDEMPOTENCY_CONFLICT" ? 409 : 422;

@@ -239,4 +239,36 @@ describe("account hub", () => {
     await pool.query("UPDATE subscriptions SET period_start = $2, period_end = $3 WHERE org_id = $1", [c.orgId, addDays(pacificToday(), -400), addDays(pacificToday(), -370)]);
     expect((await fromHub.get(`/api/hub/status?org=${c.orgId}`)).data.org.access).toBe("read_only");
   });
+
+  it("records the hub's entitlements.changed notice, keeps the newest version, and answers with TrailBook's status", async () => {
+    const c = await customer();
+    const notice = (v: number) => ({ type: "entitlements.changed", trailbook_org_id: c.orgId, org_id: "hub-org-1", ent_version: v });
+    expect((await call("/api/hub/entitlements-changed", { body: notice(3) })).status).toBe(401);
+    const r = await fromHub.post("/api/hub/entitlements-changed", notice(3));
+    expect(r.status).toBe(200);
+    expect(r.data.org).toMatchObject({ trailbook_org_id: c.orgId, plan_key: "trailbook_books" });
+    // A late, older notice doesn't move the version back.
+    expect((await fromHub.post("/api/hub/entitlements-changed", notice(2))).status).toBe(200);
+    const row = (await pool.query("SELECT hub_org_id, ent_version FROM hub_pushes WHERE org_id = $1", [c.orgId])).rows[0];
+    expect(row).toMatchObject({ hub_org_id: "hub-org-1", ent_version: 3n });
+    expect((await fromHub.post("/api/hub/entitlements-changed", { ...notice(4), trailbook_org_id: "00000000-0000-0000-0000-000000000000" })).status).toBe(404);
+    expect((await fromHub.post("/api/hub/entitlements-changed", notice(0))).status).toBe(400);
+  });
+
+  it("signs a person out of every TrailBook session when the hub asks", async () => {
+    const c = await customer();
+    const second = await call("/api/auth/login", { body: { email: c.email, password: "long-enough-pw" } });
+    expect((await call("/api/me", { cookie: second.cookie })).status).toBe(200);
+    expect((await call("/api/hub/signout", { body: { email: c.email } })).status).toBe(401);
+    const out = await fromHub.post("/api/hub/signout", { email: c.email.toUpperCase() });
+    expect(out.data).toEqual({ ok: true, sessions_ended: 2 });
+    expect((await call("/api/me", { cookie: c.cookie })).status).toBe(401);
+    expect((await call("/api/me", { cookie: second.cookie })).status).toBe(401);
+    // By TrailBook user id, and for someone with no TrailBook account.
+    const again = await call("/api/auth/login", { body: { email: c.email, password: "long-enough-pw" } });
+    const userId = (await call("/api/me", { cookie: again.cookie })).data.user.id;
+    expect((await fromHub.post("/api/hub/signout", { trailbook_user_id: userId })).data.sessions_ended).toBe(1);
+    expect((await fromHub.post("/api/hub/signout", { email: "nobody@example.com" })).data.sessions_ended).toBe(0);
+    expect((await fromHub.post("/api/hub/signout", {})).status).toBe(400);
+  });
 });

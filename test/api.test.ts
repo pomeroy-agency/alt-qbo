@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleApi } from "../src/app/api.js";
-import { pool } from "./helpers.js";
+import { passSecondFactor, pool } from "./helpers.js";
 
 const BASE = "https://alt-qbo.test";
 const opts = { signupCode: "invite-123" };
@@ -28,7 +28,7 @@ async function signup(orgName = "Test Co") {
   const r = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Test User", email, password: "long-enough-pw", orgName, inviteCode: "invite-123" } });
   expect(r.status).toBe(201);
   const me = await call("/api/me", { cookie: r.cookie });
-  return { cookie: r.cookie!, email, orgId: me.data.orgs[0].id as string };
+  return { cookie: await passSecondFactor(r.cookie!), email, orgId: me.data.orgs[0].id as string };
 }
 
 /** Invites an email and has that person sign up through the link. Returns their session. */
@@ -37,7 +37,7 @@ async function join(s: { cookie: string; orgId: string }, email: string, role: s
   expect(inv.status).toBe(201);
   const r = await call("/api/auth/signup", { body: { acceptTerms: true, name: email.split("@")[0], email, password, inviteToken: inv.data.token } });
   expect(r.status).toBe(201);
-  return { cookie: r.cookie!, email, token: inv.data.token as string };
+  return { cookie: await passSecondFactor(r.cookie!), email, token: inv.data.token as string };
 }
 
 async function entity(s: { cookie: string; orgId: string }) {
