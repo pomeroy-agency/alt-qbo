@@ -1668,8 +1668,8 @@ function backupPanel(bk) {
 
 // ------------------------------------------------------------- reports
 
-const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["cf", "Cash flows"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"]];
-const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all" };
+const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["cf", "Cash flows"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"], ["yf", "Contractor forms"]];
+const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all", year: "" };
 
 const RANGE_PRESETS = [["this-month", "This month"], ["last-month", "Last month"], ["this-quarter", "This quarter"], ["last-quarter", "Last quarter"], ["this-year", "This year to date"], ["last-year", "Last year"], ["custom", "Custom dates"]];
 const ASOF_PRESETS = [["today", "Today"], ["end-last-month", "End of last month"], ["end-last-quarter", "End of last quarter"], ["end-last-year", "End of last year"], ["custom", "Custom date"]];
@@ -1710,7 +1710,11 @@ function reportDefaults() {
   if (rep.account !== "all" && !state.entity.accounts.some((a) => a.code === rep.account)) rep.account = "all";
 }
 
+/** Until March, the forms people are working on are last year's. */
+const formsYear = () => { const [y, m] = today().split("-").map(Number); return String(m <= 3 ? y - 1 : y); };
+
 function reportQuery() {
+  if (rep.tab === "yf") return ["/contractor-forms/prepared", `year=${rep.year || formsYear()}`, `contractor-forms-${rep.year || formsYear()}`];
   if (rep.tab === "pl") return ["/reports/profit-and-loss", `from=${rep.from}&to=${rep.to}`, `profit-and-loss-${rep.from}-to-${rep.to}`];
   if (rep.tab === "cf") return ["/reports/cash-flow", `from=${rep.from}&to=${rep.to}`, `cash-flow-${rep.from}-to-${rep.to}`];
   if (rep.tab === "bs") return ["/reports/balance-sheet", `asOf=${rep.asOf}`, `balance-sheet-${rep.asOf}`];
@@ -1733,13 +1737,55 @@ const sectionRows = (s) => `
   <tr><td></td><td><strong>Total ${esc(s.label.toLowerCase())}</strong></td><td class="num"><strong>${usd(s.totalMinor)}</strong></td></tr>`;
 const totalRow = (label, minor) => `<tr><td></td><td><strong>${label}</strong></td><td class="num"><strong>${usd(minor)}</strong></td></tr>`;
 
+const RECIPIENT_TYPES = [["individual", "Individual or sole proprietor"], ["llc", "LLC (not taxed as a corporation)"], ["partnership", "Partnership"], ["attorney", "Attorney or law firm"], ["corporation", "Corporation"], ["other", "Other"]];
+
+/** Contractors paid in a year: who gets a 1099-NEC (US) or T4A (Canada), and the 1096 or T4A Summary totals. */
+async function contractorFormsBody(year) {
+  const s = await api(entPath(`/contractor-forms?year=${year}`));
+  const us = s.form === "1099_nec";
+  const formName = us ? "1099-NEC" : "T4A";
+  const canSet = ["owner", "admin", "accountant"].includes(state.org.role);
+  const kinds = us ? [["ssn", "SSN"], ["ein", "EIN"]] : [["sin", "SIN"], ["bn", "Business number"]];
+  const editRow = (v) => `<tr hidden data-contractor-edit="${v.contactId}"><td colspan="5">
+    <form data-form="contractor-tax" data-id="${v.contactId}" class="row">
+      <label class="check"><input type="checkbox" name="gets" ${v.form ? "checked" : ""}> Gets a ${formName}</label>
+      ${us ? `<label>They are<select name="recipientType">${RECIPIENT_TYPES.map(([k, l]) => `<option value="${k}" ${v.recipientType === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}
+      <label>Number<select name="tinKind">${kinds.map(([k, l]) => `<option value="${k}" ${v.tinKind === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>${us ? "From their W-9" : "Their number"}<input name="tin" autocomplete="off" placeholder="${v.tinLast4 ? `On file, ends ${esc(v.tinLast4)}` : ""}" style="width:170px"></label>
+      <label style="flex:1">Legal name (if different)<input name="legalName" value="${esc(v.legalName ?? "")}"></label>
+      <button type="submit">Save</button>
+    </form>
+    <p class="hash">Leave the number blank to keep the one on file. It's stored encrypted; only the last four digits show here.</p></td></tr>`;
+  return `<p class="muted">${us
+      ? `Form 1099-NEC is for each unincorporated contractor you paid ${usd(s.thresholdMinor)} or more by cash, check or bank transfer in ${year}. Card and payment app payments are reported by the card company on a 1099-K instead.`
+      : `A T4A slip (box 048, fees for services) is for each contractor you paid more than ${usd(s.thresholdMinor)} in ${year}.`}
+      TrailBook prepares the figures from your bill payments; you or your accountant file them (${us ? "IRS IRIS or FIRE, or on paper with Form 1096" : "CRA Internet file transfer or My Business Account, with the T4A Summary"}) and send each contractor their copy by <strong>${longDate(s.dueDate)}</strong>.</p>
+    ${s.warnings.map((w) => `<div class="alert">${esc(w)}</div>`).join("")}
+    <div class="row" style="gap:24px;margin:12px 0">
+      <div><div class="muted">${formName} forms</div><div class="stat">${s.summary.forms}</div></div>
+      <div><div class="muted">${us ? "1096 total (box 5)" : "T4A Summary total (box 048)"}</div><div class="stat">${usd(s.summary.totalMinor)}</div></div>
+      <div><div class="muted">Payer ${us ? "EIN" : "business number"}</div><div class="stat mono">${esc(s.payer.tin ?? "Not set")}</div></div>
+    </div>
+    <table><thead><tr><th>Vendor</th><th>${us ? "SSN or EIN" : "SIN or BN"}</th><th class="num">Paid in ${year}</th><th>${formName}</th><th></th></tr></thead>
+    <tbody>${s.vendors.map((v) => `<tr><td>${esc(v.name)}${v.legalName ? `<div class="hash">${esc(v.legalName)}</div>` : ""}</td>
+        <td class="mono" style="white-space:nowrap">${v.tinLast4 ? `${esc(v.tinKind.toUpperCase())} ···${esc(v.tinLast4)}` : ""}</td>
+        <td class="num">${usd(v.paidMinor)}</td>
+        <td>${v.reportable ? `<strong>Due</strong>` : `<span class="muted">No</span>`}${v.notes.map((n) => `<div class="muted" style="font-size:13px">${esc(n)}</div>`).join("")}</td>
+        <td>${canSet ? `<button class="link" data-action="doc-toggle" data-form="contractor-edit" data-id="${v.contactId}">${v.form ? "Edit" : "Set up"}</button>` : ""}</td></tr>
+      ${canSet ? editRow(v) : ""}`).join("") || `<tr><td colspan="5" class="muted">No bill payments to vendors in ${year}.</td></tr>`}</tbody></table>
+    <p class="hash" style="margin-top:8px">Download CSV has masked numbers, for checking. ${canSet ? "Download for filing has the full numbers for your filing software; each download is logged." : ""}</p>`;
+}
+
 async function reportsView(id) {
   await loadEntity(id);
   reportDefaults();
   const [path, q] = reportQuery();
   const range = ["pl", "cf", "gl", "st"].includes(rep.tab);
   let body;
-  if (rep.tab === "pl") {
+  if (rep.tab === "yf") {
+    rep.year ||= formsYear();
+    body = await contractorFormsBody(rep.year);
+  } else if (rep.tab === "pl") {
     const pl = await api(entPath(`${path}?${q}`));
     const [rev, cor, opx, oi, oe] = pl.sections;
     body = `<table><tbody>${sectionRows(rev)}${sectionRows(cor)}${totalRow("Gross profit", pl.grossProfitMinor)}${sectionRows(opx)}
@@ -1825,13 +1871,16 @@ async function reportsView(id) {
     <div class="panel">
       <form data-form="report" class="row" style="margin-bottom:12px">
         ${rep.tab === "gl" ? `<label>Account<select name="account" data-autosubmit><option value="all">All accounts</option>${state.entity.accounts.map((a) => `<option value="${a.code}" ${a.code === rep.account ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>` : ""}
-        ${range
+        ${rep.tab === "yf"
+          ? `<label>Payments in<select name="year" data-autosubmit>${[0, 1, 2].map((n) => String(Number(formsYear()) + 1 - n)).map((y) => `<option ${y === rep.year ? "selected" : ""}>${y}</option>`).join("")}</select></label>`
+          : range
           ? `<label>Dates<select name="preset" data-autosubmit>${RANGE_PRESETS.map(([k, l]) => `<option value="${k}" ${rep.preset === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
              <label>From<input type="date" name="from" value="${rep.from}" required data-custom="preset"></label><label>To<input type="date" name="to" value="${rep.to}" required data-custom="preset"></label>`
           : `<label>As of<select name="asPreset" data-autosubmit>${ASOF_PRESETS.map(([k, l]) => `<option value="${k}" ${rep.asPreset === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
              <label>Date<input type="date" name="asOf" value="${rep.asOf}" required data-custom="asPreset"></label>`}
         <button type="submit" class="secondary">Update</button>
         <button type="button" data-action="report-csv">Download CSV</button>
+        ${rep.tab === "yf" && ["owner", "admin", "accountant"].includes(state.org.role) ? `<button type="button" class="secondary" data-action="report-csv" data-full="1" title="With full taxpayer numbers, for filing. Logged in the audit trail">Download for filing</button>` : ""}
       </form>
       <div class="table-wrap">${body}</div>
     </div>`);
@@ -3403,7 +3452,7 @@ document.addEventListener("click", async (ev) => {
       b.disabled = false;
     } else if (a === "report-csv") {
       const [path, q, name] = reportQuery();
-      const res = await api(entPath(`${path}?${q}&format=csv`), { raw: true });
+      const res = await api(entPath(`${path}?${q}&format=csv${b.dataset.full ? "&tin=full" : ""}`), { raw: true });
       if (!res.ok) throw new Error((await res.json()).error);
       const url = URL.createObjectURL(await res.blob());
       Object.assign(document.createElement("a"), { href: url, download: `${name}.csv` }).click();
@@ -3598,6 +3647,14 @@ document.addEventListener("submit", async (ev) => {
       Object.assign(rep, d);
       if (d.preset && d.preset !== "custom") [rep.from, rep.to] = presetRange(d.preset);
       if (d.asPreset && d.asPreset !== "custom") rep.asOf = presetAsOf(d.asPreset);
+      await reportsView(state.entity.entity.id);
+    } else if (kind === "contractor-tax") {
+      const gets = f.querySelector("[name=gets]").checked;
+      const form = gets ? (state.entity.entity.country === "CA" ? "t4a" : "1099_nec") : null;
+      await api(entPath(`/contacts/${f.dataset.id}/tax-form`), { body: {
+        form, recipientType: d.recipientType, tinKind: d.tinKind, legalName: d.legalName ?? "", ...(d.tin?.trim() ? { tin: d.tin.trim() } : {}),
+      } });
+      toast(gets ? "Saved" : "Won't get a form");
       await reportsView(state.entity.entity.id);
     } else if (kind === "journal-search") {
       jr.q = d.q.trim();

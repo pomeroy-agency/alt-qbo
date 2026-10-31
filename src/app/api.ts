@@ -17,6 +17,7 @@ import {
 } from "../core/sales-tax.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
+import { contractorFormsCsv, contractorSummary, getContractorInfo, prepareContractorForms, setContractorInfo, type RecipientType } from "../core/contractor-forms.js";
 import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv, cashFlowStatement, cashFlowCsv } from "../core/statements.js";
 import { backupEntity } from "../core/backup.js";
 import { listRestorePoints, readRestorePoint, type BackupStore } from "../core/nightly-backups.js";
@@ -1386,6 +1387,52 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/cash-flow", async (req, p,
   return q.get("format") === "csv" ? csvResponse(cashFlowCsv(cf), `cash-flow-${from}-to-${to}.csv`) : json(cf);
 });
 
+// ------------------------------------------------ contractors' year-end forms
+
+route("GET", "/api/orgs/:org/entities/:entity/contractor-forms", async (req, p, ctx) => {
+  const year = Number(new URL(req.url).searchParams.get("year"));
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json(await contractorSummary(tx, p.entity!, year));
+  });
+});
+
+/** The prepared 1099-NEC or T4A forms; full taxpayer numbers need the second factor. */
+route("GET", "/api/orgs/:org/entities/:entity/contractor-forms/prepared", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const year = Number(q.get("year"));
+  const forms = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return prepareContractorForms(tx, p.entity!, year, { full: q.get("tin") === "full", orgId: ctx.orgId, actor: ctx.actor });
+  });
+  if (q.get("format") === "csv") return csvResponse(contractorFormsCsv(forms), `${forms[0]?.form === "t4a" ? "t4a" : "1099-nec"}-${year}.csv`);
+  return json({ year, forms });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/contacts/:contact/tax-form", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ taxForm: await getContractorInfo(tx, p.contact!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/contacts/:contact/tax-form", async (req, p, ctx) => {
+  const b = await body(req);
+  const form = b.form === "1099_nec" || b.form === "t4a" ? b.form : b.form ? (() => { throw new HttpError(400, "pick 1099-NEC, T4A or none"); })() : null;
+  const info = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return setContractorInfo(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, contactId: p.contact!, form,
+      recipientType: typeof b.recipientType === "string" ? (b.recipientType as RecipientType) : undefined,
+      tin: typeof b.tin === "string" ? b.tin : undefined,
+      tinKind: typeof b.tinKind === "string" && b.tinKind ? (b.tinKind as "ssn" | "ein" | "sin" | "bn") : undefined,
+      legalName: typeof b.legalName === "string" ? b.legalName : undefined,
+      actor: ctx.actor,
+    });
+  });
+  return json({ taxForm: info });
+});
+
 route("GET", "/api/orgs/:org/entities/:entity/reports/balance-sheet", async (req, p, ctx) => {
   const q = new URL(req.url).searchParams;
   const asOf = date(q.get("asOf"), "asOf");
@@ -2156,8 +2203,8 @@ async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): P
  * prepared filings count as these too. The example business is practice
  * data, so it's left out.
  */
-const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings)$/;
-const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return)$/;
+const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings|contacts\/[^/]+\/tax-form)$/;
+const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return|contractor-forms\/prepared)$/;
 
 export function needsSecondFactor(method: string, path: string): boolean {
   return method === "GET" ? SECOND_FACTOR_READS.test(path) : SECOND_FACTOR_PATHS.test(path);
