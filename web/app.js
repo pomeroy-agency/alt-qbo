@@ -2478,8 +2478,7 @@ async function payrollView(id) {
         <span class="hash">${esc(st.name)} requires at least ${esc(sick.annualUseCapHours)} hours a year${sick.smallEmployer ? ` (${esc(sick.smallEmployer.annualUseCapHours)} for employers with fewer than ${sick.smallEmployer.under} employees)` : ""}. Salaried exempt employees accrue as if they work 40 hours a week. Front-loaded hours don't carry over.</span>
       </form>` : `<p class="hash" style="margin-top:12px">${esc(st?.name ?? "")} has no statewide paid sick leave law, so TrailBook doesn't track sick hours.</p>`}
     </div>
-    ${st.country === "CA" ? `<div class="panel"><h2>Remittances</h2>
-      <p class="muted">Each approved pay run books what you owe ${st.code === "QC" ? "the CRA (federal tax and EI) and Revenu Québec (Quebec tax, QPP, QPIP and the employer contributions)" : "the CRA (income tax, CPP and EI)"} and your workers' compensation board. Remittance due dates and reminders, and the T4${st.code === "QC" ? ", RL-1" : ""} and ROE, are coming in the next release; until then, remit through ${st.code === "QC" ? "My Business Account and Mon dossier" : "My Business Account"} or your bank.</p></div>`
+    ${st.country === "CA" ? remittancesPanel(deposits, st, canWrite, canSetUpBank)
       : `${taxDepositsPanel(deposits, canWrite, canSetUpBank)}
     ${directDepositPanel(directDeposit, canSetUpBank)}`}
     ${canWrite && active.length ? `<div class="panel">
@@ -2516,14 +2515,41 @@ async function payrollView(id) {
     </div>`);
 }
 
+const REMITTER_OPTIONS = {
+  quarterly: ["Quarterly", "Quarterly"],
+  regular: ["Regular (monthly): new employers and most small ones", "Monthly: new employers and most small ones"],
+  threshold1: ["Accelerated threshold 1 (twice a month): $25,000 to $99,999.99 a month", "Twice a month: $25,000 to $99,999.99 a month"],
+  threshold2: ["Accelerated threshold 2 (up to four times a month): $100,000 or more a month", "Four times a month: $100,000 or more a month"],
+};
+const DENTAL_CODES = {
+  1: "1: Not eligible to access any dental care insurance or coverage",
+  2: "2: Payee only",
+  3: "3: Payee, spouse and dependent children",
+  4: "4: Payee and their spouse",
+  5: "5: Payee and their dependent children",
+};
+
+/** Canada: CRA (and in Quebec, Revenu Québec) remittances, the business's remitter types and the T4 dental code. */
+function remittancesPanel(t, st, canPay, canSet) {
+  const quebec = st.code === "QC";
+  const types = t.remitterTypes ?? { cra: "regular", rq: "regular" };
+  const select = (name, value, i) => `<select name="${name}" ${canSet ? "" : "disabled"}>${Object.entries(REMITTER_OPTIONS).map(([k, l]) => `<option value="${k}" ${value === k ? "selected" : ""}>${esc(l[i])}</option>`).join("")}</select>`;
+  const settings = `<form data-form="remitter-settings" class="row" style="margin-bottom:12px">
+      <label>CRA remitter type${select("craRemitterType", types.cra, 0)}</label>
+      ${quebec ? `<label>Revenu Québec remitting frequency${select("rqRemitterType", types.rq, 1)}</label>` : ""}
+      <label>T4 box 45 dental benefits code<select name="t4DentalCode" ${canSet ? "" : "disabled"}><option value="">Pick one</option>${Object.entries(DENTAL_CODES).map(([k, l]) => `<option value="${k}" ${String(t.t4DentalCode ?? "") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+      ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+      <span class="hash">New employers are regular (monthly) remitters. The ${quebec ? "CRA and Revenu Québec each tell you" : "CRA tells you"} if that changes, based on your average monthly withholding two years ago. Box 45 is the dental coverage you offered on the last day of the year.</span>
+    </form>`;
+  const intro = `What each approved pay run owes ${quebec ? "the CRA (federal tax and EI) and Revenu Québec (Quebec tax, QPP, QPIP, the health services fund, CNESST, and once a year the labour standards contribution)" : "the CRA (income tax, CPP and EI)"}, and when. Pay through ${quebec ? "My Business Account, Mon dossier" : "My Business Account"} or your bank, then record each payment here so your books show it. TrailBook emails a reminder a few days before each due date.${quebec ? "" : " Workers' compensation premiums, provincial health taxes (such as Ontario's or BC's employer health tax) and territorial payroll tax aren't scheduled here yet; pay them on the board's or government's own schedule."}`;
+  return depositsTable(t, canPay, "Remittances", intro, settings);
+}
+
 const DEPOSIT_STATUS = {
   overdue: ["pill bad", "Late"], due_soon: ["pill warn", "Due soon"], upcoming: ["pill grey", "Upcoming"], paid: ["pill", "Paid"],
 };
 
-function taxDepositsPanel(t, canPay, canSet) {
-  const open = t.deposits.filter((d) => d.status !== "paid");
-  const paid = t.deposits.filter((d) => d.status === "paid");
-  const row = (d) => `<tr>
+const depositRow = (t, canPay) => (d) => `<tr>
     <td style="white-space:nowrap">${esc(d.dueDate)}</td>
     <td><strong>${d.agency}</strong> · ${esc(d.what)}<div class="hash">${esc(d.period)}. ${esc(d.rule)}.</div>${d.note && d.status !== "paid" ? `<div class="hash">${esc(d.note)}</div>` : ""}</td>
     <td class="num">${usd(d.status === "paid" ? d.amountMinor : d.remainingMinor)}${BigInt(d.paidMinor) && d.status !== "paid" ? `<div class="hash">${usd(d.paidMinor)} paid</div>` : ""}</td>
@@ -2538,19 +2564,29 @@ function taxDepositsPanel(t, canPay, canSet) {
       <label>Confirmation number (optional)<input name="confirmation" maxlength="60" style="width:160px"></label>
       <button type="submit">Record payment</button>
     </form></td></tr>` : ""}`;
-  return `<div class="panel">
-    <h2>Tax deposits</h2>
-    <p class="muted">What each approved pay run owes the IRS and the state, and when. Pay through EFTPS (or IRS Direct Pay) and the state agency's online service, then record each payment here so your books show it. TrailBook emails a reminder a few days before each due date.</p>
-    <form data-form="deposit-schedule" class="row" style="margin-bottom:12px">
+
+function taxDepositsPanel(t, canPay, canSet) {
+  return depositsTable(t, canPay, "Tax deposits", "What each approved pay run owes the IRS and the state, and when. Pay through EFTPS (or IRS Direct Pay) and the state agency's online service, then record each payment here so your books show it. TrailBook emails a reminder a few days before each due date.",
+    `<form data-form="deposit-schedule" class="row" style="margin-bottom:12px">
       <label>Federal deposit schedule<select name="federalDepositSchedule" ${canSet ? "" : "disabled"}>
         <option value="monthly" ${t.federalSchedule === "monthly" ? "selected" : ""}>Monthly</option>
         <option value="semiweekly" ${t.federalSchedule === "semiweekly" ? "selected" : ""}>Semiweekly</option></select></label>
       ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
       <span class="hash">New employers are monthly. After that, you're semiweekly if your Form 941 taxes from July two years ago through last June were over $50,000. The IRS tells you which in its fall notice.</span>
-    </form>
+    </form>`);
+}
+
+function depositsTable(t, canPay, title, intro, settings) {
+  const open = t.deposits.filter((d) => d.status !== "paid");
+  const paid = t.deposits.filter((d) => d.status === "paid");
+  const row = depositRow(t, canPay);
+  return `<div class="panel">
+    <h2>${title}</h2>
+    <p class="muted">${esc(intro)}</p>
+    ${settings}
     <div class="table-wrap"><table>
       <thead><tr><th>Due</th><th>What</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
-      <tbody>${open.map(row).join("") || `<tr><td colspan="5" class="muted">Nothing to pay right now. Deposits show up here once a pay run is approved.</td></tr>`}</tbody>
+      <tbody>${open.map(row).join("") || `<tr><td colspan="5" class="muted">Nothing to pay right now. ${title === "Remittances" ? "Remittances" : "Deposits"} show up here once a pay run is approved.</td></tr>`}</tbody>
     </table></div>
     ${paid.length ? `<details style="margin-top:8px"><summary>Paid this year (${paid.length})</summary><div class="table-wrap"><table><tbody>${paid.map(row).join("")}</tbody></table></div></details>` : ""}
   </div>`;
@@ -2663,7 +2699,33 @@ function columnLabel(k) {
   if (k === "name") return "Employee";
   const m = k.match(/^([A-Z]{2,3}_[A-Z0-9_]+)(Taxable|Withheld)Minor$/);
   if (m) return `${m[1].replace(/_/g, " ")} ${m[2] === "Taxable" ? "taxable wages" : "withheld"}`;
-  return { wagesMinor: "Wages", withheldMinor: "Withheld" }[k] ?? k;
+  return { wagesMinor: "Wages", withheldMinor: "Withheld", payPeriod: "Pay period", periodEnding: "Period ending", hours: "Insurable hours", insurableEarningsMinor: "Insurable earnings" }[k] ?? k;
+}
+
+const SLIP_FORMS = ["w2", "t4", "rl1"];
+
+const T4_BOXES = [
+  ["10", "Province of employment", "box10", "text"], ["14", "Employment income", "box14"], ["16", "Employee's CPP contributions", "box16"],
+  ["16A", "Employee's second CPP contributions", "box16A"], ["17", "Employee's QPP contributions", "box17"], ["17A", "Employee's second QPP contributions", "box17A"],
+  ["18", "Employee's EI premiums", "box18"], ["20", "RPP contributions", "box20"], ["22", "Income tax deducted", "box22"],
+  ["24", "EI insurable earnings", "box24"], ["26", "CPP/QPP pensionable earnings", "box26"], ["28", "Exempt", "box28", "text"],
+  ["45", "Employer-offered dental benefits", "box45", "text"], ["55", "Employee's PPIP premiums", "box55"], ["56", "PPIP insurable earnings", "box56"],
+];
+const RL1_BOXES = [
+  ["A", "Employment income", "boxA"], ["B", "QPP contributions", "boxB"], ["B.A", "Additional QPP contributions", "boxBA"],
+  ["C", "Employment insurance premiums", "boxC"], ["D", "Contributions to a registered pension plan", "boxD"], ["E", "Quebec income tax withheld", "boxE"],
+  ["G", "Pensionable salary or wages (QPP)", "boxG"], ["H", "QPIP premiums", "boxH"], ["I", "Eligible salary or wages (QPIP)", "boxI"],
+];
+
+/** One T4 or RL-1 slip, laid out box by box. */
+function slipCard(f, w, head, slug) {
+  const boxes = slug === "t4" ? T4_BOXES : RL1_BOXES;
+  const cell = ([n, label, k, kind]) => `<td>${esc(n)} ${esc(label)}</td><td class="num">${kind === "text" ? esc(w[k] || "—") : usd(w[k] ?? 0)}</td>`;
+  const pairs = [];
+  for (let i = 0; i < boxes.length; i += 2) pairs.push(`<tr>${cell(boxes[i])}${boxes[i + 1] ? cell(boxes[i + 1]) : "<td></td><td></td>"}</tr>`);
+  return `<div class="panel stub">
+    <div class="row" style="justify-content:space-between"><div><strong>${slug === "t4" ? "T4" : "RL-1"} ${esc(f.period)}: ${esc(w.name)}</strong><div class="hash">SIN ${esc(w.sin ?? "missing")}${w.address ? `<br>${esc(w.address.line1)}, ${esc(w.address.city)} ${esc(w.address.state)} ${esc(w.address.zip)}` : ""}</div></div>${head}</div>
+    <table><tbody>${pairs.join("")}</tbody></table></div>`;
 }
 
 async function formView(id, slug, year, quarter, fullSsn = false) {
@@ -2671,7 +2733,8 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
   const f = await api(entPath(`/payroll-forms/prepared?form=${slug}&year=${year}${quarter ? `&quarter=${quarter}` : ""}${fullSsn ? "&ssn=full" : ""}`));
   const canSee = ["owner", "admin", "accountant"].includes(state.org.role);
   const emp = f.employer;
-  const head = `<div><strong>${esc(emp.name)}</strong>${emp.ein ? ` · EIN ${esc(emp.ein)}` : ""}${emp.address ? `<div class="hash">${esc(emp.address.line1)}, ${esc(emp.address.city)}, ${esc(emp.address.state)} ${esc(emp.address.zip)}</div>` : ""}</div>`;
+  const ca = state.entity.entity.country === "CA";
+  const head = `<div><strong>${esc(emp.name)}</strong>${emp.ein ? ` · ${ca ? "BN" : "EIN"} ${esc(emp.ein)}` : ""}${emp.address ? `<div class="hash">${esc(emp.address.line1)}, ${esc(emp.address.city)}, ${esc(emp.address.state)} ${esc(emp.address.zip)}</div>` : ""}</div>`;
   const rows = f.employees ?? [];
   const table = slug === "de9" ? `<h3>DE 9C wage detail</h3><div class="table-wrap"><table>
       <thead><tr><th>SSN</th><th>Employee</th><th class="num">Total subject wages</th><th class="num">PIT wages</th><th class="num">PIT withheld</th></tr></thead>
@@ -2688,7 +2751,8 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
         <tr><td></td><td></td><td>17 State income tax</td><td class="num">${usd(w.box17)}</td></tr>` : `<tr><td>15 to 17</td><td colspan="3" class="muted">No state income tax</td></tr>`}
         ${(w.local ?? []).map((l) => `<tr><td>18 Local wages</td><td class="num">${usd(l.wagesMinor)}</td><td>19 Local income tax / 20 ${esc(l.locality)}</td><td class="num">${usd(l.taxMinor)}</td></tr>`).join("")}
       </tbody></table></div>`).join("")
-    : rows.length ? `<h3>Wage detail</h3><div class="table-wrap"><table>
+    : slug === "t4" || slug === "rl1" ? rows.map((w) => slipCard(f, w, head, slug)).join("")
+    : rows.length ? `<h3>${slug.startsWith("roe-") ? "Insurable earnings by pay period (Block 15C detail)" : "Wage detail"}</h3><div class="table-wrap"><table>
       <thead><tr>${Object.keys(rows[0]).map((k) => `<th class="${k.endsWith("Minor") ? "num" : ""}">${esc(columnLabel(k))}</th>`).join("")}</tr></thead>
       <tbody>${rows.map((r) => `<tr>${Object.entries(r).map(([k, v]) => `<td class="${k.endsWith("Minor") ? "num" : ""}">${k.endsWith("Minor") ? usd(v) : esc(v ?? "missing")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
     : "";
@@ -2697,7 +2761,7 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
       <p class="muted">${esc(f.period)} · due ${esc(f.dueDate)}. ${esc(f.fileAt)}.</p></div>
       <div class="row"><button class="secondary" data-action="print">Print</button>
         ${rows.length ? `<button class="secondary" data-action="form-csv" data-slug="${slug}" data-year="${year}" data-quarter="${quarter ?? ""}">Download CSV</button>` : ""}
-        ${rows.length && canSee && !fullSsn ? `<button class="secondary" data-action="form-ssn" data-slug="${slug}" data-year="${year}" data-quarter="${quarter ?? ""}">Show full SSNs</button>` : ""}</div></div>
+        ${(rows.length || slug.startsWith("roe-")) && canSee && !fullSsn ? `<button class="secondary" data-action="form-ssn" data-slug="${slug}" data-year="${year}" data-quarter="${quarter ?? ""}">${ca ? (slug.startsWith("roe-") ? "Show full SIN" : "Show full SINs") : "Show full SSNs"}</button>` : ""}</div></div>
     ${f.warnings.map((w) => `<div class="alert warn no-print">${esc(w)}</div>`).join("")}
     <div class="panel">
       ${head}
@@ -2707,9 +2771,9 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
       </table></div>
       ${f.liabilities?.length ? `<h3>Tax liability</h3><div class="table-wrap"><table><tbody>${f.liabilities.map((x) => `<tr><td>${esc(x.label)}</td><td class="num">${usd(x.amountMinor)}</td></tr>`).join("")}
         <tr><td><strong>Total</strong></td><td class="num"><strong>${usd(f.liabilities.reduce((s, x) => s + BigInt(x.amountMinor), 0n))}</strong></td></tr></tbody></table></div>` : ""}
-      ${slug !== "w2" ? table : ""}
+      ${!SLIP_FORMS.includes(slug) ? table : ""}
     </div>
-    ${slug === "w2" ? table : ""}`);
+    ${SLIP_FORMS.includes(slug) ? table : ""}`);
 }
 
 // ------------------------------------------------------------- sales tax
@@ -3969,6 +4033,12 @@ document.addEventListener("submit", async (ev) => {
       await api(entPath("/payroll-settings"), { body: { stateEmployerAccount: d.stateEmployerAccount } });
       toast("Account number saved");
       await route();
+    } else if (kind === "remitter-settings") {
+      await api(entPath("/payroll-settings"), { body: {
+        craRemitterType: d.craRemitterType, ...(d.rqRemitterType ? { rqRemitterType: d.rqRemitterType } : {}), t4DentalCode: d.t4DentalCode || null,
+      } });
+      toast("Remittance settings saved");
+      await payrollView(state.entity.entity.id);
     } else if (kind === "deposit-schedule") {
       await api(entPath("/payroll-settings"), { body: { federalDepositSchedule: d.federalDepositSchedule } });
       toast("Deposit schedule saved");

@@ -17,9 +17,9 @@ import { placeOf } from "./tax-deposits.js";
 // pay runs and recorded deposits. TrailBook prepares the figures; the
 // business (or its accountant) files them with each agency, and signs.
 
-const CAN_SEE_SSN: Role[] = ["owner", "admin", "accountant", "system"];
+export const CAN_SEE_SSN: Role[] = ["owner", "admin", "accountant", "system"];
 
-interface PostedRun {
+export interface PostedRun {
   id: string;
   payDate: string;
   periodStart: string;
@@ -27,7 +27,7 @@ interface PostedRun {
   paychecks: Paycheck[];
 }
 
-interface Employer {
+export interface Employer {
   name: string;
   ein: string | null;
   address: { line1: string; city: string; state: string; zip: string } | null;
@@ -76,7 +76,7 @@ function revive(p: any): Paycheck {
   };
 }
 
-async function load(tx: Tx, entityId: string, from: string, to: string) {
+export async function load(tx: Tx, entityId: string, from: string, to: string) {
   const { rows } = await tx.query(
     `SELECT id, pay_date::text, result FROM pay_runs
       WHERE entity_id = $1 AND status = 'posted' AND pay_date >= $2 AND pay_date <= $3 ORDER BY pay_date, created_at`,
@@ -103,7 +103,7 @@ async function load(tx: Tx, entityId: string, from: string, to: string) {
 }
 
 /** Deposits recorded against this period's liabilities, by kind of deposit and tax code. */
-async function depositsPaid(tx: Tx, entityId: string, kinds: DepositKind[], inPeriod: (key: string) => boolean) {
+export async function depositsPaid(tx: Tx, entityId: string, kinds: DepositKind[], inPeriod: (key: string) => boolean) {
   const { rows } = await tx.query("SELECT deposit_key, by_tax FROM tax_deposit_payments WHERE entity_id = $1 AND kind = ANY($2)", [entityId, kinds]);
   const out: Record<string, bigint> = {};
   for (const r of rows) {
@@ -133,7 +133,7 @@ const sumTax = (runs: PostedRun[], code: string, field: "amountMinor" | "taxable
 const sumDeduction = (runs: PostedRun[], kind: string) =>
   runs.reduce((s, r) => s + r.paychecks.reduce((t, p) => t + p.deductions.filter((d) => d.kind === kind).reduce((u, d) => u + d.amountMinor, 0n), 0n), 0n);
 const times = (wagesMinor: bigint, rate: string) => toMinor(toMajor(wagesMinor).mul(rate).toFixed(2));
-const money = (line: string, label: string, value: bigint | null, note?: string): FormLine => ({ line, label, value, kind: "money", ...(note ? { note } : {}) });
+export const money = (line: string, label: string, value: bigint | null, note?: string): FormLine => ({ line, label, value, kind: "money", ...(note ? { note } : {}) });
 
 /** Distinct employees paid for a pay period that includes the given date. */
 function paidOn(runs: PostedRun[], date: string): number {
@@ -308,7 +308,7 @@ function ssnOf(e: EmployeeRow | undefined, full: boolean): string | null {
 }
 
 /** Totals per employee over a set of runs. */
-function perEmployee(runs: PostedRun[]) {
+export function perEmployee(runs: PostedRun[]) {
   const out = new Map<string, { name: string; gross: bigint; byTax: Map<string, { wages: bigint; amount: bigint }>; byDeduction: Map<string, bigint> }>();
   for (const r of runs) {
     for (const p of r.paychecks) {
@@ -327,7 +327,7 @@ function perEmployee(runs: PostedRun[]) {
   return out;
 }
 
-async function auditSsn(tx: Tx, orgId: string, entityId: string, actor: Actor, form: string, period: string) {
+export async function auditSsn(tx: Tx, orgId: string, entityId: string, actor: Actor, form: string, period: string) {
   await appendAudit(tx, {
     orgId, entityId, actor: actor.id, action: "payroll_form.viewed_with_ssn", objectType: "entity", objectId: entityId,
     after: { form, period }, context: { role: actor.role },

@@ -834,5 +834,33 @@ describe("a Canadian business", () => {
     // Saved runs use the released Canadian packs.
     const run = await call(`${base}/pay-runs`, { cookie: s.cookie, body: { periodStart: "2026-08-01", periodEnd: "2026-08-14", payDate: "2026-08-21", lines: [{ employeeId: emp.data.id }] } });
     expect(run.status).toBe(201);
+
+    // Remittances, remitter types and the T4.
+    expect((await call(`${base}/pay-runs/${run.data.id}/approve`, { cookie: s.cookie, body: {} })).status).toBe(201);
+    const deps = (await call(`${base}/tax-deposits?year=2026`, { cookie: s.cookie })).data;
+    expect(deps).toMatchObject({ remitterTypes: { cra: "regular", rq: "regular" }, t4DentalCode: null });
+    expect(deps.deposits.map((d: any) => [d.key, d.agency, d.dueDate])).toEqual([["ca_cra_remit:2026-08", "CRA", "2026-09-15"]]);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { craRemitterType: "weekly" } })).status).toBe(422);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { rqRemitterType: "regular" } })).status).toBe(400);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { t4DentalCode: 7 } })).status).toBe(400);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { craRemitterType: "quarterly", t4DentalCode: "1" } })).status).toBe(200);
+    const q = (await call(`${base}/tax-deposits?year=2026`, { cookie: s.cookie })).data;
+    expect(q).toMatchObject({ remitterTypes: { cra: "quarterly" }, t4DentalCode: 1 });
+    expect(q.deposits.map((d: any) => d.key)).toEqual(["ca_cra_remit:2026-Q3"]);
+    const forms = (await call(`${base}/payroll-forms?year=2026`, { cookie: s.cookie })).data.forms;
+    expect(forms.map((f: any) => f.slug)).toEqual(["t4"]);
+    const t4 = await call(`${base}/payroll-forms/prepared?form=t4&year=2026`, { cookie: s.cookie });
+    expect(t4.status).toBe(200);
+    expect(t4.data.employees[0]).toMatchObject({ name: "Avery Chen", box10: "BC", box14: "200000", box45: 1 });
+    expect(t4.data.lines.find((l: any) => l.line === "Account").value).toBe("123456789RP0001");
+    expect((await call(`${base}/payroll-forms/prepared?form=rl1&year=2026`, { cookie: s.cookie })).status).toBe(422);
+    expect((await call(`${base}/payroll-forms/prepared?form=t4&year=2026&format=csv`, { cookie: s.cookie })).data).toMatch(/box14/);
+    // The ROE shows up once the employee has a last day.
+    expect((await call(`${base}/employees/${emp.data.id}`, { cookie: s.cookie, body: { terminationDate: "2026-08-14" } })).status).toBe(200);
+    const withRoe = (await call(`${base}/payroll-forms?year=2026`, { cookie: s.cookie })).data.forms;
+    expect(withRoe.map((f: any) => f.slug)).toEqual(["t4", `roe-${emp.data.id}`]);
+    const roe = await call(`${base}/payroll-forms/prepared?form=roe-${emp.data.id}&year=2026`, { cookie: s.cookie });
+    expect(roe.status).toBe(200);
+    expect(roe.data).toMatchObject({ form: "ROE", dueDate: "2026-08-19" });
   });
 });

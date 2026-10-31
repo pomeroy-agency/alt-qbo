@@ -3,6 +3,8 @@ import { resolveRules, usFederal, type Place, type StateRulePack } from "../rule
 import {
   addDays, businessDaysAfter, endOfNextMonth, fifteenthOfNextMonth, onOrNextBusinessDay, onOrPreviousBusinessDay, quarterEnd, quarterOf, weekday,
 } from "./business-days.js";
+import { CANADA_REMITTANCES, canadaRemittanceSchedule, type RemitterType } from "./canada-remittances.js";
+import { CANADA_TAX_ACCOUNT } from "./canada.js";
 
 // When each payroll tax is due. Liabilities arise on the pay date (cash
 // basis), and the rules come from the rule packs: Pub 15 for Form 941 and
@@ -25,7 +27,7 @@ const FEDERAL: Record<string, { agency: string; what: string; where: string; cod
 
 /** Who a deposit is paid to and what it covers. */
 export function depositLabel(kind: DepositKind, state: StateRulePack): { agency: string; what: string; where: string } {
-  const f = FEDERAL[kind];
+  const f = FEDERAL[kind] ?? CANADA_REMITTANCES.find((r) => r.kind === kind);
   if (f) return { agency: f.agency, what: f.what, where: f.where };
   const r = state.payroll.deposits.find((d) => d.kind === kind);
   if (!r) throw new Error(`unknown deposit kind ${kind}`);
@@ -36,6 +38,12 @@ export function depositLabel(kind: DepositKind, state: StateRulePack): { agency:
 export function depositAccounts(kind: DepositKind, state: StateRulePack): Record<string, string> {
   const f = FEDERAL[kind];
   if (f) return f.accounts;
+  const ca = CANADA_REMITTANCES.find((r) => r.kind === kind);
+  if (ca) {
+    // Source deductions go to the CRA or Revenu Québec liability; the province's own charges to the account its pack names.
+    return Object.fromEntries(ca.codes.map((c) => [c, CANADA_TAX_ACCOUNT[c] ?? state.payroll.taxes.find((t) => t.code === c)?.account])
+      .filter((e): e is [string, string] => Boolean(e[1])));
+  }
   const r = state.payroll.deposits.find((d) => d.kind === kind);
   if (!r) throw new Error(`unknown deposit kind ${kind}`);
   const accounts: Record<string, string> = {};
@@ -126,6 +134,8 @@ export interface StateDepositOptions {
   priorQuarterlyAverageMinor?: bigint;
   /** Last calendar year's totals by tax code, for rules that look back at their own taxes (monthly_or_larger). */
   priorYearMinorByCode?: Record<string, bigint>;
+  /** Canada: the business's CRA and Revenu Québec remitter types. */
+  canadaRemitters?: { cra: RemitterType; rq: RemitterType };
 }
 
 /**
@@ -137,7 +147,10 @@ export function depositSchedule(runs: RunTaxes[], federalSchedule: FederalSchedu
   const sorted = [...runs].sort((a, b) => a.payDate.localeCompare(b.payDate));
   const out: Deposit[] = [];
   const push = (d: Deposit | null) => { if (d) out.push(d); };
-  // Canadian remittances (CRA and Revenu Québec) aren't scheduled yet.
+  if (place.country === "CA") {
+    return canadaRemittanceSchedule(runs, opts.canadaRemitters ?? { cra: "regular", rq: "regular" })
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.kind.localeCompare(b.kind));
+  }
   if (place.country !== "US") return out;
   let schedule = federalSchedule;
 

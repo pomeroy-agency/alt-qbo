@@ -51,7 +51,8 @@ import { directDepositFile, directDepositSummary, getDirectDepositSettings, save
 import { pacificToday } from "../payroll/business-days.js";
 import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
 import { form940, form941, formDe9, formsFor, formStateQuarterly, formW2, type PreparedForm } from "../payroll/forms.js";
-import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
+import { federalDepositSchedule, recordDepositPayment, remitterTypes, setFederalDepositSchedule, setRemitterType, taxDeposits } from "../payroll/tax-deposits.js";
+import { canadaFormsFor, formRl1, formRoe, formT4, roesFor } from "../payroll/canada-forms.js";
 import { calculateSavedRun, carrySickLeave, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import { CAN_CONNECT, OAuthError, findClient, issueCode, listGrants, parseScopes, redirectWith, revokeGrant, updateGrantSettings, type OAuthClient } from "./oauth.js";
 import { handleOAuth, handlePublicApi } from "./public-api.js";
@@ -1872,6 +1873,25 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
       requireRole(ctx, ["owner", "admin", "accountant"]);
       await setSickLeavePolicy(tx, { orgId: ctx.orgId, entityId: p.entity!, policy: String(b.sickLeavePolicy), actor: ctx.actor });
     }
+    for (const [field, agency] of [["craRemitterType", "cra"], ["rqRemitterType", "rq"]] as const) {
+      if (b[field] === undefined) continue;
+      if (ent.country !== "CA") throw new HttpError(400, "remitter types are for Canadian businesses");
+      if (agency === "rq" && ent.region !== "QC") throw new HttpError(400, "the Revenu Québec remitter type is for Quebec businesses");
+      requireRole(ctx, ["owner", "admin", "accountant"]);
+      await setRemitterType(tx, { orgId: ctx.orgId, entityId: p.entity!, agency, type: String(b[field]), actor: ctx.actor });
+    }
+    if (b.t4DentalCode !== undefined) {
+      if (ent.country !== "CA") throw new HttpError(400, "the T4 dental benefits code is for Canadian businesses");
+      const code = b.t4DentalCode === null || b.t4DentalCode === "" ? null : Number(b.t4DentalCode);
+      if (code !== null && !(Number.isInteger(code) && code >= 1 && code <= 5)) throw new HttpError(400, "the dental benefits code should be 1 to 5");
+      requireRole(ctx, ["owner", "admin", "accountant"]);
+      const before = (await tx.query("SELECT t4_dental_code FROM entities WHERE id = $1", [p.entity])).rows[0].t4_dental_code;
+      await tx.query("UPDATE entities SET t4_dental_code = $2 WHERE id = $1", [p.entity, code]);
+      await appendAudit(tx, {
+        orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.updated", objectType: "entity", objectId: p.entity!,
+        before: { t4DentalCode: before }, after: { t4DentalCode: code }, context: { role: ctx.role },
+      });
+    }
     if (b.federalDepositSchedule !== undefined) {
       if (ent.country !== "US") throw new HttpError(400, "the federal deposit schedule is for US businesses");
       await setFederalDepositSchedule(tx, { orgId: ctx.orgId, entityId: p.entity!, schedule: String(b.federalDepositSchedule), actor: ctx.actor });
@@ -1891,7 +1911,9 @@ route("GET", "/api/orgs/:org/entities/:entity/tax-deposits", async (req, p, ctx)
     const deposits = await taxDeposits(tx, p.entity!, year, today);
     // December's deposits fall due in January, so the start of a year also shows last year's still open.
     const carried = (await taxDeposits(tx, p.entity!, year - 1, today)).filter((d) => d.status !== "paid");
-    return new Response(toJson({ year, today, federalSchedule: await federalDepositSchedule(tx, p.entity!), deposits: [...carried, ...deposits] }), {
+    const ent = (await tx.query("SELECT country, t4_dental_code FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const canada = ent.country === "CA" ? { remitterTypes: await remitterTypes(tx, p.entity!), t4DentalCode: ent.t4_dental_code } : {};
+    return new Response(toJson({ year, today, federalSchedule: await federalDepositSchedule(tx, p.entity!), ...canada, deposits: [...carried, ...deposits] }), {
       headers: { "content-type": "application/json" },
     });
   });
@@ -1924,7 +1946,7 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms", async (req, p, ctx
     const ent = (await tx.query("SELECT country, region, state_employer_id FROM entities WHERE id = $1", [p.entity])).rows[0];
     const pack = statePackFor({ country: ent.country, region: ent.region }, today);
     return json({
-      year, forms: formsFor(year, today, pack), stateEmployerAccount: ent.state_employer_id, employerAccount: pack.payroll.employerAccount, stateName: pack.name,
+      year, forms: ent.country === "CA" ? [...canadaFormsFor(year, pack), ...await roesFor(tx, p.entity!, year)] : formsFor(year, today, pack), stateEmployerAccount: ent.state_employer_id, employerAccount: pack.payroll.employerAccount, stateName: pack.name,
     });
   });
 });
@@ -1942,8 +1964,12 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms/prepared", async (re
       case "940": return form940(tx, p.entity!, year);
       case "de9": return formDe9(tx, { ...base, quarter });
       case "w2": return formW2(tx, base);
+      case "t4": return formT4(tx, base);
+      case "rl1": return formRl1(tx, base);
       default: {
         const slug = q.get("form") ?? "";
+        const roe = /^roe-([0-9a-f-]{36})$/.exec(slug);
+        if (roe) return formRoe(tx, { orgId: ctx.orgId, entityId: p.entity!, employeeId: roe[1]!, fullSsn, actor: ctx.actor });
         const ent = (await tx.query("SELECT country, region FROM entities WHERE id = $1", [p.entity])).rows[0];
         const forms = statePackFor({ country: ent.country, region: ent.region }, `${year}-12-31`).forms.quarterly;
         if (!forms.some((f) => f.slug === slug && f.kind !== "ca_de9")) throw new HttpError(404, "no such form");
