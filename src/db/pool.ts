@@ -8,9 +8,19 @@ pg.types.setTypeParser(1082, (v) => v);
 
 export type Tx = pg.PoolClient;
 
+/**
+ * pg already treats sslmode=require (and prefer, verify-ca) as verify-full, but
+ * warns about it on every new instance, which lands in the error log. Saying
+ * verify-full outright keeps the same checks and drops the warning.
+ */
+export function strictSsl(connectionString: string): string {
+  if (/[?&]uselibpqcompat=/i.test(connectionString)) return connectionString;
+  return connectionString.replace(/([?&]sslmode=)(prefer|require|verify-ca)(?=&|$)/i, "$1verify-full");
+}
+
 export function createPool(connectionString = process.env.DATABASE_URL): pg.Pool {
   if (!connectionString) throw new Error("DATABASE_URL is not set");
-  return new pg.Pool({ connectionString });
+  return new pg.Pool({ connectionString: strictSsl(connectionString) });
 }
 
 /** Runs fn in a transaction as the system owner (no tenant boundary). */

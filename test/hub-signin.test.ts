@@ -65,6 +65,7 @@ async function call(path: string, init: { body?: unknown; cookie?: string; heade
     status: res.status, location: res.headers.get("location"), data: await res.json().catch(() => null),
     session: cookies.find((c) => c.startsWith("altqbo_session=") && c !== "altqbo_session="),
     hubState: cookies.find((c) => c.startsWith("tb_hub_state=")),
+    hubRetry: cookies.find((c) => c.startsWith("tb_hub_retry=")),
   };
 }
 
@@ -164,6 +165,22 @@ describe("signing in with a Pomeroy Account", () => {
     expect((await viaHub({ sub: p.sub, email: p.email, aud: "milepost" })).location).toBe(`${BASE}/#/hub/bad_token`);
     expect((await viaHub({ sub: p.sub, email: p.email, iss: "https://evil.example" })).location).toBe(`${BASE}/#/hub/bad_token`);
     expect((await viaHub({ sub: p.sub, email: p.email, exp: Math.floor(Date.now() / 1000) - 600 })).location).toBe(`${BASE}/#/hub/bad_token`);
+  });
+
+  it("restarts once from a browser that didn't start the sign-in, such as a phone's mail app", async () => {
+    const p = await person();
+    // Started on a laptop, finished at the hub on a phone: the phone has no state cookie.
+    const start = await call("/api/auth/hub/start");
+    const state = new URL(start.location!).searchParams.get("state")!;
+    const back = await call(`/api/auth/hub/callback?code=from-elsewhere&state=${state}`);
+    expect(back.location).toBe(`${BASE}/api/auth/hub/start`);
+    expect(back.hubRetry).toBe("tb_hub_retry=1");
+    // The restart comes straight back from the hub and signs in on the phone.
+    const again = await viaHub({ sub: p.sub, email: p.email }, { cookie: back.hubRetry });
+    expect(again.location).toBe(`${BASE}/#/hub/check-email`);
+    expect(again.hubRetry).toBe("tb_hub_retry=");
+    // Only once: a second miss in the same browser stops on the expired page.
+    expect((await call(`/api/auth/hub/callback?code=x&state=${state}`, { cookie: back.hubRetry })).location).toBe(`${BASE}/#/hub/expired`);
   });
 
   it("checks the token's signature against the hub's published key", async () => {

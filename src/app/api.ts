@@ -1960,6 +1960,10 @@ function redirect(to: string, cookies: string[] = []): Response {
 
 const hubStateCookie = (state: string, maxAge: number) =>
   `${HUB_STATE_COOKIE}=${state}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/hub; Max-Age=${maxAge}`;
+/** Marks one restart of a hub sign-in that came back to a browser that didn't start it. */
+const HUB_RETRY_COOKIE = "tb_hub_retry";
+const hubRetryCookie = (on: boolean) =>
+  `${HUB_RETRY_COOKIE}=${on ? "1" : ""}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/hub; Max-Age=${on ? 120 : 0}`;
 
 /**
  * "Sign in with Pomeroy Account" (hub-signin.ts): start, the hub's return,
@@ -1969,7 +1973,8 @@ const hubStateCookie = (state: string, maxAge: number) =>
 async function hubSignInRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
   const base = appUrl(req, opts);
   const hub = opts.hub;
-  const page = (what: string, cookies: string[] = []) => redirect(`${base}/#/hub/${what}`, [hubStateCookie("", 0), ...cookies]);
+  const page = (what: string, cookies: string[] = []) =>
+    redirect(`${base}/#/hub/${what}`, [hubStateCookie("", 0), hubRetryCookie(false), ...cookies]);
 
   // The emailed link: proves the TrailBook address, then connects and signs in.
   const linkPath = /^\/api\/auth\/hub-link\/([\w-]{20,100})$/.exec(path);
@@ -1999,8 +2004,15 @@ async function hubSignInRoutes(req: Request, path: string, pool: pg.Pool, opts: 
     if (!hubSignInOn(hub)) return page("unavailable");
     const q = new URL(req.url).searchParams;
     const state = q.get("state") ?? "";
+    const started = cookie(req, HUB_STATE_COOKIE);
+    // No sign-in started in this browser: the hub finished somewhere else, such as
+    // a hub email link opened in a phone's mail app. The hub is signed in here now,
+    // so start once more from this browser and it comes straight back.
+    if (!started && q.get("code") && !cookie(req, HUB_RETRY_COOKIE)) {
+      return redirect(`${base}/api/auth/hub/start`, [hubRetryCookie(true)]);
+    }
     // The state must come back to the browser that started, or someone else's sign-in could land here.
-    if (!state || cookie(req, HUB_STATE_COOKIE) !== state) return page("expired");
+    if (!state || started !== state) return page("expired");
     let identity, linkUserId: string | null;
     try {
       const waiting = await takeHubSignIn(pool, state);
@@ -2033,7 +2045,7 @@ async function hubSignInRoutes(req: Request, path: string, pool: pg.Pool, opts: 
       // TrailBook's own second factor still applies.
       if ((await mfaStatus(pool, linked.id)).enabled) return page(`code/${await issueMfaTicket(pool, linked.id)}`);
       const s = await createSession(pool, linked.id);
-      return redirect(`${base}/#/`, [hubStateCookie("", 0), sessionCookie(s.token, s.maxAge)]);
+      return redirect(`${base}/#/`, [hubStateCookie("", 0), hubRetryCookie(false), sessionCookie(s.token, s.maxAge)]);
     }
 
     // Not connected yet: a one-time link to the TrailBook login with that email proves it's the same person.

@@ -126,7 +126,7 @@ TrailBook is a `kind: "jwt"` app in the hub's `HUB_CLIENTS`:
 TrailBook needs `ACCOUNT_HUB_CLIENT_ID` and `ACCOUNT_HUB_CLIENT_SECRET` on top of `ACCOUNT_HUB_URL`. Without them the button doesn't show.
 
 1. **Start:** "Sign in with Pomeroy Account" opens `GET /api/auth/hub/start`. TrailBook keeps a one-time state (hashed) and a PKCE verifier for 10 minutes, puts the state in an HttpOnly cookie on `/api/auth/hub`, and sends the person to the hub's `/authorize` with S256.
-2. **Back from the hub:** `GET /api/auth/hub/callback?code=…&state=…`. The state must match the cookie and works once. TrailBook posts the code, the verifier and its client id and secret to the hub's `/token`, then checks the ES256 token: the key from `/.well-known/jwks.json` (by `kid`, cached 10 minutes, fetched again for a new `kid`), `iss` is `ACCOUNT_HUB_URL`, `aud` is TrailBook's client id, and `exp` and `nbf` hold, allowing a minute either way.
+2. **Back from the hub:** `GET /api/auth/hub/callback?code=…&state=…`. The state must match the cookie and works once. If this browser has no state cookie at all (the hub finished in another browser, such as a hub email link opened in a phone's mail app), TrailBook restarts the sign-in once from this browser (a 2-minute `tb_hub_retry` cookie stops a loop); the hub is signed in there now, so it comes straight back. TrailBook posts the code, the verifier and its client id and secret to the hub's `/token`, then checks the ES256 token: the key from `/.well-known/jwks.json` (by `kid`, cached 10 minutes, fetched again for a new `kid`), `iss` is `ACCOUNT_HUB_URL`, `aud` is TrailBook's client id, and `exp` and `nbf` hold, allowing a minute either way.
 3. **Who it is:** the token's `sub` is matched to the TrailBook person connected to it.
    - **Connected:** TrailBook's own session starts (its own HttpOnly cookie). Someone with two-factor on enters their code first.
    - **Not connected, and a TrailBook login has the token's email:** TrailBook emails that address a one-time link (`#/hub-link/<token>`, 30 minutes) that connects the two and signs in. Reaching the inbox is the proof; an email match alone never connects anything.
@@ -145,3 +145,5 @@ The `company_id` MilePost stores from the OAuth callback and token response is a
 ## For whoever builds the hub
 
 The hub is built from the pa-crm repository, where the lowercase product name is a Netlify secret value and fails the build. Nothing in this contract needs it: every field and plan key above starts with `trailbook` or is generic. Keep the hub's endpoint path (`/api/trailbook/status`) and table names (`trailbook_status`) as they are.
+
+Database connections say `sslmode=verify-full` outright (`strictSsl` in `src/db/pool.ts`). pg already treats `require` as `verify-full`, so the checks are the same; it only stops pg's warning landing in the error log on every hub call.

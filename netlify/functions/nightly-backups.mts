@@ -7,7 +7,7 @@ import { backupKeyFromEnv, runNightlyBackups } from "../../src/core/nightly-back
 import { netlifyBackupStore } from "../../src/app/backup-store.js";
 import { pacificToday } from "../../src/payroll/business-days.js";
 import { mailerFromEnv } from "../../src/app/mail.js";
-import "../../src/db/pool.js";
+import { strictSsl } from "../../src/db/pool.js";
 
 // Every night: an encrypted copy of each business's books, read back and checked, kept 30 days.
 export default async () => {
@@ -16,7 +16,7 @@ export default async () => {
     console.error("nightly backups skipped: BACKUP_KEY is not set");
     return;
   }
-  const pool = new pg.Pool({ connectionString: getConnectionString(), max: 2 });
+  const pool = new pg.Pool({ connectionString: strictSsl(getConnectionString()), max: 2 });
   try {
     const result = await runNightlyBackups(pool, netlifyBackupStore(getStore({ name: "backups", consistency: "strong" })), key, pacificToday(), {
       skipOrgNames: [EXAMPLE_ORG_NAME],
