@@ -138,7 +138,7 @@ const ENTITY_TABS = [
   ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["items", "Products and services"], ["reports", "Reports"], ["payroll", "Payroll", "payrollToDo", "to approve or pay"],
 ];
 const ACCOUNTANT_TABS = [
-  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"], ["integrations", "Integrations"],
+  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"], ["integrations", "Integrations"], ["move", "Move from QuickBooks or Xero"],
 ];
 
 /** The everyday menu, plus a tab for each linked app (MilePost) while the link is live. */
@@ -147,7 +147,7 @@ function entityTabs() {
 }
 
 // Shorter names for the phone menu, where buttons sit three to a row.
-const SHORT = { contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
+const SHORT = { move: "Move books", contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
 
 // When the terms of service change, an owner or admin accepts the new version for the business.
 function termsBanner() {
@@ -177,13 +177,14 @@ function shell(active, content) {
   const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
   const billing = ["owner", "admin"].includes(state.org?.role) ? [["billing", "#/billing", "Billing"]] : [];
   const newsletter = state.org?.newsletter ? [["newsletter", "#/newsletter", "Newsletter"]] : [];
-  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...newsletter, ["account", "#/account", "Your account"]];
+  const many = (state.me?.orgs?.length ?? 0) > 1;
+  const org = [...(many ? [["clients", "#/clients", "All clients"]] : []), ["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...newsletter, ["account", "#/account", "Your account"]];
   const main = e ? entityTabs().map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
-    ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
-    ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
+    ...(e ? [...(many ? [btn("#/clients", "clients", "All clients")] : []), btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
+    ...(e ? org.filter(([k]) => k !== "home" && k !== "clients").map(([k, h, l]) => btn(h, k, l)) : []),
   ];
-  const moreOn = e && (["home", "team", "audit", "billing", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const moreOn = e && (["clients", "home", "team", "audit", "billing", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
   const mobile = `
       <nav class="mobile">
         <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
@@ -192,6 +193,7 @@ function shell(active, content) {
   return `${topbar()}
     <div class="wrap shell">
       <nav class="side">
+        ${many ? `<a href="#/clients" class="${active === "clients" ? "on" : ""}">All clients</a>` : ""}
         <a href="#/" class="${active === "home" ? "on" : ""}">Businesses</a>
         ${nav}
         <div class="label">Organisation</div>
@@ -381,6 +383,67 @@ async function homeView() {
         <label>&nbsp;<button type="submit">Create business</button></label>
       </form>
     </div>` : ""}`);
+}
+
+// ------------------------------------------------------------ firm console
+
+const clientFilter = { q: "", attention: false };
+
+/** Every client's books on one page, for accounting and HR firms: what each needs, and a link straight to it. */
+async function clientsView() {
+  state.entity = null;
+  const { clients, today: asOf } = await api("/api/clients");
+  const rows = clients.flatMap((o) => (o.entities.length ? o.entities : [null]).map((e) => ({ o, e })));
+  const q = clientFilter.q.toLowerCase();
+  const shown = rows.filter(({ o, e }) => (!q || o.name.toLowerCase().includes(q) || (e?.name ?? "").toLowerCase().includes(q)) && (!clientFilter.attention || o.locked || (e && e.tasks > 0)));
+  const needing = rows.filter(({ e }) => e && e.tasks > 0).length;
+  const go = (o, e, page, label, n, what) => (n ? `<button class="link" style="white-space:nowrap" data-action="open-client" data-org="${o.id}" data-go="#/e/${e.id}/${page}" title="${esc(what)}">${label} ${n}</button>` : "");
+  const ago = (iso) => {
+    if (!iso) return `<span class="muted">No activity</span>`;
+    const days = Math.floor((Date.parse(asOf) - Date.parse(iso.slice(0, 10))) / 86400000);
+    return days <= 0 ? "Today" : days === 1 ? "Yesterday" : `${days} days ago`;
+  };
+  const lastMonthEnd = monthEnd(Number(asOf.slice(0, 4)), Number(asOf.slice(5, 7)) - 1);
+  const row = ({ o, e }) => {
+    const client = `<strong>${esc(o.name)}</strong><div class="hash">${esc(ROLE_LABEL[o.role] ?? o.role)}${o.example ? " · example books" : ""}</div>`;
+    if (o.locked) return `<tr><td>${client}</td><td colspan="5" class="muted">${esc(o.locked)}</td></tr>`;
+    if (!e) return `<tr><td>${client}</td><td colspan="4" class="muted">No business set up yet.</td><td><button class="link" data-action="open-client" data-org="${o.id}" data-go="#/">Open</button></td></tr>`;
+    const todo = [
+      go(o, e, "bank", "Bank lines", e.bankToReview, "imported bank lines to record"),
+      go(o, e, "reconcile", "Reconcile", e.unreconciled, "bank accounts not reconciled in 45 days"),
+      go(o, e, "invoices", "Overdue invoices", e.overdueInvoices, "invoices past due"),
+      go(o, e, "payroll", "Pay runs", e.payRunsToApprove, "pay runs waiting for approval"),
+      go(o, e, "payroll", "Tax deposits", e.taxDepositsDue, "payroll tax deposits overdue or due within a week"),
+      go(o, e, "periods", "Months to close", e.monthsToClose, "months still open more than a month after they ended"),
+    ].filter(Boolean);
+    const closed = e.closedThrough
+      ? `${e.closedThrough >= lastMonthEnd ? "" : `<span style="color:var(--warn-ink)">`}${longDate(e.closedThrough)}${e.closedThrough >= lastMonthEnd ? "" : "</span>"}`
+      : `<span class="muted">Nothing closed</span>`;
+    return `<tr><td>${client}</td>
+      <td>${esc(e.name)}<div class="hash">${esc(placeName(e.country, e.region))}</div></td>
+      <td>${todo.join("<br>") || `<span class="muted">All caught up</span>`}
+        ${e.nextDeposit ? `<div class="hash">${e.nextDeposit.overdue ? "Overdue" : "Due"} ${esc(e.nextDeposit.dueDate)}: ${esc(e.nextDeposit.what)}</div>` : ""}</td>
+      <td>${closed}</td><td>${ago(e.lastActivity)}</td>
+      <td><button class="link" data-action="open-client" data-org="${o.id}" data-go="#/e/${e.id}/overview">Open</button></td></tr>`;
+  };
+  app.innerHTML = shell("clients", `
+    <div class="head"><div><h1>All clients</h1><p class="muted">Every organisation you can open, and what each business's books need. Click a task to go straight to it.</p></div></div>
+    <div class="row" style="gap:24px;margin-bottom:12px">
+      <div><div class="muted">Clients</div><div class="stat">${clients.filter((o) => !o.example).length}</div></div>
+      <div><div class="muted">Businesses needing work</div><div class="stat">${needing}</div></div>
+    </div>
+    <div class="panel">
+      <form data-form="client-filter" class="row" style="margin-bottom:12px">
+        <label style="flex:1">Find a client<input name="q" value="${esc(clientFilter.q)}" placeholder="Name"></label>
+        <label class="check"><input type="checkbox" name="attention" data-autosubmit ${clientFilter.attention ? "checked" : ""}> Only those needing work</label>
+        <button type="submit" class="secondary">Filter</button>
+      </form>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Client</th><th>Business</th><th>To do</th><th>Books closed through</th><th>Last change</th><th></th></tr></thead>
+        <tbody>${shown.map(row).join("") || `<tr><td colspan="6" class="muted">No clients match.</td></tr>`}</tbody>
+      </table></div>
+      <p class="hash" style="margin-top:8px">To add a client, ask them to invite your firm's email under Team in their TrailBook, usually as an Accountant. The client stays the customer of record and keeps control of who has access.</p>
+    </div>`);
 }
 
 const countryOf = (code) => (state.org?.countries ?? []).find((c) => c.code === code);
@@ -1060,13 +1123,89 @@ function fillFromItem(tr, itemId) {
   tr.querySelector("[name=unitPrice]").value = (Number(item.unitPriceMinor) / 100).toFixed(2);
 }
 
+const REPEAT = [["", "Doesn't repeat"], ["weekly", "Every week"], ["monthly", "Every month"], ["quarterly", "Every quarter"], ["yearly", "Every year"]];
+const REPEAT_LABEL = { weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly", yearly: "Yearly" };
+const EST_PILL = { open: "pill", accepted: "pill grey", declined: "pill grey", expired: "pill warn" };
+const EST_LABEL = { open: "Open", accepted: "Accepted", declined: "Declined", expired: "Expired" };
+const daysFrom = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+
+/** Quotes that haven't posted to the books. Accepting one issues the invoice, taxed on the invoice date. */
+function estimatesPanel(id, estimates, canWrite, emailEnabled) {
+  if (!estimates.length) return "";
+  return `<div class="panel">
+    <h2>Estimates</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>No.</th><th>Customer</th><th>Date</th><th>Good until</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
+      <tbody>${estimates.map((x) => `<tr>
+        <td class="mono">${esc(x.number)}</td>
+        <td>${esc(x.contactName)}${x.memo ? `<div class="hash">${esc(x.memo)}</div>` : ""}${x.emails.length ? `<div class="hash">Emailed ${esc(when(x.emails.at(-1).sentAt))}</div>` : ""}</td>
+        <td>${x.issueDate}</td><td>${x.expiryDate}</td><td class="num">${usd(x.totalMinor)}</td>
+        <td><span class="${EST_PILL[x.status]}">${EST_LABEL[x.status]}</span>${x.invoiceId ? `<div class="hash"><a href="#/e/${id}/invoices/${x.invoiceId}">${esc(x.invoiceNumber)}</a></div>` : ""}</td>
+        <td><div class="row">${canWrite && (x.status === "open" || x.status === "expired") ? `
+          ${emailEnabled ? `<button class="link" data-action="estimate-email" data-id="${x.id}">${x.emails.length ? "Email again" : "Email"}</button>` : ""}
+          <button class="link" data-action="doc-toggle" data-form="est-accept" data-id="${x.id}">Turn into invoice</button>
+          <button class="link" data-action="estimate-decline" data-id="${x.id}">Declined</button>` : ""}</div></td>
+      </tr>
+      <tr hidden data-est-accept="${x.id}"><td colspan="7">
+        <form data-form="est-accept" data-id="${x.id}" class="row">
+          <label>Invoice date<input type="date" name="issueDate" value="${bookDate() < x.issueDate ? x.issueDate : bookDate()}" min="${x.issueDate}" required></label>
+          <label>Due<input type="date" name="dueDate" value="${plusDays(bookDate() < x.issueDate ? x.issueDate : bookDate(), 30)}" required></label>
+          <button type="submit">Issue the invoice</button>
+          <span class="hash">Sales tax is worked out again for the invoice date.</span>
+        </form></td></tr>`).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/** Invoices or bills that TrailBook issues on a schedule, each morning they fall due. */
+function recurringPanel(kind, templates, canWrite) {
+  if (!templates.length) return "";
+  const total = (t) => t.lines.reduce((s, l) => s + Math.round(Number(l.quantity || 0) * Number(l.unitPrice || 0) * 100), 0);
+  return `<div class="panel">
+    <h2>Recurring ${kind === "invoice" ? "invoices" : "bills"}</h2>
+    <p class="hash">TrailBook ${kind === "invoice" ? "issues" : "records"} each one early in the morning (Pacific) on its date${kind === "invoice" ? ", with sales tax worked out for that date" : ""}.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>${kind === "invoice" ? "Customer" : "Vendor"}</th><th>How often</th><th>Next</th><th class="num">Before tax</th><th>So far</th><th></th></tr></thead>
+      <tbody>${templates.map((t) => `<tr>
+        <td>${esc(t.contactName)}${t.memo ? `<div class="hash">${esc(t.memo)}</div>` : ""}${t.email ? `<div class="hash">Emailed to the customer</div>` : ""}</td>
+        <td>${REPEAT_LABEL[t.frequency]}${t.endDate ? `<div class="hash">until ${t.endDate}</div>` : ""}</td>
+        <td>${t.active ? t.nextDate : `<span class="pill grey">Stopped</span>`}</td>
+        <td class="num">${usd(BigInt(total(t)))}</td>
+        <td>${t.issuedCount}${t.lastDocumentId ? ` · last <a href="#/e/${state.entity.entity.id}/${DOC[kind].path}/${t.lastDocumentId}">${esc(t.lastDocumentNumber)}</a>` : ""}
+          ${t.lastError && t.active ? `<div class="alert bad" style="margin-top:4px">Couldn't ${kind === "invoice" ? "issue" : "record"}: ${esc(t.lastError)}. Trying again tomorrow.</div>` : ""}</td>
+        <td>${canWrite && t.active ? `<button class="link" data-action="recurring-stop" data-id="${t.id}">Stop</button>` : ""}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/** Automatic reminders to customers, and where their replies go. */
+function remindersPanel(m, canSet) {
+  return `<div class="panel">
+    <h2>Emails to customers</h2>
+    ${m.emailEnabled ? "" : `<div class="alert warn">Email isn't set up on this site yet, so invoices can't be emailed.</div>`}
+    <form data-form="invoice-emails" class="row">
+      <label class="check"><input type="checkbox" name="reminders" ${m.reminders ? "checked" : ""} ${canSet ? "" : "disabled"}> Send customers automatic reminders: 3 days before the due date, then 1, 7, 14 and 30 days after, while money is still due</label>
+      <label style="min-width:260px">Replies go to<input name="replyTo" type="email" value="${esc(m.replyTo ?? "")}" placeholder="${esc(m.defaultReplyTo ?? "the owner's email")}" ${canSet ? "" : "disabled"}></label>
+      ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+    </form>
+    <p class="hash" style="margin-top:8px">Emails come from your business's name at TrailBook's address, with a link the customer can open to view or print the invoice. Customers pay you the way they already do; record the payment here when it arrives.</p>
+  </div>`;
+}
+
 async function docsView(id, kind) {
   await loadEntity(id);
   const d = DOC[kind];
-  const [{ documents }, ag, { contacts }, { items }] = await Promise.all([
+  const invoice = kind === "invoice";
+  const [{ documents }, ag, { contacts }, { items }, { estimates }, { templates }, mail] = await Promise.all([
     api(entPath(`/${d.path}`)), api(entPath(`/${d.path}/aging`)), api(entPath("/contacts")),
-    kind === "invoice" ? api(entPath("/items")) : { items: [] },
+    invoice ? api(entPath("/items")) : { items: [] },
+    invoice ? api(entPath("/estimates")) : { estimates: [] },
+    api(entPath("/recurring")),
+    invoice ? api(entPath("/invoice-emails")) : null,
   ]);
+  const recurring = templates.filter((t) => t.kind === kind);
+  const canSetEmails = ["owner", "admin", "accountant"].includes(state.org.role);
   state.items = items;
   state.docContacts = contacts;
   Object.assign(docTax, { rate: null, explanation: "", error: "", taxable: null, taxShare: null });
@@ -1103,6 +1242,11 @@ async function docsView(id, kind) {
           <label style="flex:1;min-width:200px">Memo<input name="memo"></label>
         </div>
         ${kind === "bill" ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" name="useTax" ${useTaxDefault ? "checked" : ""}> The vendor didn't charge California sales tax: add the use tax I owe</label>` : ""}
+        <div class="row" style="margin-bottom:12px">
+          <label>Repeat<select name="repeat">${REPEAT.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></label>
+          <label>Repeat until (optional)<input type="date" name="repeatEnd"></label>
+          ${invoice ? `<label class="check"${mail?.emailEnabled ? "" : ' title="Email isn\'t set up on this site yet"'}><input type="checkbox" name="emailIt" ${mail?.emailEnabled ? "" : "disabled"}> Email it to the customer (each time, if it repeats)</label>` : ""}
+        </div>
         <div class="table-wrap"><table>
           <thead><tr>${kind === "invoice" ? `<th style="width:17%">Product or service</th><th>Description</th><th style="width:25%">Kind of sale</th>` : `<th style="width:28%">Account</th><th>Description</th>`}<th>Qty</th><th class="num" style="width:12%">Price</th><th class="num">Amount</th><th></th></tr></thead>
           <tbody id="doc-lines">${docLineRow(kind, {}, useTaxDefault)}</tbody>
@@ -1118,9 +1262,13 @@ async function docsView(id, kind) {
           <label>Set the rate by hand (%)<input name="manualRate" inputmode="decimal" placeholder="9.5" style="width:90px"></label>
           <label style="flex:1">Why<input name="manualReason" placeholder="e.g. CDTFA lookup down; rate from the CDTFA website"></label>
         </div>` : ""}
-        <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button></div>
+        <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button>
+          ${invoice ? `<button type="submit" class="secondary" data-as="estimate">Save as estimate instead</button><span class="hash">An estimate doesn't post to the books; the due date becomes its "good until" date.</span>` : ""}</div>
       </form>
     </div>` : ""}
+    ${invoice ? estimatesPanel(id, estimates, canWrite, Boolean(mail?.emailEnabled)) : ""}
+    ${recurringPanel(kind, recurring, canWrite)}
+    ${invoice && mail ? remindersPanel(mail, canSetEmails) : ""}
     <div class="panel">
       <h2>All ${d.title.toLowerCase()}</h2>
       <div class="table-wrap"><table>
@@ -1170,8 +1318,17 @@ async function docPageView(id, kind, docId) {
   app.innerHTML = shell(d.path, `
     <div class="head no-print">
       <div><a href="#/e/${id}/${d.path}">← All ${d.title.toLowerCase()}</a></div>
-      <div class="row"><button class="secondary" data-action="print">Print or save as PDF</button></div>
+      <div class="row">
+        ${invoice && x.status !== "void" && state.org.role !== "read_only" && state.org.role !== "approver" ? `<button data-action="doc-toggle" data-form="doc-email" data-id="${x.id}">${x.emails?.some((m) => m.kind === "invoice") ? "Email again" : "Email to customer"}</button>` : ""}
+        <button class="secondary" data-action="print">Print or save as PDF</button>
+      </div>
     </div>
+    ${invoice ? `<table class="no-print" style="margin-bottom:12px"><tbody><tr hidden data-doc-email="${x.id}"><td>
+      <form data-form="doc-email" data-id="${x.id}" class="row">
+        <label style="min-width:260px">Send to<input type="email" name="to" value="${esc(who?.email ?? "")}" placeholder="customer@example.com" required></label>
+        <button type="submit">Send</button>
+        <span class="hash">The email has a link to view or print this invoice.</span>
+      </form></td></tr></tbody></table>` : ""}
     <article class="panel doc">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
         <div>
@@ -1211,7 +1368,11 @@ async function docPageView(id, kind, docId) {
       ${invoice ? `<p style="margin-top:8px">${esc(taxExplanation(x))}</p>` : x.useTaxSource !== "none" ? `<p style="margin-top:8px">${esc(useTaxExplanation(x))}</p>` : ""}
       <p class="hash" style="margin-top:8px">Created by ${esc(x.createdBy.replace("user:", ""))}</p>
       ${x.payments.length ? `<h3>Payments</h3>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}` : ""}
+      <h3>Receipts and files</h3><div data-files-box="${x.id}" data-type="document" class="muted">Loading…</div>
+      ${x.emails?.length ? `<h3>Emails</h3>${x.emails.map((m) => `<div class="hash">${esc(when(m.sentAt))} · ${m.kind === "reminder" ? `Reminder (${esc(m.stage)})` : "Invoice"} to ${esc(m.sentTo)} · by ${esc(m.sentBy.replace("user:", "").replace("system:", "TrailBook "))}</div>`).join("")}` : ""}
     </div>`);
+  const files = document.querySelector(`[data-files-box="${x.id}"]`);
+  if (files) fillFiles(files).catch((err) => { files.textContent = err.message; });
 }
 
 /** Why a bill has the use tax it has, from what was frozen on it. Mirrors explainUseTax on the server. */
@@ -1333,10 +1494,12 @@ async function bankView(id) {
   const banks = state.entity.accounts.filter((a) => a.is_active && a.subtype === "bank");
   if (!banks.some((a) => a.code === bankUi.account)) bankUi.account = banks[0]?.code ?? null;
   const q = `?account=${encodeURIComponent(bankUi.account ?? "")}&status=${bankUi.status}`;
-  const [{ lines }, inv, bills] = await Promise.all([
+  const [{ lines }, inv, bills, { rules }, { counts: files }] = await Promise.all([
     api(entPath(`/bank-lines${q}`)),
     bankUi.status === "new" ? api(entPath("/invoices")) : { documents: [] },
     bankUi.status === "new" ? api(entPath("/bills")) : { documents: [] },
+    api(entPath("/bank-rules")),
+    api(entPath("/attachments?type=bank_line")),
   ]);
   const open = (docs) => docs.filter((d) => d.status !== "void" && d.dueMinor !== "0");
   const openInv = open(inv.documents), openBills = open(bills.documents);
@@ -1380,15 +1543,92 @@ async function bankView(id) {
           const amount = `<td class="num" style="color:${amt > 0n ? "var(--good-ink)" : "inherit"}">${usd(l.amountMinor)}</td>`;
           if (l.status === "new") return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}
             <td>${canWrite ? choice(l) : ""}</td>
-            <td>${canWrite ? `<div class="row"><button data-action="bank-record" data-id="${l.id}">Record</button><button class="link" data-action="bank-exclude" data-id="${l.id}">Exclude</button></div>` : ""}</td></tr>`;
+            <td>${canWrite ? `<div class="row"><button data-action="bank-record" data-id="${l.id}">Record</button><button class="link" data-action="bank-exclude" data-id="${l.id}">Exclude</button><button class="link" data-action="rule-from-line" data-id="${l.id}" data-text="${esc(ruleWords(l.description))}" data-dir="${amt > 0n ? "in" : "out"}">Make a rule</button>${fileButton("bank_line", l.id, files[l.id])}</div>` : ""}</td></tr>
+            ${fileRow("bank_line", l.id, 5)}`;
           if (l.status === "posted") return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}
             <td>${l.documentNumber ? `Payment · ${esc(l.documentNumber)}` : `${esc(l.categoryAccount)} · ${esc(state.entity.accounts.find((a) => a.code === l.categoryAccount)?.name ?? "")}`}<div class="hash">by ${esc((l.decidedBy ?? "").replace("user:", ""))}</div></td>
-            <td>${canWrite && !l.documentNumber ? `<form data-form="bank-undo" data-id="${l.id}" class="row"><input name="reason" placeholder="Reason" required style="width:140px"><button class="secondary" type="submit">Undo</button></form>` : ""}</td></tr>`;
+            <td><div class="row">${canWrite && !l.documentNumber ? `<form data-form="bank-undo" data-id="${l.id}" class="row"><input name="reason" placeholder="Reason" required style="width:140px"><button class="secondary" type="submit">Undo</button></form>` : ""}${fileButton("bank_line", l.id, files[l.id])}</div></td></tr>
+            ${fileRow("bank_line", l.id, 5)}`;
           return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}<td></td>
             <td>${canWrite ? `<button class="secondary" data-action="bank-restore" data-id="${l.id}">Restore</button>` : ""}</td></tr>`;
         }).join("") || `<tr><td colspan="5" class="muted">${bankUi.status === "new" ? "Nothing to review. Import a statement to get started." : "Nothing here."}</td></tr>`}</tbody>
       </table></div>
-    </div>`);
+    </div>
+    ${rulesPanel(rules, cats, banks, canWrite)}`);
+}
+
+/** The first word or two of a bank description, as a starting point for a rule. */
+function ruleWords(d) {
+  const words = d.replace(/[^A-Za-z0-9&' ]+/g, " ").trim().split(/\s+/).filter((w) => !/^\d+$/.test(w));
+  return words.slice(0, words[0]?.length > 4 ? 1 : 2).join(" ");
+}
+
+function rulesPanel(rules, cats, banks, canWrite) {
+  const dir = { any: "In or out", in: "Money in", out: "Money out" };
+  const range = (r) => (r.minMinor !== null || r.maxMinor !== null ? `${r.minMinor !== null ? usd(r.minMinor) : "any"} to ${r.maxMinor !== null ? usd(r.maxMinor) : "any"}` : "Any amount");
+  return `<div class="panel" id="bank-rules">
+    <h2>Bank rules</h2>
+    <p class="muted">A rule sends lines whose description contains certain words to a category. It can suggest the category for you to confirm, or record matching lines as soon as they're imported. The oldest matching rule wins; invoices and bills with the same amount are suggested first.</p>
+    ${rules.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Description contains</th><th>Direction</th><th>Amount</th><th>Category</th><th>What it does</th><th class="num">Used</th><th></th></tr></thead>
+      <tbody>${rules.map((r) => `<tr class="${r.active ? "" : "muted"}">
+        <td><strong>${esc(r.matchText)}</strong>${r.bankAccount ? `<div class="hash">only account ${esc(r.bankAccount)}</div>` : ""}</td>
+        <td>${dir[r.direction]}</td><td>${range(r)}</td><td>${esc(r.account)} · ${esc(r.accountName)}</td>
+        <td>${r.active ? (r.autoRecord ? "Records on import" : "Suggests") : "Off"}</td><td class="num">${r.appliedCount}</td>
+        <td>${canWrite && r.active ? `<button class="link" data-action="rule-off" data-id="${r.id}">Turn off</button>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div>` : ""}
+    ${canWrite ? `<form data-form="bank-rule" class="row" style="margin-top:12px">
+      <label>Description contains<input name="matchText" required minlength="2" maxlength="100" placeholder="GUSTO"></label>
+      <label>Direction<select name="direction"><option value="any">In or out</option><option value="in">Money in</option><option value="out">Money out</option></select></label>
+      <label>Category<select name="account" required><option value="">Choose…</option>${cats.filter((a) => a.subtype !== "bank").map((a) => `<option value="${a.code}">${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>
+      <label>From $<input name="min" inputmode="decimal" style="width:90px" placeholder="any"></label>
+      <label>To $<input name="max" inputmode="decimal" style="width:90px" placeholder="any"></label>
+      ${banks.length > 1 ? `<label>Bank account<select name="bankAccount"><option value="">Any</option>${banks.map((a) => `<option value="${a.code}">${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>` : ""}
+      <label class="check"><input type="checkbox" name="autoRecord"> Record matching lines on import</label>
+      <button type="submit">Add rule</button>
+    </form>` : ""}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- files
+
+const FILE_ACCEPT = "application/pdf,image/jpeg,image/png,image/webp,image/heic,image/gif,.heic";
+
+/** A paperclip button that shows (and adds) the files on a record. */
+function fileButton(type, id, n = 0) {
+  return `<button class="link" data-action="files-toggle" data-type="${type}" data-id="${id}">${n ? `Files (${n})` : "Attach"}</button>`;
+}
+
+/** The hidden row a fileButton opens, filled when it opens. */
+function fileRow(type, id, cols) {
+  return `<tr hidden data-files="${id}"><td colspan="${cols}"><div data-files-box="${id}" data-type="${type}" class="muted">Loading…</div></td></tr>`;
+}
+
+async function fillFiles(box) {
+  const type = box.dataset.type, id = box.dataset.filesBox;
+  const r = await api(entPath(`/attachments?type=${type}&id=${id}`));
+  const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  box.classList.remove("muted");
+  box.innerHTML = `${r.attachments.map((a) => `<div class="row" style="gap:12px">
+      <a href="${entPath(`/attachments/${a.id}`)}" target="_blank" rel="noopener">${esc(a.fileName)}</a>
+      <span class="hash">${Math.max(1, Math.round(a.sizeBytes / 1024))} KB · ${esc(when(a.uploadedAt))} · ${esc(a.uploadedBy.replace("user:", ""))}</span>
+      ${canWrite ? `<button class="link" data-action="file-remove" data-id="${a.id}" data-box="${id}">Remove</button>` : ""}
+    </div>`).join("") || `<div class="muted">No files yet.</div>`}
+    ${canWrite ? (r.enabled ? `<label class="row" style="margin-top:8px">Add a receipt or PDF (up to 4 MB)<input type="file" accept="${FILE_ACCEPT}" data-upload="${type}" data-id="${id}"></label>`
+      : `<div class="hash">File storage isn't set up on this site yet.</div>`) : ""}`;
+}
+
+async function uploadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 4 * 1024 * 1024) throw new Error("Files can be up to 4 MB. A phone photo saved as JPEG is usually well under.");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  input.disabled = true;
+  await api(entPath("/attachments"), { body: { objectType: input.dataset.upload, objectId: input.dataset.id, fileName: file.name, data: btoa(bin) } });
+  toast(`${file.name} attached`);
+  await fillFiles(document.querySelector(`[data-files-box="${input.dataset.id}"]`));
 }
 
 // ------------------------------------------------------------ overview
@@ -1491,8 +1731,8 @@ function backupPanel(bk) {
 
 // ------------------------------------------------------------- reports
 
-const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"]];
-const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all" };
+const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["cf", "Cash flows"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"], ["yf", "Contractor forms"]];
+const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all", year: "" };
 
 const RANGE_PRESETS = [["this-month", "This month"], ["last-month", "Last month"], ["this-quarter", "This quarter"], ["last-quarter", "Last quarter"], ["this-year", "This year to date"], ["last-year", "Last year"], ["custom", "Custom dates"]];
 const ASOF_PRESETS = [["today", "Today"], ["end-last-month", "End of last month"], ["end-last-quarter", "End of last quarter"], ["end-last-year", "End of last year"], ["custom", "Custom date"]];
@@ -1533,8 +1773,13 @@ function reportDefaults() {
   if (rep.account !== "all" && !state.entity.accounts.some((a) => a.code === rep.account)) rep.account = "all";
 }
 
+/** Until March, the forms people are working on are last year's. */
+const formsYear = () => { const [y, m] = today().split("-").map(Number); return String(m <= 3 ? y - 1 : y); };
+
 function reportQuery() {
+  if (rep.tab === "yf") return ["/contractor-forms/prepared", `year=${rep.year || formsYear()}`, `contractor-forms-${rep.year || formsYear()}`];
   if (rep.tab === "pl") return ["/reports/profit-and-loss", `from=${rep.from}&to=${rep.to}`, `profit-and-loss-${rep.from}-to-${rep.to}`];
+  if (rep.tab === "cf") return ["/reports/cash-flow", `from=${rep.from}&to=${rep.to}`, `cash-flow-${rep.from}-to-${rep.to}`];
   if (rep.tab === "bs") return ["/reports/balance-sheet", `asOf=${rep.asOf}`, `balance-sheet-${rep.asOf}`];
   if (rep.tab === "st") return ["/reports/sales-tax", `from=${rep.from}&to=${rep.to}`, `sales-tax-${rep.from}-to-${rep.to}`];
   if (rep.tab === "gl") return ["/reports/general-ledger", `account=${encodeURIComponent(rep.account)}&from=${rep.from}&to=${rep.to}`, `general-ledger-${rep.account}-${rep.from}-to-${rep.to}`];
@@ -1555,13 +1800,55 @@ const sectionRows = (s) => `
   <tr><td></td><td><strong>Total ${esc(s.label.toLowerCase())}</strong></td><td class="num"><strong>${usd(s.totalMinor)}</strong></td></tr>`;
 const totalRow = (label, minor) => `<tr><td></td><td><strong>${label}</strong></td><td class="num"><strong>${usd(minor)}</strong></td></tr>`;
 
+const RECIPIENT_TYPES = [["individual", "Individual or sole proprietor"], ["llc", "LLC (not taxed as a corporation)"], ["partnership", "Partnership"], ["attorney", "Attorney or law firm"], ["corporation", "Corporation"], ["other", "Other"]];
+
+/** Contractors paid in a year: who gets a 1099-NEC (US) or T4A (Canada), and the 1096 or T4A Summary totals. */
+async function contractorFormsBody(year) {
+  const s = await api(entPath(`/contractor-forms?year=${year}`));
+  const us = s.form === "1099_nec";
+  const formName = us ? "1099-NEC" : "T4A";
+  const canSet = ["owner", "admin", "accountant"].includes(state.org.role);
+  const kinds = us ? [["ssn", "SSN"], ["ein", "EIN"]] : [["sin", "SIN"], ["bn", "Business number"]];
+  const editRow = (v) => `<tr hidden data-contractor-edit="${v.contactId}"><td colspan="5">
+    <form data-form="contractor-tax" data-id="${v.contactId}" class="row">
+      <label class="check"><input type="checkbox" name="gets" ${v.form ? "checked" : ""}> Gets a ${formName}</label>
+      ${us ? `<label>They are<select name="recipientType">${RECIPIENT_TYPES.map(([k, l]) => `<option value="${k}" ${v.recipientType === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}
+      <label>Number<select name="tinKind">${kinds.map(([k, l]) => `<option value="${k}" ${v.tinKind === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>${us ? "From their W-9" : "Their number"}<input name="tin" autocomplete="off" placeholder="${v.tinLast4 ? `On file, ends ${esc(v.tinLast4)}` : ""}" style="width:170px"></label>
+      <label style="flex:1">Legal name (if different)<input name="legalName" value="${esc(v.legalName ?? "")}"></label>
+      <button type="submit">Save</button>
+    </form>
+    <p class="hash">Leave the number blank to keep the one on file. It's stored encrypted; only the last four digits show here.</p></td></tr>`;
+  return `<p class="muted">${us
+      ? `Form 1099-NEC is for each unincorporated contractor you paid ${usd(s.thresholdMinor)} or more by cash, check or bank transfer in ${year}. Card and payment app payments are reported by the card company on a 1099-K instead.`
+      : `A T4A slip (box 048, fees for services) is for each contractor you paid more than ${usd(s.thresholdMinor)} in ${year}.`}
+      TrailBook prepares the figures from your bill payments; you or your accountant file them (${us ? "IRS IRIS or FIRE, or on paper with Form 1096" : "CRA Internet file transfer or My Business Account, with the T4A Summary"}) and send each contractor their copy by <strong>${longDate(s.dueDate)}</strong>.</p>
+    ${s.warnings.map((w) => `<div class="alert">${esc(w)}</div>`).join("")}
+    <div class="row" style="gap:24px;margin:12px 0">
+      <div><div class="muted">${formName} forms</div><div class="stat">${s.summary.forms}</div></div>
+      <div><div class="muted">${us ? "1096 total (box 5)" : "T4A Summary total (box 048)"}</div><div class="stat">${usd(s.summary.totalMinor)}</div></div>
+      <div><div class="muted">Payer ${us ? "EIN" : "business number"}</div><div class="stat mono">${esc(s.payer.tin ?? "Not set")}</div></div>
+    </div>
+    <table><thead><tr><th>Vendor</th><th>${us ? "SSN or EIN" : "SIN or BN"}</th><th class="num">Paid in ${year}</th><th>${formName}</th><th></th></tr></thead>
+    <tbody>${s.vendors.map((v) => `<tr><td>${esc(v.name)}${v.legalName ? `<div class="hash">${esc(v.legalName)}</div>` : ""}</td>
+        <td class="mono" style="white-space:nowrap">${v.tinLast4 ? `${esc(v.tinKind.toUpperCase())} ···${esc(v.tinLast4)}` : ""}</td>
+        <td class="num">${usd(v.paidMinor)}</td>
+        <td>${v.reportable ? `<strong>Due</strong>` : `<span class="muted">No</span>`}${v.notes.map((n) => `<div class="muted" style="font-size:13px">${esc(n)}</div>`).join("")}</td>
+        <td>${canSet ? `<button class="link" data-action="doc-toggle" data-form="contractor-edit" data-id="${v.contactId}">${v.form ? "Edit" : "Set up"}</button>` : ""}</td></tr>
+      ${canSet ? editRow(v) : ""}`).join("") || `<tr><td colspan="5" class="muted">No bill payments to vendors in ${year}.</td></tr>`}</tbody></table>
+    <p class="hash" style="margin-top:8px">Download CSV has masked numbers, for checking. ${canSet ? "Download for filing has the full numbers for your filing software; each download is logged." : ""}</p>`;
+}
+
 async function reportsView(id) {
   await loadEntity(id);
   reportDefaults();
   const [path, q] = reportQuery();
-  const range = ["pl", "gl", "st"].includes(rep.tab);
+  const range = ["pl", "cf", "gl", "st"].includes(rep.tab);
   let body;
-  if (rep.tab === "pl") {
+  if (rep.tab === "yf") {
+    rep.year ||= formsYear();
+    body = await contractorFormsBody(rep.year);
+  } else if (rep.tab === "pl") {
     const pl = await api(entPath(`${path}?${q}`));
     const [rev, cor, opx, oi, oe] = pl.sections;
     body = `<table><tbody>${sectionRows(rev)}${sectionRows(cor)}${totalRow("Gross profit", pl.grossProfitMinor)}${sectionRows(opx)}
@@ -1579,6 +1866,25 @@ async function reportsView(id) {
       <tr><td></td><td>Current year earnings</td><td class="num">${usd(bs.currentYearEarningsMinor)}</td></tr>
       ${totalRow("Total equity", bs.totalEquityMinor)}</tbody>
       <tfoot><tr><td></td><td>Liabilities and equity</td><td class="num">${usd(BigInt(bs.totalLiabilitiesMinor) + BigInt(bs.totalEquityMinor))}</td></tr></tfoot></table>`;
+  } else if (rep.tab === "cf") {
+    const cf = await api(entPath(`${path}?${q}`));
+    const rows = (xs, prefix = "") => xs.map((r) => `<tr><td class="mono">${r.code}</td><td>${prefix}${esc(r.name)}</td><td class="num">${usd(r.amountMinor)}</td></tr>`).join("");
+    const none = (xs) => (xs.length ? "" : `<tr><td></td><td class="muted">None</td><td></td></tr>`);
+    body = `${cf.tiesOut ? "" : `<div class="alert bad">The net change doesn't match the change in cash. Check the trial balance.</div>`}
+      <p class="muted">Indirect method: net income, adjusted for the change in each balance sheet account. Growth in an asset used cash; growth in a liability or equity brought it in.</p>
+      <table><tbody>
+        <tr><th colspan="3">Operating activities</th></tr>
+        <tr><td></td><td>Net income</td><td class="num">${usd(cf.netIncomeMinor)}</td></tr>
+        ${rows(cf.operating, "Change in ")}
+        ${totalRow("Net cash from operating activities", cf.operatingMinor)}
+        <tr><th colspan="3">Investing activities</th></tr>${rows(cf.investing)}${none(cf.investing)}
+        ${totalRow("Net cash from investing activities", cf.investingMinor)}
+        <tr><th colspan="3">Financing activities</th></tr>${rows(cf.financing)}${none(cf.financing)}
+        ${totalRow("Net cash from financing activities", cf.financingMinor)}
+        ${cf.unclassified.length ? `<tr><th colspan="3">Not classified</th></tr>${rows(cf.unclassified)}${totalRow("Total not classified", cf.unclassifiedMinor)}` : ""}
+        ${totalRow("Net change in cash", cf.netChangeMinor)}
+        <tr><td></td><td>Cash at ${longDate(cf.from)}</td><td class="num">${usd(cf.cashStartMinor)}</td></tr>
+      </tbody><tfoot><tr><td></td><td>Cash at ${longDate(cf.to)}</td><td class="num">${usd(cf.cashEndMinor)}</td></tr></tfoot></table>`;
   } else if (rep.tab === "st") {
     const r = await api(entPath(`${path}?${q}`));
     const line = (label, minor, note = "") => `<tr><td>${label}${note ? `<div class="hash">${note}</div>` : ""}</td><td class="num">${usd(minor)}</td></tr>`;
@@ -1628,16 +1934,103 @@ async function reportsView(id) {
     <div class="panel">
       <form data-form="report" class="row" style="margin-bottom:12px">
         ${rep.tab === "gl" ? `<label>Account<select name="account" data-autosubmit><option value="all">All accounts</option>${state.entity.accounts.map((a) => `<option value="${a.code}" ${a.code === rep.account ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>` : ""}
-        ${range
+        ${rep.tab === "yf"
+          ? `<label>Payments in<select name="year" data-autosubmit>${[0, 1, 2].map((n) => String(Number(formsYear()) + 1 - n)).map((y) => `<option ${y === rep.year ? "selected" : ""}>${y}</option>`).join("")}</select></label>`
+          : range
           ? `<label>Dates<select name="preset" data-autosubmit>${RANGE_PRESETS.map(([k, l]) => `<option value="${k}" ${rep.preset === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
              <label>From<input type="date" name="from" value="${rep.from}" required data-custom="preset"></label><label>To<input type="date" name="to" value="${rep.to}" required data-custom="preset"></label>`
           : `<label>As of<select name="asPreset" data-autosubmit>${ASOF_PRESETS.map(([k, l]) => `<option value="${k}" ${rep.asPreset === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
              <label>Date<input type="date" name="asOf" value="${rep.asOf}" required data-custom="asPreset"></label>`}
         <button type="submit" class="secondary">Update</button>
         <button type="button" data-action="report-csv">Download CSV</button>
+        ${rep.tab === "yf" && ["owner", "admin", "accountant"].includes(state.org.role) ? `<button type="button" class="secondary" data-action="report-csv" data-full="1" title="With full taxpayer numbers, for filing. Logged in the audit trail">Download for filing</button>` : ""}
       </form>
       <div class="table-wrap">${body}</div>
     </div>`);
+}
+
+// ------------------------------------------------- moving from QuickBooks or Xero
+
+const move = { startDate: "", results: {}, files: {} };
+
+const MOVE_STEPS = [
+  ["chart", "1. Chart of accounts",
+    "QuickBooks: Reports, search for Account List, then Export to CSV. Xero: Accounting, Chart of accounts, Export.",
+    "Each account is matched to one here by name, or added with the right kind and tax line. Receivables, payables and retained earnings map to TrailBook's own."],
+  ["contacts", "2. Customers and vendors",
+    "QuickBooks: Reports, Customer Contact List and Vendor Contact List, Export to CSV (one file each). Xero: Contacts, All contacts, Export.",
+    "Names already here are left alone. Addresses come in when they have a street, city, two-letter state and ZIP or postal code."],
+  ["invoices", "3. Open invoices",
+    "QuickBooks: Reports, Open Invoices, as of the day before TrailBook starts, Export to CSV. Xero: Business, Invoices, Awaiting payment, Export.",
+    "Each one becomes an invoice dated the day TrailBook starts, for what's still owed, so you can record its payment here. Credit notes and unapplied payments are listed for you to enter by hand."],
+  ["bills", "4. Unpaid bills",
+    "QuickBooks: Reports, Unpaid Bills, Export to CSV. Xero: Business, Bills to pay, Awaiting payment, Export.",
+    "The same for what you still owe vendors."],
+  ["opening", "5. Trial balance",
+    "QuickBooks: Reports, Trial Balance, as of the day before TrailBook starts, Export to CSV. Xero: Accounting, Reports, Trial Balance, same date, Export to CSV.",
+    "Posted as one opening entry. Receivables and payables come from the invoices and bills above, so do this step last; any difference from the old totals is shown and goes to opening balance equity."],
+];
+
+function moveResult(step, r) {
+  if (!r) return "";
+  const x = r.result;
+  const head = r.preview ? `<div class="alert">Preview only: nothing was saved. Check it, then choose Import.</div>` : `<div class="alert good">Imported.</div>`;
+  const list = (items, fn) => (items?.length ? `<ul>${items.slice(0, 50).map((i) => `<li>${fn(i)}</li>`).join("")}${items.length > 50 ? `<li class="muted">and ${items.length - 50} more</li>` : ""}</ul>` : "");
+  let body = "";
+  if (step === "chart") {
+    body = `<p>${x.created.length} new, ${x.matched.length} matched, ${x.skipped.length} skipped (read as ${x.source === "xero" ? "Xero" : "QuickBooks"}).</p>
+      ${list(x.created, (c) => `<span class="mono">${esc(c.code)}</span> ${esc(c.name)} <span class="muted">(${esc(c.kind)})</span>`)}
+      ${list(x.matched, (m) => `${esc(m.from)} → ${esc(m.to)}`)}
+      ${list(x.skipped, (k) => `${esc(k.name)}: <span class="muted">${esc(k.reason)}</span>`)}`;
+  } else if (step === "contacts") {
+    body = `<p>${x.created.length} added, ${x.skipped.length} already here.</p>${list(x.notes, (n) => `${esc(n.name)}: <span class="muted">${esc(n.note)}</span>`)}`;
+  } else if (step === "invoices" || step === "bills") {
+    const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+    body = `<p>${plural(x.created.length, step.slice(0, -1))} totalling <strong>${usd(x.totalMinor)}</strong>${x.newContacts.length ? `, with ${plural(x.newContacts.length, `new ${step === "invoices" ? "customer" : "vendor"}`)}` : ""}.</p>
+      ${list(x.created, (d) => `${esc(d.contact)} · ${esc(d.number)} · ${usd(d.openMinor)}`)}
+      ${list(x.skipped, (k) => `${esc(k.row)}: <span class="muted">${esc(k.reason)}</span>`)}`;
+  } else {
+    body = x.unmatched.length
+      ? `<div class="alert bad">${esc(x.warnings[0])}</div>${list(x.unmatched, (n) => esc(n))}`
+      : `${x.warnings.map((w) => `<div class="alert">${esc(w)}</div>`).join("")}
+        <p>Receivables: old ${usd(x.receivables.trialBalanceMinor)}, invoices brought in ${usd(x.receivables.documentsMinor)}. Payables: old ${usd(x.payables.trialBalanceMinor)}, bills brought in ${usd(x.payables.documentsMinor)}.</p>
+        <table><thead><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead>
+        <tbody>${x.lines.map((l) => `<tr><td class="mono">${esc(l.account)} ${esc(state.entity.accounts.find((a) => a.code === l.account)?.name ?? "")}</td><td class="num">${usd(l.debitMinor, { blankZero: true })}</td><td class="num">${usd(l.creditMinor, { blankZero: true })}</td></tr>`).join("")}</tbody></table>`;
+  }
+  return `<div style="margin-top:12px">${head}${body}</div>`;
+}
+
+async function moveView(id) {
+  await loadEntity(id);
+  if (move.entityId !== id) Object.assign(move, { entityId: id, startDate: "", results: {}, files: {} });
+  const st = await api(entPath("/migration"));
+  move.startDate ||= st.openingDate ?? st.booksStart ?? today();
+  const canImport = ["owner", "admin", "accountant"].includes(state.org.role);
+  const done = { chart: st.accountsMapped > 0, contacts: st.contacts > 0, invoices: st.openInvoices > 0, bills: st.openBills > 0, opening: Boolean(st.openingDate) };
+  app.innerHTML = shell("move", `
+    <div class="head"><div><h1>Move from QuickBooks or Xero</h1><p class="muted">Bring a business over from QuickBooks Online or Xero with five exports. Preview each one first; nothing is saved until you choose Import, and each step can be run again without doubling up.</p></div></div>
+    <div class="panel">
+      <form data-form="move-date" class="row">
+        <label>TrailBook books start on<input type="date" name="startDate" value="${esc(move.startDate)}" required data-autosubmit></label>
+        <p class="hash" style="flex:1">Export the open invoices, unpaid bills and trial balance as of the day before. Your books here start ${st.booksStart ? longDate(st.booksStart) : "with the first month set up"}.</p>
+      </form>
+      ${st.clearing.length ? `<div class="alert">${st.clearing.map((c) => `${esc(c.name)} has ${usd(c.netMinor < 0 ? -BigInt(c.netMinor) : c.netMinor)} left in it.`).join(" ")} ${st.openingDate ? "Invoices or bills came in after the trial balance; post a journal entry to move it to receivables or payables, or ask us." : "That's expected until the trial balance is in."}</div>` : ""}
+    </div>
+    ${MOVE_STEPS.map(([step, title, how, what]) => `
+      <div class="panel">
+        <h2>${title} ${done[step] ? `<span class="muted" style="font-size:14px;font-weight:400">· done</span>` : ""}</h2>
+        <p class="muted">${esc(what)}</p>
+        <p class="hash">${esc(how)}</p>
+        ${canImport ? `<form data-form="move" data-step="${step}" class="row">
+          <label>CSV file<input type="file" name="file" accept=".csv,text/csv" ${move.files[step] ? "" : "required"}></label>
+          ${move.files[step] ? `<span class="hash">Or keep ${esc(move.files[step].name)} from the preview</span>` : ""}
+          ${step === "contacts" ? `<label>From Xero, they are<select name="kind"><option value="both">Customers and vendors</option><option value="customer">Customers</option><option value="vendor">Vendors</option></select></label>` : ""}
+          ${step === "opening" ? `<label class="check" title="For a trial balance at the end of a year: last year's income and expenses go into retained earnings instead of this year's profit and loss"><input type="checkbox" name="rollIncome" checked> Trial balance is at a year end</label>` : ""}
+          <button type="submit" class="secondary" data-as="preview">Preview</button>
+          <button type="submit" data-as="import">Import</button>
+        </form>` : `<p class="muted">An owner, admin or accountant can run this step.</p>`}
+        ${moveResult(step, move.results[step])}
+      </div>`).join("")}`);
 }
 
 // ---------------------------------------------------------- reconciliation
@@ -2911,10 +3304,11 @@ async function route() {
       if (parts[2] === "sales-tax") return await salesTaxView(parts[1], parts[3]);
       if (parts[2] === "payroll" && parts[3] === "form" && parts[4]) return await formView(parts[1], parts[4], parts[5], parts[6]);
       if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
-      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView, integrations: integrationsView, milepost: milepostView }[parts[2] ?? "overview"] ?? overviewView;
+      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView, integrations: integrationsView, milepost: milepostView, move: moveView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
+    if (parts[0] === "clients") return await clientsView();
     if (parts[0] === "billing" && parts[1] === "card" && parts[2]) return await cardReturnView(parts[2]);
     if (parts[0] === "billing") return await billingView();
     if (parts[0] === "audit") return await auditView();
@@ -2943,6 +3337,7 @@ document.addEventListener("input", (ev) => {
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.dataset.upload) uploadFile(t).catch((err) => { t.disabled = false; toast(err.message); });
   if (t.name === "country" && t.closest("form[data-form=entity]")) {
     t.form.elements.namedItem("region").innerHTML = regionOptions(t.value);
     t.form.querySelector("[data-region-label]").textContent = countryOf(t.value)?.regionLabel ?? "State";
@@ -3128,6 +3523,46 @@ document.addEventListener("click", async (ev) => {
       if (document.querySelectorAll("#doc-lines tr").length > 1) b.closest("tr").remove();
       updateDocTotals();
       if (document.querySelector("form[data-form=document][data-kind=invoice]") || useTaxOn()) scheduleTaxPreview();
+    } else if (a === "files-toggle") {
+      const row = document.querySelector(`tr[data-files="${b.dataset.id}"]`) ?? document.querySelector(`[data-files="${b.dataset.id}"]`);
+      row.hidden = !row.hidden;
+      if (!row.hidden) await fillFiles(row.querySelector("[data-files-box]"));
+    } else if (a === "file-remove") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remove this file? Click again"; return; }
+      b.disabled = true;
+      await api(entPath(`/attachments/${b.dataset.id}/remove`), { body: {} });
+      toast("File removed");
+      await fillFiles(document.querySelector(`[data-files-box="${b.dataset.box}"]`));
+    } else if (a === "rule-from-line") {
+      const form = document.querySelector("form[data-form=bank-rule]");
+      form.elements.namedItem("matchText").value = b.dataset.text;
+      form.elements.namedItem("direction").value = b.dataset.dir;
+      const choice = document.querySelector(`[data-line-choice="${b.dataset.id}"]`)?.value ?? "";
+      if (choice.startsWith("acct:")) form.elements.namedItem("account").value = choice.slice(5);
+      form.scrollIntoView({ behavior: "smooth", block: "center" });
+      form.elements.namedItem("matchText").focus();
+    } else if (a === "rule-off") {
+      b.disabled = true;
+      await api(entPath(`/bank-rules/${b.dataset.id}/off`), { body: {} });
+      toast("Rule turned off");
+      await bankView(state.entity.entity.id);
+    } else if (a === "estimate-email") {
+      b.disabled = true;
+      const r = await api(entPath(`/estimates/${b.dataset.id}/email`), { body: {} });
+      toast(`Emailed to ${r.sentTo}`);
+      await docsView(state.entity.entity.id, "invoice");
+    } else if (a === "estimate-decline") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Mark declined? Click again"; return; }
+      b.disabled = true;
+      await api(entPath(`/estimates/${b.dataset.id}/decline`), { body: {} });
+      toast("Marked declined");
+      await docsView(state.entity.entity.id, "invoice");
+    } else if (a === "recurring-stop") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Stop it? Click again"; return; }
+      b.disabled = true;
+      const t = await api(entPath(`/recurring/${b.dataset.id}/stop`), { body: {} });
+      toast("Stopped. Nothing more will be issued on this schedule");
+      await docsView(state.entity.entity.id, t.kind);
     } else if (a === "doc-toggle") {
       const row = document.querySelector(`tr[data-${b.dataset.form}="${b.dataset.id}"]`);
       row.hidden = !row.hidden;
@@ -3205,6 +3640,11 @@ document.addEventListener("click", async (ev) => {
       await api("/api/auth/logout", { body: {} });
       state.me = null; state.org = null; state.orgId = null;
       await route();
+    } else if (a === "open-client") {
+      state.orgId = b.dataset.org;
+      try { localStorage.setItem("altqbo_org", b.dataset.org); } catch {}
+      state.org = null; state.entity = null;
+      if (location.hash === b.dataset.go) await route(); else location.hash = b.dataset.go;
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);
@@ -3229,7 +3669,7 @@ document.addEventListener("click", async (ev) => {
       b.disabled = false;
     } else if (a === "report-csv") {
       const [path, q, name] = reportQuery();
-      const res = await api(entPath(`${path}?${q}&format=csv`), { raw: true });
+      const res = await api(entPath(`${path}?${q}&format=csv${b.dataset.full ? "&tin=full" : ""}`), { raw: true });
       if (!res.ok) throw new Error((await res.json()).error);
       const url = URL.createObjectURL(await res.blob());
       Object.assign(document.createElement("a"), { href: url, download: `${name}.csv` }).click();
@@ -3425,6 +3865,33 @@ document.addEventListener("submit", async (ev) => {
       if (d.preset && d.preset !== "custom") [rep.from, rep.to] = presetRange(d.preset);
       if (d.asPreset && d.asPreset !== "custom") rep.asOf = presetAsOf(d.asPreset);
       await reportsView(state.entity.entity.id);
+    } else if (kind === "move-date") {
+      move.startDate = d.startDate;
+    } else if (kind === "move") {
+      const step = f.dataset.step;
+      const file = f.querySelector("[name=file]").files[0];
+      if (file && file.size > 4_500_000) throw new Error("that file is over 4.5 MB; export a shorter date range or split it");
+      if (file) move.files[step] = { name: file.name, text: await file.text() };
+      if (!move.files[step]) throw new Error("choose the CSV file first");
+      const preview = ev.submitter?.dataset.as !== "import";
+      const r = await api(entPath(`/migration/${step}`), { body: {
+        csv: move.files[step].text, preview, startDate: move.startDate, kind: d.kind, rollIncome: f.querySelector("[name=rollIncome]")?.checked ?? false,
+      } });
+      move.results[step] = r;
+      if (!preview) { delete move.files[step]; state.entity.fresh = false; toast("Imported"); }
+      await moveView(state.entity.entity.id);
+    } else if (kind === "client-filter") {
+      clientFilter.q = d.q ?? "";
+      clientFilter.attention = f.querySelector("[name=attention]").checked;
+      await clientsView();
+    } else if (kind === "contractor-tax") {
+      const gets = f.querySelector("[name=gets]").checked;
+      const form = gets ? (state.entity.entity.country === "CA" ? "t4a" : "1099_nec") : null;
+      await api(entPath(`/contacts/${f.dataset.id}/tax-form`), { body: {
+        form, recipientType: d.recipientType, tinKind: d.tinKind, legalName: d.legalName ?? "", ...(d.tin?.trim() ? { tin: d.tin.trim() } : {}),
+      } });
+      toast(gets ? "Saved" : "Won't get a form");
+      await reportsView(state.entity.entity.id);
     } else if (kind === "journal-search") {
       jr.q = d.q.trim();
       await journalView(state.entity.entity.id);
@@ -3480,9 +3947,42 @@ document.addEventListener("submit", async (ev) => {
       const lines = readDocLines().filter((l) => l.unitPrice || l.itemId);
       const manualTax = d.manualRate?.trim() ? { ratePercent: d.manualRate.trim(), reason: d.manualReason ?? "" } : undefined;
       const useTax = k === "bill" ? useTaxOn() : undefined;
+      if (ev.submitter?.dataset.as === "estimate") {
+        const est = await api(entPath("/estimates"), { body: { contactId, issueDate: d.issueDate, expiryDate: d.dueDate, memo: d.memo, lines } });
+        toast(`Estimate ${est.number} saved for ${usd(est.totalMinor)}`);
+        return await docsView(state.entity.entity.id, k);
+      }
       const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, useTax, idempotencyKey: crypto.randomUUID() } });
-      toast(`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`);
+      const notes = [`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`];
+      if (d.repeat) {
+        try {
+          const t = await api(entPath("/recurring"), { body: {
+            kind: k, contactId, lines, memo: d.memo, reference: d.reference, dueDays: daysFrom(d.issueDate, d.dueDate || d.issueDate),
+            frequency: d.repeat, after: d.issueDate, endDate: d.repeatEnd || undefined, email: Boolean(d.emailIt), useTax,
+          } });
+          notes.push(`the next one is on ${t.nextDate}`);
+        } catch (err) { notes.push(`but the schedule wasn't saved: ${err.message}`); }
+      }
+      if (d.emailIt) {
+        try {
+          const r = await api(entPath(`/invoices/${doc.id}/email`), { body: {} });
+          notes.push(`emailed to ${r.sentTo}`);
+        } catch (err) { notes.push(`but it wasn't emailed: ${err.message}`); }
+      }
+      toast(notes.join("; "));
       await docsView(state.entity.entity.id, k);
+    } else if (kind === "est-accept") {
+      const r = await api(entPath(`/estimates/${f.dataset.id}/accept`), { body: d });
+      toast(`${r.invoice.number} issued for ${usd(r.invoice.totalMinor)} from ${r.estimate.number}`);
+      location.hash = `#/e/${state.entity.entity.id}/invoices/${r.invoice.id}`;
+    } else if (kind === "doc-email") {
+      const r = await api(entPath(`/invoices/${f.dataset.id}/email`), { body: { to: d.to } });
+      toast(`Emailed to ${r.sentTo}`);
+      await docPageView(state.entity.entity.id, "invoice", f.dataset.id);
+    } else if (kind === "invoice-emails") {
+      await api(entPath("/invoice-emails"), { body: { reminders: Boolean(f.querySelector("[name=reminders]").checked), replyTo: d.replyTo ?? "" } });
+      toast("Saved");
+      await docsView(state.entity.entity.id, "invoice");
     } else if (kind === "pay") {
       const k = f.dataset.kind;
       await api(entPath(`/${DOC[k].path}/${f.dataset.id}/payments`), { body: { ...d, idempotencyKey: crypto.randomUUID() } });
@@ -3502,8 +4002,12 @@ document.addEventListener("submit", async (ev) => {
       const csv = file ? await file.text() : d.csv;
       if (!csv?.trim()) throw new Error("Choose a CSV file or paste one");
       const r = await api(entPath("/bank-imports"), { body: { bankAccount: bankUi.account, csv, fileName: file?.name ?? "pasted" } });
-      toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
+      toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.autoRecorded ? ` (${r.autoRecorded} recorded by your rules)` : ""}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
       bankUi.status = "new";
+      await bankView(state.entity.entity.id);
+    } else if (kind === "bank-rule") {
+      await api(entPath("/bank-rules"), { body: { ...d, autoRecord: Boolean(f.querySelector("[name=autoRecord]").checked) } });
+      toast(`Rule added. Lines containing "${d.matchText}" now go to ${d.account}`);
       await bankView(state.entity.entity.id);
     } else if (kind === "bank-undo") {
       await api(entPath(`/bank-lines/${f.dataset.id}/undo`), { body: { date: bookDate(), reason: d.reason } });

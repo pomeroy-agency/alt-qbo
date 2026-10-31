@@ -1,3 +1,4 @@
+import { activeRules, countRuleUse, firstMatch } from "./bank-rules.js";
 import type { Tx } from "../db/pool.js";
 import { appendAudit } from "./audit.js";
 import { recordPayment, type DocumentKind } from "./documents.js";
@@ -137,9 +138,21 @@ async function bankAccount(tx: Tx, entityId: string, key: string) {
   return a as { id: string; code: string; name: string };
 }
 
+/** Whether an entry dated this day can post: its month is open (or soft-closed, when the request allows that). */
+async function periodOpenFor(tx: Tx, entityId: string, date: string): Promise<boolean> {
+  const r = (await tx.query(
+    `SELECT status, current_setting('app.allow_soft_closed', true) AS soft FROM periods WHERE entity_id = $1 AND start_date <= $2 AND end_date >= $2`,
+    [entityId, date],
+  )).rows[0];
+  if (!r) return false;
+  return r.status === "open" || (r.status === "soft_closed" && r.soft === "on");
+}
+
 export interface ImportResult {
   importId: string;
   added: number;
+  /** Lines a bank rule recorded straight away. */
+  autoRecorded: number;
   duplicates: number;
   unreadableRows: number[];
 }
@@ -176,12 +189,14 @@ export async function importBankCsv(
     [input.orgId, input.entityId, acct.id, (input.fileName ?? "").slice(0, 200), fresh.length, keyed.length - fresh.length, unreadable.length, input.actor.id],
   ));
   const importId: string = imp.rows[0].id;
+  const inserted: { id: string; date: string; description: string; amountMinor: bigint }[] = [];
   for (const r of fresh) {
-    await run(() => tx.query(
+    const ins = await run(() => tx.query(
       `INSERT INTO bank_lines (org_id, entity_id, bank_account_id, import_id, txn_date, description, amount_minor, dedupe_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
       [input.orgId, input.entityId, acct.id, importId, r.date, r.description, r.amountMinor, r.key],
     ));
+    inserted.push({ id: ins.rows[0].id, date: r.date, description: r.description, amountMinor: r.amountMinor });
   }
   await appendAudit(tx, {
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "bank.imported",
@@ -189,7 +204,24 @@ export async function importBankCsv(
     after: { bankAccount: acct.code, fileName: input.fileName ?? "", added: fresh.length, duplicates: keyed.length - fresh.length, unreadableRows: unreadable },
     context: { role: input.actor.role },
   });
-  return { importId, added: fresh.length, duplicates: keyed.length - fresh.length, unreadableRows: unreadable };
+  // Rules set to record on import do so now. A line that can't be recorded
+  // (its month is closed, say) stays in the review queue.
+  let autoRecorded = 0;
+  // The first matching rule decides, as on the review screen: a suggest-only rule ahead of an auto one wins.
+  const rules = await activeRules(tx, input.entityId);
+  if (rules.some((r) => r.auto_record)) {
+    for (const line of inserted) {
+      const rule = firstMatch(rules, { ...line, bankAccountId: acct.id });
+      if (!rule?.auto_record) continue;
+      // Savepoints can't be used here (the ledger checks each entry is written by the top-level transaction), so
+      // the one likely failure, a closed month, is checked first.
+      if (!(await periodOpenFor(tx, input.entityId, line.date))) continue;
+      await categorizeBankLine(tx, { orgId: input.orgId, entityId: input.entityId, lineId: line.id, account: rule.account_code, memo: rule.memo ?? undefined, actor: input.actor, ruleId: rule.id });
+      await countRuleUse(tx, rule.id);
+      autoRecorded++;
+    }
+  }
+  return { importId, added: fresh.length, autoRecorded, duplicates: keyed.length - fresh.length, unreadableRows: unreadable };
 }
 
 // ------------------------------------------------------------------- review
@@ -198,6 +230,7 @@ export type BankLineStatus = "new" | "posted" | "excluded";
 
 export interface Suggestion {
   kind: "invoice" | "bill" | "account";
+  ruleId?: string;
   documentId?: string;
   account?: string;
   label: string;
@@ -227,7 +260,7 @@ export async function listBankLines(
 ): Promise<BankLine[]> {
   const acct = input.bankAccount ? await bankAccount(tx, input.entityId, input.bankAccount) : null;
   const { rows } = await tx.query(
-    `SELECT b.id, a.code AS bank_code, b.txn_date, b.description, b.amount_minor, b.status, b.entry_id,
+    `SELECT b.id, b.bank_account_id, a.code AS bank_code, b.txn_date, b.description, b.amount_minor, b.status, b.entry_id,
             c.code AS category_code, b.document_id, d.number AS document_number, b.decided_by
        FROM bank_lines b
        JOIN accounts a ON a.id = b.bank_account_id
@@ -237,6 +270,7 @@ export async function listBankLines(
       ORDER BY b.txn_date DESC, b.created_at DESC LIMIT $4`,
     [input.entityId, acct?.id ?? null, input.status ?? null, Math.min(input.limit ?? 500, 2000)],
   );
+  const accountOf = new Map(rows.map((r) => [r.id as string, r.bank_account_id as string]));
   const lines: BankLine[] = rows.map((r) => ({
     id: r.id, bankAccount: r.bank_code, date: r.txn_date, description: r.description, amountMinor: r.amount_minor,
     status: r.status, entryId: r.entry_id, categoryAccount: r.category_code, documentId: r.document_id,
@@ -258,6 +292,7 @@ export async function listBankLines(
   )).rows;
   const byWord = new Map<string, { code: string; description: string }>();
   for (const p of past) if (!byWord.has(firstWord(p.description))) byWord.set(firstWord(p.description), { code: p.code, description: p.description });
+  const rules = await activeRules(tx, input.entityId);
   const used = new Set<string>();
   for (const l of lines) {
     if (l.status !== "new") continue;
@@ -267,6 +302,11 @@ export async function listBankLines(
     if (doc) {
       used.add(doc.id);
       l.suggestion = { kind, documentId: doc.id, label: `${kind === "invoice" ? "Payment from" : "Payment to"} ${doc.name} for ${doc.number}` };
+      continue;
+    }
+    const rule = firstMatch(rules, { description: l.description, amountMinor: l.amountMinor, bankAccountId: accountOf.get(l.id)! });
+    if (rule) {
+      l.suggestion = { kind: "account", account: rule.account_code, label: `Rule: description contains "${rule.match_text}"`, ruleId: rule.id };
       continue;
     }
     const prior = byWord.get(firstWord(l.description));
@@ -288,7 +328,7 @@ async function lockLine(tx: Tx, entityId: string, lineId: string) {
 /** Records a bank line against an account: bank and category, either way round by sign. */
 export async function categorizeBankLine(
   tx: Tx,
-  input: { orgId: string; entityId: string; lineId: string; account: string; memo?: string; actor: Actor },
+  input: { orgId: string; entityId: string; lineId: string; account: string; memo?: string; actor: Actor; ruleId?: string },
 ): Promise<BankLine> {
   requireWriter(input.actor, "record bank lines");
   const line = await lockLine(tx, input.entityId, input.lineId);
@@ -326,7 +366,7 @@ export async function categorizeBankLine(
   await appendAudit(tx, {
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "bank_line.categorized",
     objectType: "bank_line", objectId: line.id, after: { account: c.code, entryId: entry.id, amount: line.amount_minor },
-    context: { role: input.actor.role },
+    context: { role: input.actor.role, ...(input.ruleId ? { ruleId: input.ruleId } : {}) },
   });
   return (await listOne(tx, input.entityId, line.id));
 }

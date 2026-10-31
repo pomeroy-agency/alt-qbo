@@ -4,7 +4,7 @@ import { postJournal } from "../src/core/ledger.js";
 import { createContact, issueDocument } from "../src/core/documents.js";
 import { importBankCsv } from "../src/core/bank.js";
 import {
-  balanceSheet, balanceSheetCsv, booksHealth, fiscalYearStart, generalLedger, generalLedgerCsv, profitAndLoss, profitAndLossCsv,
+  balanceSheet, balanceSheetCsv, booksHealth, cashFlowCsv, cashFlowStatement, fiscalYearStart, generalLedger, generalLedgerCsv, profitAndLoss, profitAndLossCsv,
 } from "../src/core/statements.js";
 import { bookkeeper, pool, setupCaliforniaBusiness } from "./helpers.js";
 
@@ -25,6 +25,21 @@ async function business() {
 }
 
 describe("financial statements", () => {
+  it("builds a statement of cash flows that ties out to the cash accounts", async () => {
+    const b = await business();
+    await b.post("2026-02-15", "1500", "1000", "2000.00", "Laptop");
+    await b.post("2026-02-20", "1000", "2700", "5000.00", "Bank loan");
+    await b.post("2026-02-25", "3100", "1000", "800.00", "Owner draw");
+    const cf = await b.t((tx) => cashFlowStatement(tx, b.entity.id, "2026-02-01", "2026-02-28"));
+    // February: net income 12.34 - 1500 rent = -1487.66; the rent went on the card, so the card's growth adds 1500 back.
+    expect(cf.netIncomeMinor).toBe(-148766n);
+    expect(cf.operating.map((r) => [r.code, r.amountMinor])).toEqual([["2100", 150000n]]);
+    expect(cf).toMatchObject({ operatingMinor: 1234n, investingMinor: -200000n, financingMinor: 420000n, netChangeMinor: 221234n, tiesOut: true });
+    expect(cf.cashStartMinor).toBe(1300000n);
+    expect(cf.cashEndMinor).toBe(1521234n);
+    expect(cashFlowCsv(cf)).toContain("Net change in cash,,,2212.34");
+  });
+
   it("builds a profit and loss with gross, operating and net income", async () => {
     const b = await business();
     const pl = await b.t((tx) => profitAndLoss(tx, b.entity.id, "2026-01-01", "2026-02-28"));
