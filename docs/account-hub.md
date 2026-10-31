@@ -84,6 +84,33 @@ Refused (409) while the organisation has a charge that isn't settled, so a comp 
 
 Not done here: a $0 invoice for a comp. A free subscription has no sales price, so none is issued; revisit if that changes.
 
+## Hub → TrailBook: `POST /api/hub/entitlements-changed`
+
+Sent when what an organisation holds at the hub changes. Signed as above.
+
+```json
+{ "type": "entitlements.changed", "trailbook_org_id": "uuid", "org_id": "<hub organisation id>", "ent_version": 7 }
+```
+
+TrailBook records the hub's organisation id and `ent_version` (a whole number from 1). A notice older than the last one it kept is ignored, so arriving out of order is harmless. The answer is `{ "ok": true, "org": <status> }`: TrailBook's own view, for the hub to compare. TrailBook's memberships, roles and billing still decide access on every request; nothing in TrailBook reads the hub's entitlements yet. 404 for an unknown organisation, 400 for a missing or bad `ent_version`.
+
+## Hub → TrailBook: `POST /api/hub/signout`
+
+The back-channel sign-out. Signed as above.
+
+```json
+{ "trailbook_user_id": "uuid" }
+```
+
+or, before a person's accounts are linked, `{ "email": "person@example.com" }` (any case). Every TrailBook session that person has ends at once. The answer is `{ "ok": true, "sessions_ended": 2 }`; 0 when there's no such TrailBook person. 400 when neither is sent.
+
+## TrailBook sign-in rules
+
+- A session ends after **12 hours without use**, and **7 days after sign-in** at most.
+- Anyone who has two-factor on enters their code at **every new sign-in**, by password or emailed link. An organisation can require two-factor for everyone (Security page).
+- **Payroll, bank details and tax filings need a session that passed the second factor**, whatever the organisation's setting: saving employees, payroll and direct deposit settings, creating and approving pay runs, recording tax deposit payments, sales tax settings, and downloading the direct deposit file, prepared payroll forms and the sales tax return. Reading payroll pages and previews stays open. Someone without two-factor is asked to turn it on (403, `code: "second_factor_required"`); turning it on counts for the session they're in. The example business is left out.
+- A hub sign-in (phase 6) will start a session that hasn't passed TrailBook's second factor, so the code is still asked for before any of the above.
+
 ## Linking a MilePost workspace to a TrailBook organisation
 
 The `company_id` MilePost stores from the OAuth callback and token response is a TrailBook **business** (entity) id, not the organisation id. One TrailBook organisation can hold several businesses. `GET /api/v1/company` now also returns `org_id`, the organisation that holds that business and pays for TrailBook. That is the id to seed the hub's `app_links.trailbook_org_id` with, and it matches `trailbook_org_id` in the status push.
