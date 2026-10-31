@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <title>Invoice</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="wrap" style="max-width:820px;padding:24px 16px">
+    <div class="head no-print" style="justify-content:flex-end"><button class="secondary" id="print" hidden>Print or save as PDF</button></div>
+    <div id="doc" aria-live="polite"><p class="muted">Loading…</p></div>
+    <p class="hash no-print" style="margin-top:24px">Sent with <a href="/pricing.html">TrailBook</a>. To pay, or with questions, reply to the email this link came in.</p>
+  </div>
+  <script type="module" src="/view.js"></script>
+</body>
+</html>

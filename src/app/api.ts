@@ -4,6 +4,12 @@ import { appendAudit, verifyAuditChain } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type Actor, type LineInput, type PeriodStatus, type Role } from "../core/ledger.js";
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
+import {
+  FREQUENCIES, acceptEstimate, createEstimate, createRecurring, customerEmailSettings, declineEstimate, documentEmails, emailDocument, emailEstimate,
+  firstOwnerEmail, getEstimate, listEstimates, listRecurring, nextDate, setCustomerEmailSettings, stopRecurring, viewByToken, type Frequency,
+} from "../core/invoicing.js";
+import { ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES, addAttachment, attachmentCounts, listAttachments, readAttachment, removeAttachment, type AttachmentObject, type FileStore } from "../core/attachments.js";
+import { createBankRule, listBankRules, switchOffBankRule, type RuleDirection } from "../core/bank-rules.js";
 import { aging, createContact, getDocument, listContacts, listDocuments, priceLine, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import {
   cleanAddress, createItem, currentCategories, decideSalesTax, decideUseTax, explainTax, explainUseTax, issueInvoice, listItems, recordBill, salesTaxReport, setBusinessAddress,
@@ -11,7 +17,8 @@ import {
 } from "../core/sales-tax.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
-import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
+import { contractorFormsCsv, contractorSummary, getContractorInfo, prepareContractorForms, setContractorInfo, type RecipientType } from "../core/contractor-forms.js";
+import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv, cashFlowStatement, cashFlowCsv } from "../core/statements.js";
 import { backupEntity } from "../core/backup.js";
 import { listRestorePoints, readRestorePoint, type BackupStore } from "../core/nightly-backups.js";
 import {
@@ -21,6 +28,8 @@ import {
 import { GatewayError } from "../billing/gateway.js";
 import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
 import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
+import { clientOverview } from "../core/firm.js";
+import { importChart, importContacts, importOpenDocuments, importOpeningBalances, migrationStatus } from "../core/migration.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
@@ -80,6 +89,8 @@ export interface ApiOptions {
   newsletter?: NewsletterConfig;
   /** The Pomeroy account hub: where TrailBook reports each organisation's status (hub.ts). */
   hub?: HubOptions;
+  /** Where receipts and other attached files are kept (Netlify Blobs in production). Without it, files can't be added. */
+  files?: FileStore;
   /** Starts the newsletter's background worker. */
   startNewsletterJob?: (task: NewsletterTask) => Promise<void>;
 }
@@ -943,7 +954,8 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
     tenant(ctx, async (tx) => {
       const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = $3", [p.doc, p.entity, kind]);
       if (!rows[0]) throw new HttpError(404, `${kind} not found`);
-      return json(await getDocument(tx, p.doc!));
+      const doc = await getDocument(tx, p.doc!);
+      return json(kind === "invoice" ? { ...doc, emails: await documentEmails(tx, p.doc!) } : doc);
     }),
   );
 
@@ -978,6 +990,221 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
     return json(doc);
   });
 }
+
+
+// ------------------------------------------------------- getting paid
+
+route("POST", "/api/orgs/:org/entities/:entity/invoices/:doc/email", async (req, p, ctx) => {
+  const b = await body(req);
+  await tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = 'invoice'", [p.doc, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "invoice not found");
+  });
+  const r = await emailDocument(ctx.pool, {
+    orgId: ctx.orgId, documentId: p.doc!, mailer: ctx.opts.mailer, appUrl: ctx.opts.appUrl || appUrl(req, ctx.opts),
+    to: typeof b.to === "string" && b.to.trim() ? str(b.to, "email address", 200) : undefined, actor: ctx.actor,
+  });
+  return json(r);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/invoice-emails", async (_req, p, ctx) => {
+  const fallback = await firstOwnerEmail(ctx.pool, ctx.orgId);
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ ...(await customerEmailSettings(tx, p.entity!, fallback)), emailEnabled: Boolean(ctx.opts.mailer) });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/invoice-emails", async (req, p, ctx) => {
+  const b = await body(req);
+  const fallback = await firstOwnerEmail(ctx.pool, ctx.orgId);
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    await setCustomerEmailSettings(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor,
+      ...(typeof b.reminders === "boolean" ? { reminders: b.reminders } : {}),
+      ...(b.replyTo !== undefined ? { replyTo: typeof b.replyTo === "string" ? b.replyTo.slice(0, 200) : null } : {}),
+    });
+    return json({ ...(await customerEmailSettings(tx, p.entity!, fallback)), emailEnabled: Boolean(ctx.opts.mailer) });
+  });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/estimates", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ estimates: await listEstimates(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates", async (req, p, ctx) => {
+  const b = await body(req);
+  const est = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createEstimate(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, contactId: uuid(b.contactId, "choose a customer"), issueDate: date(b.issueDate, "date"),
+      expiryDate: b.expiryDate ? date(b.expiryDate, "good until") : undefined, memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
+      lines: invoiceLines(b.lines), lookup: ctx.opts.taxRates, actor: ctx.actor,
+    });
+  });
+  return json(est, 201);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/estimates/:estimate", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM estimates WHERE id = $1 AND entity_id = $2", [p.estimate, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "estimate not found");
+    return json(await getEstimate(tx, p.estimate!));
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/accept", async (req, p, ctx) => {
+  const b = await body(req);
+  const r = await tenant(ctx, (tx) => acceptEstimate(tx, {
+    orgId: ctx.orgId, entityId: p.entity!, estimateId: p.estimate!, issueDate: date(b.issueDate, "invoice date"),
+    dueDate: b.dueDate ? date(b.dueDate, "due date") : undefined, lookup: ctx.opts.taxRates, manual: manualTax(b.manualTax), actor: ctx.actor,
+  }), writeOpts(ctx));
+  return json(r, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/decline", async (_req, p, ctx) =>
+  json(await tenant(ctx, (tx) => declineEstimate(tx, { orgId: ctx.orgId, entityId: p.entity!, estimateId: p.estimate!, actor: ctx.actor }))),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/email", async (req, p, ctx) => {
+  const b = await body(req);
+  await tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM estimates WHERE id = $1 AND entity_id = $2", [p.estimate, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "estimate not found");
+  });
+  return json(await emailEstimate(ctx.pool, {
+    orgId: ctx.orgId, estimateId: p.estimate!, mailer: ctx.opts.mailer, appUrl: ctx.opts.appUrl || appUrl(req, ctx.opts),
+    to: typeof b.to === "string" && b.to.trim() ? str(b.to, "email address", 200) : undefined, actor: ctx.actor,
+  }));
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/recurring", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ templates: await listRecurring(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/recurring", async (req, p, ctx) => {
+  const b = await body(req);
+  const kind = b.kind as DocumentKind;
+  if (kind !== "invoice" && kind !== "bill") throw new HttpError(400, "kind must be invoice or bill");
+  const frequency = b.frequency as Frequency;
+  if (!FREQUENCIES.includes(frequency)) throw new HttpError(400, "choose weekly, monthly, quarterly or yearly");
+  // "after" starts the schedule one period after a document just issued by hand.
+  const startDate = b.after ? (() => { const d = date(b.after, "date"); return nextDate(d, frequency, Number(d.slice(8, 10))); })() : date(b.startDate, "start date");
+  const t = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createRecurring(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, kind, contactId: uuid(b.contactId, kind === "invoice" ? "choose a customer" : "choose a vendor"),
+      lines: invoiceLines(b.lines), memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
+      reference: typeof b.reference === "string" ? b.reference.slice(0, 60) : undefined,
+      dueDays: b.dueDays !== undefined && b.dueDays !== "" ? Number(b.dueDays) : undefined, frequency, startDate,
+      endDate: b.endDate ? date(b.endDate, "end date") : undefined, email: Boolean(b.email), useTax: Boolean(b.useTax), actor: ctx.actor,
+    });
+  });
+  return json(t, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/recurring/:template/stop", async (_req, p, ctx) =>
+  json(await tenant(ctx, (tx) => stopRecurring(tx, { orgId: ctx.orgId, entityId: p.entity!, templateId: p.template!, actor: ctx.actor }))),
+);
+
+
+// ---------------------------------------------------------- bank rules
+
+route("GET", "/api/orgs/:org/entities/:entity/bank-rules", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ rules: await listBankRules(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-rules", async (req, p, ctx) => {
+  const b = await body(req);
+  const rule = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createBankRule(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, matchText: str(b.matchText, "words to look for", 100),
+      direction: (["any", "in", "out"].includes(b.direction) ? b.direction : "any") as RuleDirection,
+      min: typeof b.min === "string" ? b.min : undefined, max: typeof b.max === "string" ? b.max : undefined,
+      bankAccount: typeof b.bankAccount === "string" && b.bankAccount ? b.bankAccount.slice(0, 40) : undefined,
+      account: str(b.account, "account", 40), autoRecord: Boolean(b.autoRecord),
+      memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : undefined, actor: ctx.actor,
+    });
+  });
+  return json(rule, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-rules/:rule/off", async (_req, p, ctx) => {
+  await tenant(ctx, (tx) => switchOffBankRule(tx, { orgId: ctx.orgId, entityId: p.entity!, ruleId: p.rule!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
+// ---------------------------------------------------------- attachments
+
+const ATTACH_OBJECTS: AttachmentObject[] = ["document", "bank_line", "journal_entry"];
+
+function filesFor(ctx: Ctx): FileStore {
+  if (!ctx.opts.files) throw new HttpError(503, "file storage isn't set up on this site yet");
+  return ctx.opts.files;
+}
+
+route("GET", "/api/orgs/:org/entities/:entity/attachments", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const type = q.get("type") as AttachmentObject;
+  if (!ATTACH_OBJECTS.includes(type)) throw new HttpError(400, "unknown record type");
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const id = q.get("id");
+    if (!id) return json({ counts: await attachmentCounts(tx, p.entity!, type) });
+    return json({ attachments: await listAttachments(tx, p.entity!, type, uuid(id, "record")), enabled: Boolean(ctx.opts.files) });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/attachments", async (req, p, ctx) => {
+  const b = await body(req);
+  const type = b.objectType as AttachmentObject;
+  if (!ATTACH_OBJECTS.includes(type)) throw new HttpError(400, "unknown record type");
+  if (typeof b.data !== "string" || !b.data) throw new HttpError(400, "choose a file");
+  if (b.data.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4) throw new HttpError(413, "files can be up to 4 MB");
+  const data = new Uint8Array(Buffer.from(b.data, "base64"));
+  const store = filesFor(ctx);
+  const a = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return addAttachment(tx, store, {
+      orgId: ctx.orgId, entityId: p.entity!, objectType: type, objectId: uuid(b.objectId, "record"),
+      fileName: typeof b.fileName === "string" ? b.fileName : "receipt", data, actor: ctx.actor,
+    });
+  });
+  return json(a, 201);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/attachments/:attachment", async (_req, p, ctx) => {
+  const store = filesFor(ctx);
+  const { meta, data } = await tenant(ctx, (tx) => readAttachment(tx, store, p.entity!, p.attachment!));
+  if (!(ATTACHMENT_TYPES as readonly string[]).includes(meta.contentType)) throw new HttpError(415, "unsupported file");
+  return new Response(new Uint8Array(data) as unknown as BodyInit, {
+    headers: {
+      "content-type": meta.contentType,
+      // Opened in its own tab for viewing, but never run as a page.
+      "content-disposition": `inline; filename="${meta.fileName.replace(/[^\w.-]+/g, "-")}"`,
+      "content-security-policy": "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+      "x-content-type-options": "nosniff",
+      "cache-control": "private, no-store",
+    },
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/attachments/:attachment/remove", async (_req, p, ctx) => {
+  const store = filesFor(ctx);
+  await tenant(ctx, (tx) => removeAttachment(tx, store, { orgId: ctx.orgId, entityId: p.entity!, attachmentId: p.attachment!, actor: ctx.actor }));
+  return json({ ok: true });
+});
 
 // -------------------------------------------------------------------- bank
 
@@ -1150,6 +1377,100 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/profit-and-loss", async (r
     return profitAndLoss(tx, p.entity!, from, to);
   });
   return q.get("format") === "csv" ? csvResponse(profitAndLossCsv(pl), `profit-and-loss-${from}-to-${to}.csv`) : json(pl);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/reports/cash-flow", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const from = date(q.get("from"), "from"), to = date(q.get("to"), "to");
+  const cf = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return cashFlowStatement(tx, p.entity!, from, to);
+  });
+  return q.get("format") === "csv" ? csvResponse(cashFlowCsv(cf), `cash-flow-${from}-to-${to}.csv`) : json(cf);
+});
+
+// ------------------------------------------- moving from QuickBooks or Xero
+
+/** Thrown inside the transaction to roll a preview back while keeping its result. */
+class PreviewOnly { constructor(readonly result: unknown) {} }
+
+route("GET", "/api/orgs/:org/entities/:entity/migration", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json(await migrationStatus(tx, p.entity!));
+  }),
+);
+
+for (const step of ["chart", "contacts", "invoices", "bills", "opening"] as const) {
+  route("POST", `/api/orgs/:org/entities/:entity/migration/${step}`, async (req, p, ctx) => {
+    const b = await body(req);
+    const csv = str(b.csv, "file", 5_000_000);
+    const base = { orgId: ctx.orgId, entityId: p.entity!, csv, actor: ctx.actor };
+    const run = (tx: Tx): Promise<unknown> => {
+      if (step === "chart") return importChart(tx, base);
+      if (step === "contacts") return importContacts(tx, { ...base, kind: ["customer", "vendor", "both"].includes(b.kind) ? b.kind : undefined });
+      if (step === "opening") return importOpeningBalances(tx, { ...base, startDate: date(b.startDate, "start date"), rollIncome: b.rollIncome === true });
+      return importOpenDocuments(tx, { ...base, kind: step === "invoices" ? "invoice" : "bill", startDate: date(b.startDate, "start date") });
+    };
+    try {
+      const result = await tenant(ctx, async (tx) => {
+        await ensureEntity(tx, p.entity!);
+        const r = await run(tx);
+        if (b.preview === true) throw new PreviewOnly(r);
+        return r;
+      }, writeOpts(ctx));
+      return json({ preview: false, result });
+    } catch (err) {
+      if (err instanceof PreviewOnly) return json({ preview: true, result: err.result });
+      throw err;
+    }
+  });
+}
+
+// ------------------------------------------------ contractors' year-end forms
+
+route("GET", "/api/orgs/:org/entities/:entity/contractor-forms", async (req, p, ctx) => {
+  const year = Number(new URL(req.url).searchParams.get("year"));
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json(await contractorSummary(tx, p.entity!, year));
+  });
+});
+
+/** The prepared 1099-NEC or T4A forms; full taxpayer numbers need the second factor. */
+route("GET", "/api/orgs/:org/entities/:entity/contractor-forms/prepared", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const year = Number(q.get("year"));
+  const forms = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return prepareContractorForms(tx, p.entity!, year, { full: q.get("tin") === "full", orgId: ctx.orgId, actor: ctx.actor });
+  });
+  if (q.get("format") === "csv") return csvResponse(contractorFormsCsv(forms), `${forms[0]?.form === "t4a" ? "t4a" : "1099-nec"}-${year}.csv`);
+  return json({ year, forms });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/contacts/:contact/tax-form", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ taxForm: await getContractorInfo(tx, p.contact!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/contacts/:contact/tax-form", async (req, p, ctx) => {
+  const b = await body(req);
+  const form = b.form === "1099_nec" || b.form === "t4a" ? b.form : b.form ? (() => { throw new HttpError(400, "pick 1099-NEC, T4A or none"); })() : null;
+  const info = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return setContractorInfo(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, contactId: p.contact!, form,
+      recipientType: typeof b.recipientType === "string" ? (b.recipientType as RecipientType) : undefined,
+      tin: typeof b.tin === "string" ? b.tin : undefined,
+      tinKind: typeof b.tinKind === "string" && b.tinKind ? (b.tinKind as "ssn" | "ein" | "sin" | "bn") : undefined,
+      legalName: typeof b.legalName === "string" ? b.legalName : undefined,
+      actor: ctx.actor,
+    });
+  });
+  return json({ taxForm: info });
 });
 
 route("GET", "/api/orgs/:org/entities/:entity/reports/balance-sheet", async (req, p, ctx) => {
@@ -1922,8 +2243,8 @@ async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): P
  * prepared filings count as these too. The example business is practice
  * data, so it's left out.
  */
-const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings)$/;
-const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return)$/;
+const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings|contacts\/[^/]+\/tax-form)$/;
+const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return|contractor-forms\/prepared)$/;
 
 export function needsSecondFactor(method: string, path: string): boolean {
   return method === "GET" ? SECOND_FACTOR_READS.test(path) : SECOND_FACTOR_PATHS.test(path);
@@ -2274,6 +2595,12 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       emailEnabled: Boolean(opts.mailer), termsVersion: TERMS_VERSION,
     });
   }
+  // The firm console: every client this person can open, with what each business needs.
+  if (req.method === "GET" && path === "/api/clients") {
+    const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+    if (!user) throw new AuthError("not signed in");
+    return json({ today: pacificToday(), clients: await clientOverview(pool, user, { today: pacificToday(), exampleOrgName: EXAMPLE_ORG_NAME }) });
+  }
   // An owner or admin accepts the current terms for their organisation.
   const termsPath = /^\/api\/orgs\/([0-9a-f-]{36})\/terms\/accept$/.exec(path);
   if (req.method === "POST" && termsPath) {
@@ -2343,6 +2670,13 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       // Cookie-authenticated writes must come from this site.
       const origin = req.headers.get("origin");
       if (origin && new URL(origin).host !== url.host) throw new HttpError(403, "cross-site request refused");
+    }
+    // A customer's link to an invoice or estimate. The token travels in the body, never the address, so it stays out of logs.
+    if (req.method === "POST" && path === "/api/view") {
+      const b = await body(req);
+      const v = typeof b.token === "string" ? await viewByToken(pool, b.token) : null;
+      if (!v) throw new HttpError(404, "this link isn't valid; ask the business for a new one");
+      return json(v);
     }
     const open = await authRoutes(req, path, pool, opts);
     if (open) return open;

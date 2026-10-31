@@ -30,6 +30,8 @@ process.env.PII_KEY ??= Buffer.alloc(32, 1).toString("base64");
 // Billing settings come from the same variables as production (see docs/launch-setup.md); restore points stay in memory.
 const billing = billingFromEnv();
 const backups = { store: memoryStore(), key: randomBytes(32) };
+// Attached files stay in memory too.
+const files = memoryStore();
 // TrailBook News, when NEWSLETTER_ORG_ID is set. The page's jobs run in this process instead of a background function.
 const newsletter = newsletterFromEnv(process.env, mailer, `http://localhost:${port}`);
 const startNewsletterJob = async (task: NewsletterTask) => {
@@ -48,7 +50,7 @@ createServer(async (req, res) => {
       headers: req.headers as Record<string, string>,
       body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
     });
-    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups, oauthClients: oauthClientsFromEnv(), milepost: { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" }, newsletter, startNewsletterJob });
+    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups, files, oauthClients: oauthClientsFromEnv(), milepost: { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" }, newsletter, startNewsletterJob });
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
     return;
