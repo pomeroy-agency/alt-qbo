@@ -29,6 +29,7 @@ import { GatewayError } from "../billing/gateway.js";
 import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
 import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
 import { clientOverview } from "../core/firm.js";
+import { importChart, importContacts, importOpenDocuments, importOpeningBalances, migrationStatus } from "../core/migration.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
@@ -1387,6 +1388,44 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/cash-flow", async (req, p,
   });
   return q.get("format") === "csv" ? csvResponse(cashFlowCsv(cf), `cash-flow-${from}-to-${to}.csv`) : json(cf);
 });
+
+// ------------------------------------------- moving from QuickBooks or Xero
+
+/** Thrown inside the transaction to roll a preview back while keeping its result. */
+class PreviewOnly { constructor(readonly result: unknown) {} }
+
+route("GET", "/api/orgs/:org/entities/:entity/migration", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json(await migrationStatus(tx, p.entity!));
+  }),
+);
+
+for (const step of ["chart", "contacts", "invoices", "bills", "opening"] as const) {
+  route("POST", `/api/orgs/:org/entities/:entity/migration/${step}`, async (req, p, ctx) => {
+    const b = await body(req);
+    const csv = str(b.csv, "file", 5_000_000);
+    const base = { orgId: ctx.orgId, entityId: p.entity!, csv, actor: ctx.actor };
+    const run = (tx: Tx): Promise<unknown> => {
+      if (step === "chart") return importChart(tx, base);
+      if (step === "contacts") return importContacts(tx, { ...base, kind: ["customer", "vendor", "both"].includes(b.kind) ? b.kind : undefined });
+      if (step === "opening") return importOpeningBalances(tx, { ...base, startDate: date(b.startDate, "start date"), rollIncome: b.rollIncome === true });
+      return importOpenDocuments(tx, { ...base, kind: step === "invoices" ? "invoice" : "bill", startDate: date(b.startDate, "start date") });
+    };
+    try {
+      const result = await tenant(ctx, async (tx) => {
+        await ensureEntity(tx, p.entity!);
+        const r = await run(tx);
+        if (b.preview === true) throw new PreviewOnly(r);
+        return r;
+      }, writeOpts(ctx));
+      return json({ preview: false, result });
+    } catch (err) {
+      if (err instanceof PreviewOnly) return json({ preview: true, result: err.result });
+      throw err;
+    }
+  });
+}
 
 // ------------------------------------------------ contractors' year-end forms
 

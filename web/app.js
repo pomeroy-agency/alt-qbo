@@ -138,7 +138,7 @@ const ENTITY_TABS = [
   ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["items", "Products and services"], ["reports", "Reports"], ["payroll", "Payroll", "payrollToDo", "to approve or pay"],
 ];
 const ACCOUNTANT_TABS = [
-  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"], ["integrations", "Integrations"],
+  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"], ["integrations", "Integrations"], ["move", "Move from QuickBooks or Xero"],
 ];
 
 /** The everyday menu, plus a tab for each linked app (MilePost) while the link is live. */
@@ -147,7 +147,7 @@ function entityTabs() {
 }
 
 // Shorter names for the phone menu, where buttons sit three to a row.
-const SHORT = { contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
+const SHORT = { move: "Move books", contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
 
 // When the terms of service change, an owner or admin accepts the new version for the business.
 function termsBanner() {
@@ -1949,6 +1949,90 @@ async function reportsView(id) {
     </div>`);
 }
 
+// ------------------------------------------------- moving from QuickBooks or Xero
+
+const move = { startDate: "", results: {}, files: {} };
+
+const MOVE_STEPS = [
+  ["chart", "1. Chart of accounts",
+    "QuickBooks: Reports, search for Account List, then Export to CSV. Xero: Accounting, Chart of accounts, Export.",
+    "Each account is matched to one here by name, or added with the right kind and tax line. Receivables, payables and retained earnings map to TrailBook's own."],
+  ["contacts", "2. Customers and vendors",
+    "QuickBooks: Reports, Customer Contact List and Vendor Contact List, Export to CSV (one file each). Xero: Contacts, All contacts, Export.",
+    "Names already here are left alone. Addresses come in when they have a street, city, two-letter state and ZIP or postal code."],
+  ["invoices", "3. Open invoices",
+    "QuickBooks: Reports, Open Invoices, as of the day before TrailBook starts, Export to CSV. Xero: Business, Invoices, Awaiting payment, Export.",
+    "Each one becomes an invoice dated the day TrailBook starts, for what's still owed, so you can record its payment here. Credit notes and unapplied payments are listed for you to enter by hand."],
+  ["bills", "4. Unpaid bills",
+    "QuickBooks: Reports, Unpaid Bills, Export to CSV. Xero: Business, Bills to pay, Awaiting payment, Export.",
+    "The same for what you still owe vendors."],
+  ["opening", "5. Trial balance",
+    "QuickBooks: Reports, Trial Balance, as of the day before TrailBook starts, Export to CSV. Xero: Accounting, Reports, Trial Balance, same date, Export to CSV.",
+    "Posted as one opening entry. Receivables and payables come from the invoices and bills above, so do this step last; any difference from the old totals is shown and goes to opening balance equity."],
+];
+
+function moveResult(step, r) {
+  if (!r) return "";
+  const x = r.result;
+  const head = r.preview ? `<div class="alert">Preview only: nothing was saved. Check it, then choose Import.</div>` : `<div class="alert good">Imported.</div>`;
+  const list = (items, fn) => (items?.length ? `<ul>${items.slice(0, 50).map((i) => `<li>${fn(i)}</li>`).join("")}${items.length > 50 ? `<li class="muted">and ${items.length - 50} more</li>` : ""}</ul>` : "");
+  let body = "";
+  if (step === "chart") {
+    body = `<p>${x.created.length} new, ${x.matched.length} matched, ${x.skipped.length} skipped (read as ${x.source === "xero" ? "Xero" : "QuickBooks"}).</p>
+      ${list(x.created, (c) => `<span class="mono">${esc(c.code)}</span> ${esc(c.name)} <span class="muted">(${esc(c.kind)})</span>`)}
+      ${list(x.matched, (m) => `${esc(m.from)} → ${esc(m.to)}`)}
+      ${list(x.skipped, (k) => `${esc(k.name)}: <span class="muted">${esc(k.reason)}</span>`)}`;
+  } else if (step === "contacts") {
+    body = `<p>${x.created.length} added, ${x.skipped.length} already here.</p>${list(x.notes, (n) => `${esc(n.name)}: <span class="muted">${esc(n.note)}</span>`)}`;
+  } else if (step === "invoices" || step === "bills") {
+    const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+    body = `<p>${plural(x.created.length, step.slice(0, -1))} totalling <strong>${usd(x.totalMinor)}</strong>${x.newContacts.length ? `, with ${plural(x.newContacts.length, `new ${step === "invoices" ? "customer" : "vendor"}`)}` : ""}.</p>
+      ${list(x.created, (d) => `${esc(d.contact)} · ${esc(d.number)} · ${usd(d.openMinor)}`)}
+      ${list(x.skipped, (k) => `${esc(k.row)}: <span class="muted">${esc(k.reason)}</span>`)}`;
+  } else {
+    body = x.unmatched.length
+      ? `<div class="alert bad">${esc(x.warnings[0])}</div>${list(x.unmatched, (n) => esc(n))}`
+      : `${x.warnings.map((w) => `<div class="alert">${esc(w)}</div>`).join("")}
+        <p>Receivables: old ${usd(x.receivables.trialBalanceMinor)}, invoices brought in ${usd(x.receivables.documentsMinor)}. Payables: old ${usd(x.payables.trialBalanceMinor)}, bills brought in ${usd(x.payables.documentsMinor)}.</p>
+        <table><thead><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead>
+        <tbody>${x.lines.map((l) => `<tr><td class="mono">${esc(l.account)} ${esc(state.entity.accounts.find((a) => a.code === l.account)?.name ?? "")}</td><td class="num">${usd(l.debitMinor, { blankZero: true })}</td><td class="num">${usd(l.creditMinor, { blankZero: true })}</td></tr>`).join("")}</tbody></table>`;
+  }
+  return `<div style="margin-top:12px">${head}${body}</div>`;
+}
+
+async function moveView(id) {
+  await loadEntity(id);
+  if (move.entityId !== id) Object.assign(move, { entityId: id, startDate: "", results: {}, files: {} });
+  const st = await api(entPath("/migration"));
+  move.startDate ||= st.openingDate ?? st.booksStart ?? today();
+  const canImport = ["owner", "admin", "accountant"].includes(state.org.role);
+  const done = { chart: st.accountsMapped > 0, contacts: st.contacts > 0, invoices: st.openInvoices > 0, bills: st.openBills > 0, opening: Boolean(st.openingDate) };
+  app.innerHTML = shell("move", `
+    <div class="head"><div><h1>Move from QuickBooks or Xero</h1><p class="muted">Bring a business over from QuickBooks Online or Xero with five exports. Preview each one first; nothing is saved until you choose Import, and each step can be run again without doubling up.</p></div></div>
+    <div class="panel">
+      <form data-form="move-date" class="row">
+        <label>TrailBook books start on<input type="date" name="startDate" value="${esc(move.startDate)}" required data-autosubmit></label>
+        <p class="hash" style="flex:1">Export the open invoices, unpaid bills and trial balance as of the day before. Your books here start ${st.booksStart ? longDate(st.booksStart) : "with the first month set up"}.</p>
+      </form>
+      ${st.clearing.length ? `<div class="alert">${st.clearing.map((c) => `${esc(c.name)} has ${usd(c.netMinor < 0 ? -BigInt(c.netMinor) : c.netMinor)} left in it.`).join(" ")} ${st.openingDate ? "Invoices or bills came in after the trial balance; post a journal entry to move it to receivables or payables, or ask us." : "That's expected until the trial balance is in."}</div>` : ""}
+    </div>
+    ${MOVE_STEPS.map(([step, title, how, what]) => `
+      <div class="panel">
+        <h2>${title} ${done[step] ? `<span class="muted" style="font-size:14px;font-weight:400">· done</span>` : ""}</h2>
+        <p class="muted">${esc(what)}</p>
+        <p class="hash">${esc(how)}</p>
+        ${canImport ? `<form data-form="move" data-step="${step}" class="row">
+          <label>CSV file<input type="file" name="file" accept=".csv,text/csv" ${move.files[step] ? "" : "required"}></label>
+          ${move.files[step] ? `<span class="hash">Or keep ${esc(move.files[step].name)} from the preview</span>` : ""}
+          ${step === "contacts" ? `<label>From Xero, they are<select name="kind"><option value="both">Customers and vendors</option><option value="customer">Customers</option><option value="vendor">Vendors</option></select></label>` : ""}
+          ${step === "opening" ? `<label class="check" title="For a trial balance at the end of a year: last year's income and expenses go into retained earnings instead of this year's profit and loss"><input type="checkbox" name="rollIncome" checked> Trial balance is at a year end</label>` : ""}
+          <button type="submit" class="secondary" data-as="preview">Preview</button>
+          <button type="submit" data-as="import">Import</button>
+        </form>` : `<p class="muted">An owner, admin or accountant can run this step.</p>`}
+        ${moveResult(step, move.results[step])}
+      </div>`).join("")}`);
+}
+
 // ---------------------------------------------------------- reconciliation
 
 const recon = { account: null, statementDate: "", statementBalance: "", data: null };
@@ -3156,7 +3240,7 @@ async function route() {
       if (parts[2] === "sales-tax") return await salesTaxView(parts[1], parts[3]);
       if (parts[2] === "payroll" && parts[3] === "form" && parts[4]) return await formView(parts[1], parts[4], parts[5], parts[6]);
       if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
-      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView, integrations: integrationsView, milepost: milepostView }[parts[2] ?? "overview"] ?? overviewView;
+      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView, integrations: integrationsView, milepost: milepostView, move: moveView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
@@ -3717,6 +3801,21 @@ document.addEventListener("submit", async (ev) => {
       if (d.preset && d.preset !== "custom") [rep.from, rep.to] = presetRange(d.preset);
       if (d.asPreset && d.asPreset !== "custom") rep.asOf = presetAsOf(d.asPreset);
       await reportsView(state.entity.entity.id);
+    } else if (kind === "move-date") {
+      move.startDate = d.startDate;
+    } else if (kind === "move") {
+      const step = f.dataset.step;
+      const file = f.querySelector("[name=file]").files[0];
+      if (file && file.size > 4_500_000) throw new Error("that file is over 4.5 MB; export a shorter date range or split it");
+      if (file) move.files[step] = { name: file.name, text: await file.text() };
+      if (!move.files[step]) throw new Error("choose the CSV file first");
+      const preview = ev.submitter?.dataset.as !== "import";
+      const r = await api(entPath(`/migration/${step}`), { body: {
+        csv: move.files[step].text, preview, startDate: move.startDate, kind: d.kind, rollIncome: f.querySelector("[name=rollIncome]")?.checked ?? false,
+      } });
+      move.results[step] = r;
+      if (!preview) { delete move.files[step]; state.entity.fresh = false; toast("Imported"); }
+      await moveView(state.entity.entity.id);
     } else if (kind === "client-filter") {
       clientFilter.q = d.q ?? "";
       clientFilter.attention = f.querySelector("[name=attention]").checked;
