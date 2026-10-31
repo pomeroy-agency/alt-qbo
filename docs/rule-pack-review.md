@@ -63,7 +63,7 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | SDI rate | 1.4% forecast | final rate due in December |
 | Federal brackets, Pub 15-T, EDD Method B | not yet published | expected Oct to Dec 2026 |
 
-### Other states: announced for 2027 (rule watch 2026-10-29; each 2027 state pack needs these)
+### Other states: announced for 2027 (rule watch 2026-10-29 and later; each 2027 state pack needs these)
 
 | State | Figure | 2026 pack | 2027 value | Source |
 |---|---|---|---|---|
@@ -73,8 +73,19 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | Wyoming | UI wage base | $33,800 | $34,900 | Wyoming DWS, as reported by HR Morning and Thomas & Company (Sep 2026) |
 | New York | Paid Family Leave | 0.432%, at most $411.91 | 0.452%, at most $451.81 | DFS rate decision; paidfamilyleave.ny.gov/2027 |
 | New York | Minimum wage | $17.00 NYC, Long Island, Westchester; $16.00 elsewhere | unchanged on Jan 1, 2027 (the off-ramp was met; a proposal to raise it from March 2027 is not law) | governor.ny.gov, New York State Minimum Wage for 2027 |
+| Colorado | Minimum wage | $15.16 | $15.71 (tipped $12.69) | CDLE press release, Aug 13, 2026 (Bloomberg Tax, ColoradoBiz); rule watch 2026-10-30 |
+| Colorado | Denver minimum wage | $19.29 | $19.84 (tipped $16.82) | Denver Labor press release, Aug 6, 2026 (Bloomberg Tax); rule watch 2026-10-30 |
+| Minnesota | Minimum wage | $11.41 | $11.87 (90-day under-20 training wage $9.68) | DLI news release, Aug 19, 2026 (Bloomberg Tax); rule watch 2026-10-30 |
+| Minnesota | Minneapolis minimum wage | $16.37 | $17.02, all employers | City of Minneapolis website, Aug 2026 (Bloomberg Government, Brightmine); rule watch 2026-10-30 |
+| Minnesota | St. Paul minimum wage | $16.37 (one rate in the pack) | Jan 1: $17.02 for 101+ employees, $16.37 for 6 to 100, $14.25 for 5 or fewer. Jul 1: $17.02 for 6 or more, $15.00 for 5 or fewer | City of Saint Paul announcement, 2027 minimum wage rates (stpaul.gov); rule watch 2026-10-30. The 2027 pack needs St. Paul's size tiers |
+| Washington | Minimum wage and exempt salary | $17.13; $80,168.40 | $17.73 (14 and 15 year olds $15.07). Exempt salary $82,976.40 ($1,595.70 a week) for 50 or fewer employees, $92,196 ($1,773 a week) for 51 or more; hourly computer professionals $62.06 | L&I news release 26-17 (Sep 30, 2026) and rule notice WSR 26-20-043; rule watch 2026-10-31. The 2027 pack needs the exempt salary split by employer size |
+| Arizona | Minimum wage | $15.15 | $15.65 (tip credit stays $3.00) | Industrial Commission of Arizona 2027 poster (KTAR, FreshPlaza); rule watch 2026-10-31 |
+| Ohio | Minimum wage | $11.00 | $11.40 (tipped $5.70); applies above $420,000 gross receipts | Ohio Dept of Commerce 2027 poster and announcement, Sep 30, 2026; rule watch 2026-10-31 |
+| Maine | Minimum wage and exempt salary | $15.10; $45,300 | $15.70; exempt salary $905.79 a week ($47,101.08) | Maine DOL 2027 minimum wage poster (maine.gov/labor/docs/2027); rule watch 2026-10-31 |
+| New Jersey | Minimum wage | $15.92; seasonal or fewer than 6 employees $15.23 | $16.48; seasonal or fewer than 6 employees $16.25 (farm $15.00, tipped cash wage $6.61) | NJDOL press release, Sep 29, 2026 (main rate); the other categories from secondary tables quoting it; rule watch 2026-10-31 |
+| Montana | Minimum wage | $10.85 | $11.20 | Montana DLI annual adjustment, as reported by HR Morning and FedRateCalc (state page not yet showing it); rule watch 2026-10-31 |
 
-Not yet final, so not listed: New Jersey's 2027 wage bases ($46,400 UI, $177,100 disability and family leave) are only a proposed rule (58 N.J.R. 1978(a)). Colorado ($32,100) and Oklahoma ($24,400) appear on one aggregator only.
+Not yet final, so not listed: New Jersey's 2027 wage bases ($46,400 UI, $177,100 disability and family leave) are only a proposed rule (58 N.J.R. 1978(a)). Colorado's ($32,100) and Oklahoma's ($24,400) UI wage bases appear on one aggregator only. Cupertino, Los Altos and Redwood City 2027 rates are still unconfirmed (payroll charts only, no city notice). South Dakota's $12.30 for 2027 is a Bloomberg Tax calculation; the DLR page still shows 2026. Seattle's $22.14 for 2027 is announced, but Washington local minimum wages aren't checked yet.
 
 ## us-ca-sales-tax 2026.1 (`src/rules/sales-tax/us-ca-2026.ts`), released 2026-10-27
 
