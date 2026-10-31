@@ -4,6 +4,10 @@ import { appendAudit, verifyAuditChain } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type Actor, type LineInput, type PeriodStatus, type Role } from "../core/ledger.js";
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
+import {
+  FREQUENCIES, acceptEstimate, createEstimate, createRecurring, customerEmailSettings, declineEstimate, documentEmails, emailDocument, emailEstimate,
+  firstOwnerEmail, getEstimate, listEstimates, listRecurring, nextDate, setCustomerEmailSettings, stopRecurring, viewByToken, type Frequency,
+} from "../core/invoicing.js";
 import { aging, createContact, getDocument, listContacts, listDocuments, priceLine, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import {
   cleanAddress, createItem, currentCategories, decideSalesTax, decideUseTax, explainTax, explainUseTax, issueInvoice, listItems, recordBill, salesTaxReport, setBusinessAddress,
@@ -943,7 +947,8 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
     tenant(ctx, async (tx) => {
       const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = $3", [p.doc, p.entity, kind]);
       if (!rows[0]) throw new HttpError(404, `${kind} not found`);
-      return json(await getDocument(tx, p.doc!));
+      const doc = await getDocument(tx, p.doc!);
+      return json(kind === "invoice" ? { ...doc, emails: await documentEmails(tx, p.doc!) } : doc);
     }),
   );
 
@@ -978,6 +983,129 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
     return json(doc);
   });
 }
+
+
+// ------------------------------------------------------- getting paid
+
+route("POST", "/api/orgs/:org/entities/:entity/invoices/:doc/email", async (req, p, ctx) => {
+  const b = await body(req);
+  await tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = 'invoice'", [p.doc, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "invoice not found");
+  });
+  const r = await emailDocument(ctx.pool, {
+    orgId: ctx.orgId, documentId: p.doc!, mailer: ctx.opts.mailer, appUrl: ctx.opts.appUrl || appUrl(req, ctx.opts),
+    to: typeof b.to === "string" && b.to.trim() ? str(b.to, "email address", 200) : undefined, actor: ctx.actor,
+  });
+  return json(r);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/invoice-emails", async (_req, p, ctx) => {
+  const fallback = await firstOwnerEmail(ctx.pool, ctx.orgId);
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ ...(await customerEmailSettings(tx, p.entity!, fallback)), emailEnabled: Boolean(ctx.opts.mailer) });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/invoice-emails", async (req, p, ctx) => {
+  const b = await body(req);
+  const fallback = await firstOwnerEmail(ctx.pool, ctx.orgId);
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    await setCustomerEmailSettings(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor,
+      ...(typeof b.reminders === "boolean" ? { reminders: b.reminders } : {}),
+      ...(b.replyTo !== undefined ? { replyTo: typeof b.replyTo === "string" ? b.replyTo.slice(0, 200) : null } : {}),
+    });
+    return json({ ...(await customerEmailSettings(tx, p.entity!, fallback)), emailEnabled: Boolean(ctx.opts.mailer) });
+  });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/estimates", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ estimates: await listEstimates(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates", async (req, p, ctx) => {
+  const b = await body(req);
+  const est = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createEstimate(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, contactId: uuid(b.contactId, "choose a customer"), issueDate: date(b.issueDate, "date"),
+      expiryDate: b.expiryDate ? date(b.expiryDate, "good until") : undefined, memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
+      lines: invoiceLines(b.lines), lookup: ctx.opts.taxRates, actor: ctx.actor,
+    });
+  });
+  return json(est, 201);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/estimates/:estimate", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM estimates WHERE id = $1 AND entity_id = $2", [p.estimate, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "estimate not found");
+    return json(await getEstimate(tx, p.estimate!));
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/accept", async (req, p, ctx) => {
+  const b = await body(req);
+  const r = await tenant(ctx, (tx) => acceptEstimate(tx, {
+    orgId: ctx.orgId, entityId: p.entity!, estimateId: p.estimate!, issueDate: date(b.issueDate, "invoice date"),
+    dueDate: b.dueDate ? date(b.dueDate, "due date") : undefined, lookup: ctx.opts.taxRates, manual: manualTax(b.manualTax), actor: ctx.actor,
+  }), writeOpts(ctx));
+  return json(r, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/decline", async (_req, p, ctx) =>
+  json(await tenant(ctx, (tx) => declineEstimate(tx, { orgId: ctx.orgId, entityId: p.entity!, estimateId: p.estimate!, actor: ctx.actor }))),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/email", async (req, p, ctx) => {
+  const b = await body(req);
+  await tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM estimates WHERE id = $1 AND entity_id = $2", [p.estimate, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "estimate not found");
+  });
+  return json(await emailEstimate(ctx.pool, {
+    orgId: ctx.orgId, estimateId: p.estimate!, mailer: ctx.opts.mailer, appUrl: ctx.opts.appUrl || appUrl(req, ctx.opts),
+    to: typeof b.to === "string" && b.to.trim() ? str(b.to, "email address", 200) : undefined, actor: ctx.actor,
+  }));
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/recurring", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ templates: await listRecurring(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/recurring", async (req, p, ctx) => {
+  const b = await body(req);
+  const kind = b.kind as DocumentKind;
+  if (kind !== "invoice" && kind !== "bill") throw new HttpError(400, "kind must be invoice or bill");
+  const frequency = b.frequency as Frequency;
+  if (!FREQUENCIES.includes(frequency)) throw new HttpError(400, "choose weekly, monthly, quarterly or yearly");
+  // "after" starts the schedule one period after a document just issued by hand.
+  const startDate = b.after ? (() => { const d = date(b.after, "date"); return nextDate(d, frequency, Number(d.slice(8, 10))); })() : date(b.startDate, "start date");
+  const t = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createRecurring(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, kind, contactId: uuid(b.contactId, kind === "invoice" ? "choose a customer" : "choose a vendor"),
+      lines: invoiceLines(b.lines), memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
+      reference: typeof b.reference === "string" ? b.reference.slice(0, 60) : undefined,
+      dueDays: b.dueDays !== undefined && b.dueDays !== "" ? Number(b.dueDays) : undefined, frequency, startDate,
+      endDate: b.endDate ? date(b.endDate, "end date") : undefined, email: Boolean(b.email), useTax: Boolean(b.useTax), actor: ctx.actor,
+    });
+  });
+  return json(t, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/recurring/:template/stop", async (_req, p, ctx) =>
+  json(await tenant(ctx, (tx) => stopRecurring(tx, { orgId: ctx.orgId, entityId: p.entity!, templateId: p.template!, actor: ctx.actor }))),
+);
 
 // -------------------------------------------------------------------- bank
 
@@ -2343,6 +2471,13 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       // Cookie-authenticated writes must come from this site.
       const origin = req.headers.get("origin");
       if (origin && new URL(origin).host !== url.host) throw new HttpError(403, "cross-site request refused");
+    }
+    // A customer's link to an invoice or estimate. The token travels in the body, never the address, so it stays out of logs.
+    if (req.method === "POST" && path === "/api/view") {
+      const b = await body(req);
+      const v = typeof b.token === "string" ? await viewByToken(pool, b.token) : null;
+      if (!v) throw new HttpError(404, "this link isn't valid; ask the business for a new one");
+      return json(v);
     }
     const open = await authRoutes(req, path, pool, opts);
     if (open) return open;

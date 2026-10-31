@@ -1060,13 +1060,89 @@ function fillFromItem(tr, itemId) {
   tr.querySelector("[name=unitPrice]").value = (Number(item.unitPriceMinor) / 100).toFixed(2);
 }
 
+const REPEAT = [["", "Doesn't repeat"], ["weekly", "Every week"], ["monthly", "Every month"], ["quarterly", "Every quarter"], ["yearly", "Every year"]];
+const REPEAT_LABEL = { weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly", yearly: "Yearly" };
+const EST_PILL = { open: "pill", accepted: "pill grey", declined: "pill grey", expired: "pill warn" };
+const EST_LABEL = { open: "Open", accepted: "Accepted", declined: "Declined", expired: "Expired" };
+const daysFrom = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+
+/** Quotes that haven't posted to the books. Accepting one issues the invoice, taxed on the invoice date. */
+function estimatesPanel(id, estimates, canWrite, emailEnabled) {
+  if (!estimates.length) return "";
+  return `<div class="panel">
+    <h2>Estimates</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>No.</th><th>Customer</th><th>Date</th><th>Good until</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
+      <tbody>${estimates.map((x) => `<tr>
+        <td class="mono">${esc(x.number)}</td>
+        <td>${esc(x.contactName)}${x.memo ? `<div class="hash">${esc(x.memo)}</div>` : ""}${x.emails.length ? `<div class="hash">Emailed ${esc(when(x.emails.at(-1).sentAt))}</div>` : ""}</td>
+        <td>${x.issueDate}</td><td>${x.expiryDate}</td><td class="num">${usd(x.totalMinor)}</td>
+        <td><span class="${EST_PILL[x.status]}">${EST_LABEL[x.status]}</span>${x.invoiceId ? `<div class="hash"><a href="#/e/${id}/invoices/${x.invoiceId}">${esc(x.invoiceNumber)}</a></div>` : ""}</td>
+        <td><div class="row">${canWrite && (x.status === "open" || x.status === "expired") ? `
+          ${emailEnabled ? `<button class="link" data-action="estimate-email" data-id="${x.id}">${x.emails.length ? "Email again" : "Email"}</button>` : ""}
+          <button class="link" data-action="doc-toggle" data-form="est-accept" data-id="${x.id}">Turn into invoice</button>
+          <button class="link" data-action="estimate-decline" data-id="${x.id}">Declined</button>` : ""}</div></td>
+      </tr>
+      <tr hidden data-est-accept="${x.id}"><td colspan="7">
+        <form data-form="est-accept" data-id="${x.id}" class="row">
+          <label>Invoice date<input type="date" name="issueDate" value="${bookDate() < x.issueDate ? x.issueDate : bookDate()}" min="${x.issueDate}" required></label>
+          <label>Due<input type="date" name="dueDate" value="${plusDays(bookDate() < x.issueDate ? x.issueDate : bookDate(), 30)}" required></label>
+          <button type="submit">Issue the invoice</button>
+          <span class="hash">Sales tax is worked out again for the invoice date.</span>
+        </form></td></tr>`).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/** Invoices or bills that TrailBook issues on a schedule, each morning they fall due. */
+function recurringPanel(kind, templates, canWrite) {
+  if (!templates.length) return "";
+  const total = (t) => t.lines.reduce((s, l) => s + Math.round(Number(l.quantity || 0) * Number(l.unitPrice || 0) * 100), 0);
+  return `<div class="panel">
+    <h2>Recurring ${kind === "invoice" ? "invoices" : "bills"}</h2>
+    <p class="hash">TrailBook ${kind === "invoice" ? "issues" : "records"} each one early in the morning (Pacific) on its date${kind === "invoice" ? ", with sales tax worked out for that date" : ""}.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>${kind === "invoice" ? "Customer" : "Vendor"}</th><th>How often</th><th>Next</th><th class="num">Before tax</th><th>So far</th><th></th></tr></thead>
+      <tbody>${templates.map((t) => `<tr>
+        <td>${esc(t.contactName)}${t.memo ? `<div class="hash">${esc(t.memo)}</div>` : ""}${t.email ? `<div class="hash">Emailed to the customer</div>` : ""}</td>
+        <td>${REPEAT_LABEL[t.frequency]}${t.endDate ? `<div class="hash">until ${t.endDate}</div>` : ""}</td>
+        <td>${t.active ? t.nextDate : `<span class="pill grey">Stopped</span>`}</td>
+        <td class="num">${usd(BigInt(total(t)))}</td>
+        <td>${t.issuedCount}${t.lastDocumentId ? ` · last <a href="#/e/${state.entity.entity.id}/${DOC[kind].path}/${t.lastDocumentId}">${esc(t.lastDocumentNumber)}</a>` : ""}
+          ${t.lastError && t.active ? `<div class="alert bad" style="margin-top:4px">Couldn't ${kind === "invoice" ? "issue" : "record"}: ${esc(t.lastError)}. Trying again tomorrow.</div>` : ""}</td>
+        <td>${canWrite && t.active ? `<button class="link" data-action="recurring-stop" data-id="${t.id}">Stop</button>` : ""}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/** Automatic reminders to customers, and where their replies go. */
+function remindersPanel(m, canSet) {
+  return `<div class="panel">
+    <h2>Emails to customers</h2>
+    ${m.emailEnabled ? "" : `<div class="alert warn">Email isn't set up on this site yet, so invoices can't be emailed.</div>`}
+    <form data-form="invoice-emails" class="row">
+      <label class="check"><input type="checkbox" name="reminders" ${m.reminders ? "checked" : ""} ${canSet ? "" : "disabled"}> Send customers automatic reminders: 3 days before the due date, then 1, 7, 14 and 30 days after, while money is still due</label>
+      <label style="min-width:260px">Replies go to<input name="replyTo" type="email" value="${esc(m.replyTo ?? "")}" placeholder="${esc(m.defaultReplyTo ?? "the owner's email")}" ${canSet ? "" : "disabled"}></label>
+      ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+    </form>
+    <p class="hash" style="margin-top:8px">Emails come from your business's name at TrailBook's address, with a link the customer can open to view or print the invoice. Customers pay you the way they already do; record the payment here when it arrives.</p>
+  </div>`;
+}
+
 async function docsView(id, kind) {
   await loadEntity(id);
   const d = DOC[kind];
-  const [{ documents }, ag, { contacts }, { items }] = await Promise.all([
+  const invoice = kind === "invoice";
+  const [{ documents }, ag, { contacts }, { items }, { estimates }, { templates }, mail] = await Promise.all([
     api(entPath(`/${d.path}`)), api(entPath(`/${d.path}/aging`)), api(entPath("/contacts")),
-    kind === "invoice" ? api(entPath("/items")) : { items: [] },
+    invoice ? api(entPath("/items")) : { items: [] },
+    invoice ? api(entPath("/estimates")) : { estimates: [] },
+    api(entPath("/recurring")),
+    invoice ? api(entPath("/invoice-emails")) : null,
   ]);
+  const recurring = templates.filter((t) => t.kind === kind);
+  const canSetEmails = ["owner", "admin", "accountant"].includes(state.org.role);
   state.items = items;
   state.docContacts = contacts;
   Object.assign(docTax, { rate: null, explanation: "", error: "", taxable: null, taxShare: null });
@@ -1103,6 +1179,11 @@ async function docsView(id, kind) {
           <label style="flex:1;min-width:200px">Memo<input name="memo"></label>
         </div>
         ${kind === "bill" ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" name="useTax" ${useTaxDefault ? "checked" : ""}> The vendor didn't charge California sales tax: add the use tax I owe</label>` : ""}
+        <div class="row" style="margin-bottom:12px">
+          <label>Repeat<select name="repeat">${REPEAT.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></label>
+          <label>Repeat until (optional)<input type="date" name="repeatEnd"></label>
+          ${invoice ? `<label class="check"${mail?.emailEnabled ? "" : ' title="Email isn\'t set up on this site yet"'}><input type="checkbox" name="emailIt" ${mail?.emailEnabled ? "" : "disabled"}> Email it to the customer (each time, if it repeats)</label>` : ""}
+        </div>
         <div class="table-wrap"><table>
           <thead><tr>${kind === "invoice" ? `<th style="width:17%">Product or service</th><th>Description</th><th style="width:25%">Kind of sale</th>` : `<th style="width:28%">Account</th><th>Description</th>`}<th>Qty</th><th class="num" style="width:12%">Price</th><th class="num">Amount</th><th></th></tr></thead>
           <tbody id="doc-lines">${docLineRow(kind, {}, useTaxDefault)}</tbody>
@@ -1118,9 +1199,13 @@ async function docsView(id, kind) {
           <label>Set the rate by hand (%)<input name="manualRate" inputmode="decimal" placeholder="9.5" style="width:90px"></label>
           <label style="flex:1">Why<input name="manualReason" placeholder="e.g. CDTFA lookup down; rate from the CDTFA website"></label>
         </div>` : ""}
-        <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button></div>
+        <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button>
+          ${invoice ? `<button type="submit" class="secondary" data-as="estimate">Save as estimate instead</button><span class="hash">An estimate doesn't post to the books; the due date becomes its "good until" date.</span>` : ""}</div>
       </form>
     </div>` : ""}
+    ${invoice ? estimatesPanel(id, estimates, canWrite, Boolean(mail?.emailEnabled)) : ""}
+    ${recurringPanel(kind, recurring, canWrite)}
+    ${invoice && mail ? remindersPanel(mail, canSetEmails) : ""}
     <div class="panel">
       <h2>All ${d.title.toLowerCase()}</h2>
       <div class="table-wrap"><table>
@@ -1170,8 +1255,17 @@ async function docPageView(id, kind, docId) {
   app.innerHTML = shell(d.path, `
     <div class="head no-print">
       <div><a href="#/e/${id}/${d.path}">← All ${d.title.toLowerCase()}</a></div>
-      <div class="row"><button class="secondary" data-action="print">Print or save as PDF</button></div>
+      <div class="row">
+        ${invoice && x.status !== "void" && state.org.role !== "read_only" && state.org.role !== "approver" ? `<button data-action="doc-toggle" data-form="doc-email" data-id="${x.id}">${x.emails?.some((m) => m.kind === "invoice") ? "Email again" : "Email to customer"}</button>` : ""}
+        <button class="secondary" data-action="print">Print or save as PDF</button>
+      </div>
     </div>
+    ${invoice ? `<table class="no-print" style="margin-bottom:12px"><tbody><tr hidden data-doc-email="${x.id}"><td>
+      <form data-form="doc-email" data-id="${x.id}" class="row">
+        <label style="min-width:260px">Send to<input type="email" name="to" value="${esc(who?.email ?? "")}" placeholder="customer@example.com" required></label>
+        <button type="submit">Send</button>
+        <span class="hash">The email has a link to view or print this invoice.</span>
+      </form></td></tr></tbody></table>` : ""}
     <article class="panel doc">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
         <div>
@@ -1211,6 +1305,7 @@ async function docPageView(id, kind, docId) {
       ${invoice ? `<p style="margin-top:8px">${esc(taxExplanation(x))}</p>` : x.useTaxSource !== "none" ? `<p style="margin-top:8px">${esc(useTaxExplanation(x))}</p>` : ""}
       <p class="hash" style="margin-top:8px">Created by ${esc(x.createdBy.replace("user:", ""))}</p>
       ${x.payments.length ? `<h3>Payments</h3>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}` : ""}
+      ${x.emails?.length ? `<h3>Emails</h3>${x.emails.map((m) => `<div class="hash">${esc(when(m.sentAt))} · ${m.kind === "reminder" ? `Reminder (${esc(m.stage)})` : "Invoice"} to ${esc(m.sentTo)} · by ${esc(m.sentBy.replace("user:", "").replace("system:", "TrailBook "))}</div>`).join("")}` : ""}
     </div>`);
 }
 
@@ -3064,6 +3159,23 @@ document.addEventListener("click", async (ev) => {
       if (document.querySelectorAll("#doc-lines tr").length > 1) b.closest("tr").remove();
       updateDocTotals();
       if (document.querySelector("form[data-form=document][data-kind=invoice]") || useTaxOn()) scheduleTaxPreview();
+    } else if (a === "estimate-email") {
+      b.disabled = true;
+      const r = await api(entPath(`/estimates/${b.dataset.id}/email`), { body: {} });
+      toast(`Emailed to ${r.sentTo}`);
+      await docsView(state.entity.entity.id, "invoice");
+    } else if (a === "estimate-decline") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Mark declined? Click again"; return; }
+      b.disabled = true;
+      await api(entPath(`/estimates/${b.dataset.id}/decline`), { body: {} });
+      toast("Marked declined");
+      await docsView(state.entity.entity.id, "invoice");
+    } else if (a === "recurring-stop") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Stop it? Click again"; return; }
+      b.disabled = true;
+      const t = await api(entPath(`/recurring/${b.dataset.id}/stop`), { body: {} });
+      toast("Stopped. Nothing more will be issued on this schedule");
+      await docsView(state.entity.entity.id, t.kind);
     } else if (a === "doc-toggle") {
       const row = document.querySelector(`tr[data-${b.dataset.form}="${b.dataset.id}"]`);
       row.hidden = !row.hidden;
@@ -3416,9 +3528,42 @@ document.addEventListener("submit", async (ev) => {
       const lines = readDocLines().filter((l) => l.unitPrice || l.itemId);
       const manualTax = d.manualRate?.trim() ? { ratePercent: d.manualRate.trim(), reason: d.manualReason ?? "" } : undefined;
       const useTax = k === "bill" ? useTaxOn() : undefined;
+      if (ev.submitter?.dataset.as === "estimate") {
+        const est = await api(entPath("/estimates"), { body: { contactId, issueDate: d.issueDate, expiryDate: d.dueDate, memo: d.memo, lines } });
+        toast(`Estimate ${est.number} saved for ${usd(est.totalMinor)}`);
+        return await docsView(state.entity.entity.id, k);
+      }
       const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, useTax, idempotencyKey: crypto.randomUUID() } });
-      toast(`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`);
+      const notes = [`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`];
+      if (d.repeat) {
+        try {
+          const t = await api(entPath("/recurring"), { body: {
+            kind: k, contactId, lines, memo: d.memo, reference: d.reference, dueDays: daysFrom(d.issueDate, d.dueDate || d.issueDate),
+            frequency: d.repeat, after: d.issueDate, endDate: d.repeatEnd || undefined, email: Boolean(d.emailIt), useTax,
+          } });
+          notes.push(`the next one is on ${t.nextDate}`);
+        } catch (err) { notes.push(`but the schedule wasn't saved: ${err.message}`); }
+      }
+      if (d.emailIt) {
+        try {
+          const r = await api(entPath(`/invoices/${doc.id}/email`), { body: {} });
+          notes.push(`emailed to ${r.sentTo}`);
+        } catch (err) { notes.push(`but it wasn't emailed: ${err.message}`); }
+      }
+      toast(notes.join("; "));
       await docsView(state.entity.entity.id, k);
+    } else if (kind === "est-accept") {
+      const r = await api(entPath(`/estimates/${f.dataset.id}/accept`), { body: d });
+      toast(`${r.invoice.number} issued for ${usd(r.invoice.totalMinor)} from ${r.estimate.number}`);
+      location.hash = `#/e/${state.entity.entity.id}/invoices/${r.invoice.id}`;
+    } else if (kind === "doc-email") {
+      const r = await api(entPath(`/invoices/${f.dataset.id}/email`), { body: { to: d.to } });
+      toast(`Emailed to ${r.sentTo}`);
+      await docPageView(state.entity.entity.id, "invoice", f.dataset.id);
+    } else if (kind === "invoice-emails") {
+      await api(entPath("/invoice-emails"), { body: { reminders: Boolean(f.querySelector("[name=reminders]").checked), replyTo: d.replyTo ?? "" } });
+      toast("Saved");
+      await docsView(state.entity.entity.id, "invoice");
     } else if (kind === "pay") {
       const k = f.dataset.kind;
       await api(entPath(`/${DOC[k].path}/${f.dataset.id}/payments`), { body: { ...d, idempotencyKey: crypto.randomUUID() } });

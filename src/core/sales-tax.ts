@@ -322,7 +322,7 @@ export interface IssueInvoiceInput extends Omit<IssueDocumentInput, "kind" | "ta
 }
 
 /** Fills each line from its product or service, where it has one. */
-async function resolveLines(tx: Tx, entityId: string, lines: InvoiceLineInput[]): Promise<DocumentLineInput[]> {
+export async function resolveLines(tx: Tx, entityId: string, lines: InvoiceLineInput[]): Promise<DocumentLineInput[]> {
   const ids = [...new Set(lines.map((l) => l.itemId).filter(Boolean))] as string[];
   const items = new Map<string, any>();
   if (ids.length) {

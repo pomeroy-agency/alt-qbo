@@ -26,6 +26,10 @@ const TABLES: [string, string][] = [
   ["documents", "SELECT * FROM documents WHERE entity_id = $1 ORDER BY kind, issue_date, number"],
   ["document_lines", "SELECT l.* FROM document_lines l JOIN documents d ON d.id = l.document_id WHERE l.entity_id = $1 ORDER BY d.kind, d.number, l.line_no"],
   ["document_payments", "SELECT * FROM document_payments WHERE entity_id = $1 ORDER BY payment_date, created_at"],
+  ["estimates", "SELECT * FROM estimates WHERE entity_id = $1 ORDER BY number"],
+  ["recurring_templates", "SELECT * FROM recurring_templates WHERE entity_id = $1 ORDER BY created_at"],
+  // View links stay out: they are only hashes of links already emailed.
+  ["customer_emails", "SELECT * FROM customer_emails WHERE entity_id = $1 ORDER BY sent_at"],
   ["bank_imports", "SELECT * FROM bank_imports WHERE entity_id = $1 ORDER BY created_at"],
   ["bank_lines", "SELECT * FROM bank_lines WHERE entity_id = $1 ORDER BY txn_date, created_at"],
   ["reconciliations", "SELECT * FROM reconciliations WHERE entity_id = $1 ORDER BY statement_date"],
