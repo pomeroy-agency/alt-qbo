@@ -28,6 +28,7 @@ import {
 import { GatewayError } from "../billing/gateway.js";
 import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
 import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
+import { clientOverview } from "../core/firm.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
@@ -2554,6 +2555,12 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       user: { ...user, emailVerified: verified, mfa, hubConnected: hub }, orgs: rows.map((r) => ({ ...r, termsAccepted: accepted.has(r.id) || r.name === EXAMPLE_ORG_NAME })),
       emailEnabled: Boolean(opts.mailer), termsVersion: TERMS_VERSION,
     });
+  }
+  // The firm console: every client this person can open, with what each business needs.
+  if (req.method === "GET" && path === "/api/clients") {
+    const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+    if (!user) throw new AuthError("not signed in");
+    return json({ today: pacificToday(), clients: await clientOverview(pool, user, { today: pacificToday(), exampleOrgName: EXAMPLE_ORG_NAME }) });
   }
   // An owner or admin accepts the current terms for their organisation.
   const termsPath = /^\/api\/orgs\/([0-9a-f-]{36})\/terms\/accept$/.exec(path);

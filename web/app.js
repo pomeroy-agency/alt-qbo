@@ -177,13 +177,14 @@ function shell(active, content) {
   const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
   const billing = ["owner", "admin"].includes(state.org?.role) ? [["billing", "#/billing", "Billing"]] : [];
   const newsletter = state.org?.newsletter ? [["newsletter", "#/newsletter", "Newsletter"]] : [];
-  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...newsletter, ["account", "#/account", "Your account"]];
+  const many = (state.me?.orgs?.length ?? 0) > 1;
+  const org = [...(many ? [["clients", "#/clients", "All clients"]] : []), ["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...newsletter, ["account", "#/account", "Your account"]];
   const main = e ? entityTabs().map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
-    ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
-    ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
+    ...(e ? [...(many ? [btn("#/clients", "clients", "All clients")] : []), btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
+    ...(e ? org.filter(([k]) => k !== "home" && k !== "clients").map(([k, h, l]) => btn(h, k, l)) : []),
   ];
-  const moreOn = e && (["home", "team", "audit", "billing", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const moreOn = e && (["clients", "home", "team", "audit", "billing", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
   const mobile = `
       <nav class="mobile">
         <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
@@ -192,6 +193,7 @@ function shell(active, content) {
   return `${topbar()}
     <div class="wrap shell">
       <nav class="side">
+        ${many ? `<a href="#/clients" class="${active === "clients" ? "on" : ""}">All clients</a>` : ""}
         <a href="#/" class="${active === "home" ? "on" : ""}">Businesses</a>
         ${nav}
         <div class="label">Organisation</div>
@@ -381,6 +383,67 @@ async function homeView() {
         <label>&nbsp;<button type="submit">Create business</button></label>
       </form>
     </div>` : ""}`);
+}
+
+// ------------------------------------------------------------ firm console
+
+const clientFilter = { q: "", attention: false };
+
+/** Every client's books on one page, for accounting and HR firms: what each needs, and a link straight to it. */
+async function clientsView() {
+  state.entity = null;
+  const { clients, today: asOf } = await api("/api/clients");
+  const rows = clients.flatMap((o) => (o.entities.length ? o.entities : [null]).map((e) => ({ o, e })));
+  const q = clientFilter.q.toLowerCase();
+  const shown = rows.filter(({ o, e }) => (!q || o.name.toLowerCase().includes(q) || (e?.name ?? "").toLowerCase().includes(q)) && (!clientFilter.attention || o.locked || (e && e.tasks > 0)));
+  const needing = rows.filter(({ e }) => e && e.tasks > 0).length;
+  const go = (o, e, page, label, n, what) => (n ? `<button class="link" style="white-space:nowrap" data-action="open-client" data-org="${o.id}" data-go="#/e/${e.id}/${page}" title="${esc(what)}">${label} ${n}</button>` : "");
+  const ago = (iso) => {
+    if (!iso) return `<span class="muted">No activity</span>`;
+    const days = Math.floor((Date.parse(asOf) - Date.parse(iso.slice(0, 10))) / 86400000);
+    return days <= 0 ? "Today" : days === 1 ? "Yesterday" : `${days} days ago`;
+  };
+  const lastMonthEnd = monthEnd(Number(asOf.slice(0, 4)), Number(asOf.slice(5, 7)) - 1);
+  const row = ({ o, e }) => {
+    const client = `<strong>${esc(o.name)}</strong><div class="hash">${esc(ROLE_LABEL[o.role] ?? o.role)}${o.example ? " · example books" : ""}</div>`;
+    if (o.locked) return `<tr><td>${client}</td><td colspan="5" class="muted">${esc(o.locked)}</td></tr>`;
+    if (!e) return `<tr><td>${client}</td><td colspan="4" class="muted">No business set up yet.</td><td><button class="link" data-action="open-client" data-org="${o.id}" data-go="#/">Open</button></td></tr>`;
+    const todo = [
+      go(o, e, "bank", "Bank lines", e.bankToReview, "imported bank lines to record"),
+      go(o, e, "reconcile", "Reconcile", e.unreconciled, "bank accounts not reconciled in 45 days"),
+      go(o, e, "invoices", "Overdue invoices", e.overdueInvoices, "invoices past due"),
+      go(o, e, "payroll", "Pay runs", e.payRunsToApprove, "pay runs waiting for approval"),
+      go(o, e, "payroll", "Tax deposits", e.taxDepositsDue, "payroll tax deposits overdue or due within a week"),
+      go(o, e, "periods", "Months to close", e.monthsToClose, "months still open more than a month after they ended"),
+    ].filter(Boolean);
+    const closed = e.closedThrough
+      ? `${e.closedThrough >= lastMonthEnd ? "" : `<span style="color:var(--warn-ink)">`}${longDate(e.closedThrough)}${e.closedThrough >= lastMonthEnd ? "" : "</span>"}`
+      : `<span class="muted">Nothing closed</span>`;
+    return `<tr><td>${client}</td>
+      <td>${esc(e.name)}<div class="hash">${esc(placeName(e.country, e.region))}</div></td>
+      <td>${todo.join("<br>") || `<span class="muted">All caught up</span>`}
+        ${e.nextDeposit ? `<div class="hash">${e.nextDeposit.overdue ? "Overdue" : "Due"} ${esc(e.nextDeposit.dueDate)}: ${esc(e.nextDeposit.what)}</div>` : ""}</td>
+      <td>${closed}</td><td>${ago(e.lastActivity)}</td>
+      <td><button class="link" data-action="open-client" data-org="${o.id}" data-go="#/e/${e.id}/overview">Open</button></td></tr>`;
+  };
+  app.innerHTML = shell("clients", `
+    <div class="head"><div><h1>All clients</h1><p class="muted">Every organisation you can open, and what each business's books need. Click a task to go straight to it.</p></div></div>
+    <div class="row" style="gap:24px;margin-bottom:12px">
+      <div><div class="muted">Clients</div><div class="stat">${clients.filter((o) => !o.example).length}</div></div>
+      <div><div class="muted">Businesses needing work</div><div class="stat">${needing}</div></div>
+    </div>
+    <div class="panel">
+      <form data-form="client-filter" class="row" style="margin-bottom:12px">
+        <label style="flex:1">Find a client<input name="q" value="${esc(clientFilter.q)}" placeholder="Name"></label>
+        <label class="check"><input type="checkbox" name="attention" data-autosubmit ${clientFilter.attention ? "checked" : ""}> Only those needing work</label>
+        <button type="submit" class="secondary">Filter</button>
+      </form>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Client</th><th>Business</th><th>To do</th><th>Books closed through</th><th>Last change</th><th></th></tr></thead>
+        <tbody>${shown.map(row).join("") || `<tr><td colspan="6" class="muted">No clients match.</td></tr>`}</tbody>
+      </table></div>
+      <p class="hash" style="margin-top:8px">To add a client, ask them to invite your firm's email under Team in their TrailBook, usually as an Accountant. The client stays the customer of record and keeps control of who has access.</p>
+    </div>`);
 }
 
 const countryOf = (code) => (state.org?.countries ?? []).find((c) => c.code === code);
@@ -3097,6 +3160,7 @@ async function route() {
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
+    if (parts[0] === "clients") return await clientsView();
     if (parts[0] === "billing" && parts[1] === "card" && parts[2]) return await cardReturnView(parts[2]);
     if (parts[0] === "billing") return await billingView();
     if (parts[0] === "audit") return await auditView();
@@ -3428,6 +3492,11 @@ document.addEventListener("click", async (ev) => {
       await api("/api/auth/logout", { body: {} });
       state.me = null; state.org = null; state.orgId = null;
       await route();
+    } else if (a === "open-client") {
+      state.orgId = b.dataset.org;
+      try { localStorage.setItem("altqbo_org", b.dataset.org); } catch {}
+      state.org = null; state.entity = null;
+      if (location.hash === b.dataset.go) await route(); else location.hash = b.dataset.go;
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);
@@ -3648,6 +3717,10 @@ document.addEventListener("submit", async (ev) => {
       if (d.preset && d.preset !== "custom") [rep.from, rep.to] = presetRange(d.preset);
       if (d.asPreset && d.asPreset !== "custom") rep.asOf = presetAsOf(d.asPreset);
       await reportsView(state.entity.entity.id);
+    } else if (kind === "client-filter") {
+      clientFilter.q = d.q ?? "";
+      clientFilter.attention = f.querySelector("[name=attention]").checked;
+      await clientsView();
     } else if (kind === "contractor-tax") {
       const gets = f.querySelector("[name=gets]").checked;
       const form = gets ? (state.entity.entity.country === "CA" ? "t4a" : "1099_nec") : null;
