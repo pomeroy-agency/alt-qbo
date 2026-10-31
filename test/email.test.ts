@@ -80,7 +80,7 @@ describe("email sign-in, reset and confirmation", () => {
     const before = sent.length;
     for (let i = 0; i < 7; i++) await call("/api/auth/reset", { body: { email: s.email } });
     expect(sent.length - before).toBe(5);
-    expect((await call("/api/auth/options", { withoutMail: true })).data).toEqual({ email: false });
+    expect((await call("/api/auth/options", { withoutMail: true })).data).toEqual({ email: false, hub: false });
     expect((await call("/api/auth/reset", { body: { email: s.email }, withoutMail: true })).status).toBe(503);
   });
 

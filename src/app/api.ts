@@ -28,6 +28,7 @@ import { csvCell } from "../core/csv.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
+import { HUB_STATE_COOKIE, HubSignInError, connectHubAccount, hubSignInOn, redeemHubCode, startHubSignIn, takeHubSignIn } from "./hub-signin.js";
 import { beginMfaSetup, checkSecondFactor, disableMfa, enableMfa, issueMfaTicket, mfaStatus, redeemMfaTicket, regenerateRecoveryCodes } from "./mfa.js";
 import type { Mailer } from "./mail.js";
 import { TERMS_VERSION, acceptTerms, orgsAccepted } from "./terms.js";
@@ -1873,7 +1874,7 @@ const ALWAYS_ALLOWED = /\/(billing(\/.*)?|leave|security|backup|backups\/[^/]+\/
 const ROLE_NAMES: Record<string, string> = { admin: "an admin", bookkeeper: "a bookkeeper", approver: "an approver", accountant: "an accountant", read_only: "a viewer" };
 
 const EMAIL_ROUTE: Record<string, EmailPurpose> = { "email-link": "sign_in", reset: "reset", verify: "verify" };
-const EMAIL_HASH: Record<EmailPurpose, string> = { sign_in: "email-link", reset: "reset", verify: "verify" };
+const EMAIL_HASH: Record<EmailPurpose, string> = { sign_in: "email-link", reset: "reset", verify: "verify", hub_link: "hub-link" };
 
 /** Emails a one-time link if the account exists and isn't over its hourly limit. Says nothing either way, so the form can't be used to find accounts. */
 async function sendEmailLink(req: Request, pool: pg.Pool, opts: ApiOptions, email: string, purpose: EmailPurpose): Promise<void> {
@@ -1950,6 +1951,108 @@ async function requireMfaIfOrgDoes(pool: pg.Pool, orgId: string, userId: string)
   }
 }
 
+/** A page of the app, with any cookies to set: where the hub sign-in ends up. */
+function redirect(to: string, cookies: string[] = []): Response {
+  const headers = new Headers({ location: to, "cache-control": "no-store" });
+  for (const c of cookies) headers.append("set-cookie", c);
+  return new Response(null, { status: 302, headers });
+}
+
+const hubStateCookie = (state: string, maxAge: number) =>
+  `${HUB_STATE_COOKIE}=${state}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/hub; Max-Age=${maxAge}`;
+
+/**
+ * "Sign in with Pomeroy Account" (hub-signin.ts): start, the hub's return,
+ * and the emailed link that connects a Pomeroy Account to a TrailBook login.
+ * The return always lands on an app page (#/hub/<what happened>), never on JSON.
+ */
+async function hubSignInRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
+  const base = appUrl(req, opts);
+  const hub = opts.hub;
+  const page = (what: string, cookies: string[] = []) => redirect(`${base}/#/hub/${what}`, [hubStateCookie("", 0), ...cookies]);
+
+  // The emailed link: proves the TrailBook address, then connects and signs in.
+  const linkPath = /^\/api\/auth\/hub-link\/([\w-]{20,100})$/.exec(path);
+  if (req.method === "POST" && linkPath) {
+    const user = await withSystem(pool, async (tx) => {
+      const u = await useEmailToken(tx, linkPath[1]!, "hub_link");
+      await connectHubAccount(tx, u.id, u.hubUserId!);
+      return u;
+    });
+    return signedIn(pool, user.id);
+  }
+
+  if (req.method === "GET" && path === "/api/auth/hub/start") {
+    if (!hubSignInOn(hub)) return page("unavailable");
+    const q = new URL(req.url).searchParams;
+    let linkUserId: string | undefined;
+    if (q.get("link") === "1") {
+      const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+      if (!user) return redirect(`${base}/#/login`);
+      linkUserId = user.id;
+    }
+    const s = await startHubSignIn(pool, hub, base, { linkUserId, signup: q.get("screen") === "signup" });
+    return redirect(s.location, [hubStateCookie(s.state, 600)]);
+  }
+
+  if (req.method === "GET" && path === "/api/auth/hub/callback") {
+    if (!hubSignInOn(hub)) return page("unavailable");
+    const q = new URL(req.url).searchParams;
+    const state = q.get("state") ?? "";
+    // The state must come back to the browser that started, or someone else's sign-in could land here.
+    if (!state || cookie(req, HUB_STATE_COOKIE) !== state) return page("expired");
+    let identity, linkUserId: string | null;
+    try {
+      const waiting = await takeHubSignIn(pool, state);
+      linkUserId = waiting.linkUserId;
+      if (q.get("error") || !q.get("code")) return page("cancelled");
+      identity = await redeemHubCode(hub, base, q.get("code")!, waiting.verifier);
+    } catch (err) {
+      if (err instanceof HubSignInError) {
+        console.error(`hub sign-in: ${err.message}`);
+        return page(err.code);
+      }
+      throw err;
+    }
+
+    // Connecting from Your account: the same person must still be signed in here.
+    if (linkUserId) {
+      const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+      if (user?.id !== linkUserId) return page("expired");
+      try {
+        await connectHubAccount(pool, linkUserId, identity.sub);
+      } catch (err) {
+        if (err instanceof HubSignInError) return page(err.code);
+        throw err;
+      }
+      return page("connected");
+    }
+
+    const linked = (await pool.query("SELECT id FROM users WHERE hub_user_id = $1", [identity.sub])).rows[0];
+    if (linked) {
+      // TrailBook's own second factor still applies.
+      if ((await mfaStatus(pool, linked.id)).enabled) return page(`code/${await issueMfaTicket(pool, linked.id)}`);
+      const s = await createSession(pool, linked.id);
+      return redirect(`${base}/#/`, [hubStateCookie("", 0), sessionCookie(s.token, s.maxAge)]);
+    }
+
+    // Not connected yet: a one-time link to the TrailBook login with that email proves it's the same person.
+    const user = (await pool.query("SELECT id, email, name FROM users WHERE email = $1", [identity.email])).rows[0];
+    if (!user) return page("no-account");
+    if (!opts.mailer) return page("unavailable");
+    const token = await withSystem(pool, (tx) => issueEmailToken(tx, user, "hub_link", identity.sub));
+    if (token) {
+      try {
+        await opts.mailer({ to: user.email, ...emailText.hub_link(user.name, `${base}/#/hub-link/${token}`) });
+      } catch (err) {
+        console.error("hub link email failed", err);
+      }
+    }
+    return page("check-email");
+  }
+  throw new HttpError(404, "not found");
+}
+
 /** Turning two-factor sign-in on and off for the signed-in person. */
 async function mfaRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
   const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
@@ -1997,7 +2100,8 @@ async function mfaRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOpt
 }
 
 async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response | null> {
-  if (req.method === "GET" && path === "/api/auth/options") return json({ email: Boolean(opts.mailer) });
+  if (req.method === "GET" && path === "/api/auth/options") return json({ email: Boolean(opts.mailer), hub: hubSignInOn(opts.hub) });
+  if (path.startsWith("/api/auth/hub/") || path.startsWith("/api/auth/hub-link/")) return hubSignInRoutes(req, path, pool, opts);
   // Checks the sales tax rate lookup end to end with one fixed address
   // (Los Angeles City Hall). Takes no input, so it can't be used to look up
   // anything else; answers are cached like any other lookup.
@@ -2150,11 +2254,11 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
         WHERE m.user_id = $1 ORDER BY m.created_at`,
       [user.id],
     );
-    const verified = (await pool.query("SELECT email_verified_at IS NOT NULL AS v FROM users WHERE id = $1", [user.id])).rows[0].v;
+    const { v: verified, hub } = (await pool.query("SELECT email_verified_at IS NOT NULL AS v, hub_user_id IS NOT NULL AS hub FROM users WHERE id = $1", [user.id])).rows[0];
     const mfa = await mfaStatus(pool, user.id);
     const accepted = await withSystem(pool, (tx) => orgsAccepted(tx, rows.map((r) => r.id)));
     return json({
-      user: { ...user, emailVerified: verified, mfa }, orgs: rows.map((r) => ({ ...r, termsAccepted: accepted.has(r.id) || r.name === EXAMPLE_ORG_NAME })),
+      user: { ...user, emailVerified: verified, mfa, hubConnected: hub }, orgs: rows.map((r) => ({ ...r, termsAccepted: accepted.has(r.id) || r.name === EXAMPLE_ORG_NAME })),
       emailEnabled: Boolean(opts.mailer), termsVersion: TERMS_VERSION,
     });
   }
@@ -2263,6 +2367,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
     if (err instanceof GatewayError) return json({ error: err.message }, 502);
     if (err instanceof JurisdictionError) return json({ error: err.message, code: "JURISDICTION" }, 422);
     if (err instanceof OAuthError) return json({ error: err.message, code: err.code }, err.status);
+    if (err instanceof HubSignInError) return json({ error: err.message, code: err.code }, 409);
     if (err instanceof NewsletterError) return json({ error: err.message }, err.status);
     if (err instanceof BrevoError) return json({ error: err.message }, 502);
     console.error(err);

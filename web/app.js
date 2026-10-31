@@ -209,8 +209,13 @@ function shell(active, content) {
 // ------------------------------------------------------------------ auth
 
 let emailEnabled = null;
+let hubEnabled = false;
 async function emailOn() {
-  if (emailEnabled === null) emailEnabled = await api("/api/auth/options").then((o) => o.email).catch(() => false);
+  if (emailEnabled === null) {
+    const o = await api("/api/auth/options").catch(() => ({}));
+    emailEnabled = Boolean(o.email);
+    hubEnabled = Boolean(o.hub);
+  }
   return emailEnabled;
 }
 
@@ -257,6 +262,7 @@ async function authView(mode, error = "", notice = "") {
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>
         ${!signup && email ? `<p style="margin-top:12px"><a href="#/magic">Email me a sign-in link instead</a> · <a href="#/forgot">Forgot your password?</a></p>` : ""}
+        ${!signup && hubEnabled ? `<p style="margin-top:12px"><a class="btn secondary" href="/api/auth/hub/start">Sign in with Pomeroy Account</a></p>` : ""}
         <p style="margin-top:14px">${signup ? `Already have an account? <a href="#/login">Sign in</a>` : `New here? <a href="#/signup">Create an account</a>`}</p>`);
 }
 
@@ -274,6 +280,42 @@ function mfaView(ticket, then = "home", inviteToken = "", error = "") {
     </form>
     <p style="margin-top:14px"><a href="#/login">Start over</a></p>`);
   app.querySelector("input[name=code]")?.focus();
+}
+
+const HUB_MESSAGES = {
+  "check-email": ["good", "Your Pomeroy Account isn't connected to TrailBook yet. We've emailed a one-time link to your TrailBook address: open it to connect them and sign in. It works for 30 minutes."],
+  connected: ["good", "Your Pomeroy Account is connected. Next time, \"Sign in with Pomeroy Account\" opens your books."],
+  "no-account": ["bad", "No TrailBook login uses that Pomeroy Account's email. Sign in with your TrailBook email and password, then connect your Pomeroy Account under Your account, or create a TrailBook account."],
+  taken: ["bad", "That Pomeroy Account is already connected to a different TrailBook login."],
+  cancelled: ["bad", "Signing in with Pomeroy Account was cancelled."],
+  expired: ["bad", "That sign-in took too long or was already used. Try again."],
+  unavailable: ["bad", "Signing in with Pomeroy Account isn't available right now. Sign in with your TrailBook email and password."],
+};
+
+/** Where "Sign in with Pomeroy Account" ends up. */
+async function hubView(what, ticket) {
+  if (what === "code" && ticket) return mfaView(ticket);
+  const [tone, text] = HUB_MESSAGES[what] ?? ["bad", "Pomeroy Account couldn't sign you in. Try again, or sign in with your TrailBook email and password."];
+  if (what === "connected") {
+    state.me = null;
+    location.hash = "#/account";
+    toast(text);
+    return;
+  }
+  return tone === "good" ? authView("login", "", text) : authView("login", text);
+}
+
+/** The emailed link that connects a Pomeroy Account to this TrailBook login, then signs in. */
+async function hubLinkView(token) {
+  try {
+    const r = await api(`/api/auth/hub-link/${token}`, { body: {} });
+    state.me = null; state.org = null;
+    if (r.mfaRequired) return mfaView(r.ticket);
+    location.hash = "#/";
+    toast("Your Pomeroy Account is connected");
+  } catch (err) {
+    return authView("login", err.message);
+  }
 }
 
 /** Pages opened from an emailed link. */
@@ -2613,6 +2655,12 @@ async function accountView() {
   app.innerHTML = shell("account", `
     <div class="head"><div><h1>Your account</h1><p class="muted">${esc(u.name)} · ${esc(u.email)}${u.emailVerified ? "" : " (not confirmed yet)"}</p></div></div>
     <div class="panel"><h2>Two-factor sign-in</h2>${mfa}</div>
+    ${u.hubConnected
+      ? `<div class="panel"><h2>Pomeroy Account</h2><p><span class="pill">Connected</span> "Sign in with Pomeroy Account" opens your books. Your two-factor code is still asked for.</p></div>`
+      : (await emailOn(), hubEnabled)
+        ? `<div class="panel"><h2>Pomeroy Account</h2><p>One sign-in for TrailBook, MilePost and pomeroyagency.com. Connect it to this TrailBook login once; your password keeps working too.</p>
+            <a class="btn secondary" href="/api/auth/hub/start?link=1">Connect Pomeroy Account</a></div>`
+        : ""}
     <div class="panel"><h2>Safety and privacy</h2>
       <p>How we protect your books, and what we promise about prices and your data: <a href="/security.html" target="_blank" rel="noopener">Security</a> · <a href="/promises.html" target="_blank" rel="noopener">Our promises</a> · <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a></p></div>`);
 }
@@ -2772,6 +2820,8 @@ async function route() {
     if (["login", "signup", "forgot", "magic"].includes(parts[0])) return await authView(parts[0]);
     if (["email-link", "reset", "verify"].includes(parts[0]) && parts[1]) return await emailLinkView(parts[0], parts[1]);
     if (parts[0] === "join" && parts[1]) return await joinView(parts[1]);
+    if (parts[0] === "hub" && parts[1]) return await hubView(parts[1], parts[2]);
+    if (parts[0] === "hub-link" && parts[1]) return await hubLinkView(parts[1]);
     if (!state.me) {
       try { state.me = await api("/api/me"); } catch {
         // An app sent someone here to connect: come back to the consent page after signing in.

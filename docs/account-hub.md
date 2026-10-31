@@ -109,7 +109,34 @@ or, before a person's accounts are linked, `{ "email": "person@example.com" }` (
 - A session ends after **12 hours without use**, and **7 days after sign-in** at most.
 - Anyone who has two-factor on enters their code at **every new sign-in**, by password or emailed link. An organisation can require two-factor for everyone (Security page).
 - **Payroll, bank details and tax filings need a session that passed the second factor**, whatever the organisation's setting: saving employees, payroll and direct deposit settings, creating and approving pay runs, recording tax deposit payments, sales tax settings, and downloading the direct deposit file, prepared payroll forms and the sales tax return. Reading payroll pages and previews stays open. Someone without two-factor is asked to turn it on (403, `code: "second_factor_required"`); turning it on counts for the session they're in. The example business is left out.
-- A hub sign-in (phase 6) will start a session that hasn't passed TrailBook's second factor, so the code is still asked for before any of the above.
+- A hub sign-in starts a session that hasn't passed TrailBook's second factor; anyone with two-factor on enters their code before the session starts.
+
+## Signing in with a Pomeroy Account (phase 6)
+
+TrailBook is a `kind: "jwt"` app in the hub's `HUB_CLIENTS`:
+
+```json
+{ "id": "<ACCOUNT_HUB_CLIENT_ID>", "name": "TrailBook", "kind": "jwt", "product": "trailbook",
+  "secret_sha256": "<sha256 of ACCOUNT_HUB_CLIENT_SECRET>",
+  "redirect_uris": ["https://app.pomeroyagency.com/api/auth/hub/callback"],
+  "home_url": "https://app.pomeroyagency.com",
+  "signout_url": "https://app.pomeroyagency.com/api/hub/signout" }
+```
+
+TrailBook needs `ACCOUNT_HUB_CLIENT_ID` and `ACCOUNT_HUB_CLIENT_SECRET` on top of `ACCOUNT_HUB_URL`. Without them the button doesn't show.
+
+1. **Start:** "Sign in with Pomeroy Account" opens `GET /api/auth/hub/start`. TrailBook keeps a one-time state (hashed) and a PKCE verifier for 10 minutes, puts the state in an HttpOnly cookie on `/api/auth/hub`, and sends the person to the hub's `/authorize` with S256.
+2. **Back from the hub:** `GET /api/auth/hub/callback?code=…&state=…`. The state must match the cookie and works once. TrailBook posts the code, the verifier and its client id and secret to the hub's `/token`, then checks the ES256 token: the key from `/.well-known/jwks.json` (by `kid`, cached 10 minutes, fetched again for a new `kid`), `iss` is `ACCOUNT_HUB_URL`, `aud` is TrailBook's client id, and `exp` and `nbf` hold, allowing a minute either way.
+3. **Who it is:** the token's `sub` is matched to the TrailBook person connected to it.
+   - **Connected:** TrailBook's own session starts (its own HttpOnly cookie). Someone with two-factor on enters their code first.
+   - **Not connected, and a TrailBook login has the token's email:** TrailBook emails that address a one-time link (`#/hub-link/<token>`, 30 minutes) that connects the two and signs in. Reaching the inbox is the proof; an email match alone never connects anything.
+   - **No TrailBook login with that email:** the person signs in with their TrailBook email and password and connects from **Your account**, which runs the same flow while signed in and connects to that login.
+   - One Pomeroy Account connects to one TrailBook login, and the other way round.
+4. Every outcome lands on an app page, `#/hub/<what happened>`: `check-email`, `connected`, `no-account`, `taken`, `cancelled`, `expired`, `unavailable`, `bad_token`, `refused`, `unreachable`, or `code/<ticket>` for the second factor.
+
+The back-channel sign-out matches the hub's `user_id` to the connected login first, then `trailbook_user_id`, then the email.
+
+TrailBook's own password, emailed sign-in links and reset keep working until the cutover date.
 
 ## Linking a MilePost workspace to a TrailBook organisation
 
