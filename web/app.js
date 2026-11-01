@@ -2273,7 +2273,12 @@ function employeeForm(e = null) {
       <label>W-4 step 4(c) extra each paycheck ($)<input name="w4Step4c" value="${v(e?.w4.step4cExtraWithholding)}" inputmode="decimal" placeholder="0"></label>
       ${stateCertificateFields(e, v, sel)}`}
     </div>
-    ${canada ? `<p class="hash">Direct deposit files for Canadian banks aren't ready yet; pay by cheque or through your bank for now.</p>` : `<h3>Direct deposit <span class="muted">(leave blank for a paper check)</span></h3>
+    ${canada ? `<h3>Direct deposit <span class="muted">(leave blank for a cheque)</span></h3>
+    <div class="row">
+      <label>Institution number<input name="ddInstitution" value="${v(e?.directDeposit?.routing?.slice(1, 4))}" inputmode="numeric" maxlength="3" placeholder="3 digits" style="width:90px"></label>
+      <label>Transit number<input name="ddTransit" value="${v(e?.directDeposit?.routing?.slice(4, 9))}" inputmode="numeric" maxlength="5" placeholder="5 digits" style="width:100px"></label>
+      <label>Account number<input name="ddAccount" autocomplete="off" inputmode="numeric" placeholder="${e?.directDeposit ? `On file, ends ${e.directDeposit.accountLast4}` : "From their void cheque"}"></label>
+    </div>` : `<h3>Direct deposit <span class="muted">(leave blank for a paper check)</span></h3>
     <div class="row">
       <label>Routing number<input name="ddRouting" value="${v(e?.directDeposit?.routing)}" inputmode="numeric" maxlength="9" placeholder="9 digits" style="width:120px"></label>
       <label>Account number<input name="ddAccount" autocomplete="off" inputmode="numeric" placeholder="${e?.directDeposit ? `On file, ends ${e.directDeposit.accountLast4}` : "From their voided check"}"></label>
@@ -2332,6 +2337,9 @@ function employeeBody(f) {
     };
     if (d.terminationDate !== undefined) body.terminationDate = d.terminationDate;
     if (d.sin?.trim()) body.sin = d.sin.trim();
+    const institution = d.ddInstitution.replace(/\s/g, "");
+    if (institution || d.ddTransit.trim()) body.directDeposit = { institution, transit: d.ddTransit.replace(/[\s-]/g, ""), ...(d.ddAccount.trim() ? { account: d.ddAccount.trim() } : {}) };
+    else if (f.dataset.id && f.querySelector("[name=ddAccount]").placeholder.startsWith("On file")) body.directDeposit = null;
     return body;
   }
   const body = {
@@ -2441,7 +2449,7 @@ async function payrollView(id) {
   pay.stateRates = stateRates ?? {};
   pay.state = st;
   pay.workCities = workCities ?? [];
-  const agencies = ["IRS", ...(st?.agencies ?? ["EDD"])];
+  const agencies = [...(st?.country === "CA" ? [] : ["IRS"]), ...(st?.agencies ?? ["EDD"])];
   const sick = st?.sickLeave;
   const canSetUpBank = ["owner", "admin", "accountant"].includes(state.org.role);
   const me = `user:${state.me.user.email}`;
@@ -2457,7 +2465,7 @@ async function payrollView(id) {
       ${pay.adding ? `<div class="emp">${employeeForm()}</div>` : ""}
       <div class="table-wrap"><table>
         <thead><tr><th>Name</th><th>Pay</th><th>Paid</th><th>Status</th><th></th></tr></thead>
-        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">${pay.state?.country === "CA" ? "SIN" : "SSN"} ends ${e.ssnLast4}</div>` : `<div class="hash">No ${pay.state?.country === "CA" ? "SIN" : "SSN"} on file yet</div>`}<div class="hash">${e.directDeposit ? `Direct deposit to ${e.directDeposit.accountType} ending ${esc(e.directDeposit.accountLast4)}` : "Paid by check"}</div></td>
+        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">${pay.state?.country === "CA" ? "SIN" : "SSN"} ends ${e.ssnLast4}</div>` : `<div class="hash">No ${pay.state?.country === "CA" ? "SIN" : "SSN"} on file yet</div>`}<div class="hash">${e.directDeposit ? `Direct deposit to ${pay.state?.country === "CA" ? "account" : e.directDeposit.accountType} ending ${esc(e.directDeposit.accountLast4)}` : pay.state?.country === "CA" ? "Paid by cheque" : "Paid by check"}</div></td>
             <td>${payLabel(e)}${e.payType === "salary" && !e.overtimeExempt ? `<div class="hash">gets overtime</div>` : ""}${e.belowLocalMinimum ? `<div class="alert warn">Below the ${esc(e.belowLocalMinimum.place)} minimum wage of ${usd(Math.round(Number(e.belowLocalMinimum.rate) * 100))} an hour</div>` : ""}</td><td>${FREQ_LABEL[e.payFrequency]}</td>
             <td>${e.status === "active" ? `<span class="pill">Active</span>` : `<span class="pill grey">Left ${e.terminationDate}</span>`}</td>
             <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="emp-edit" data-id="${e.id}">Edit</button>` : ""}</td></tr>
@@ -2478,7 +2486,8 @@ async function payrollView(id) {
         <span class="hash">${esc(st.name)} requires at least ${esc(sick.annualUseCapHours)} hours a year${sick.smallEmployer ? ` (${esc(sick.smallEmployer.annualUseCapHours)} for employers with fewer than ${sick.smallEmployer.under} employees)` : ""}. Salaried exempt employees accrue as if they work 40 hours a week. Front-loaded hours don't carry over.</span>
       </form>` : `<p class="hash" style="margin-top:12px">${esc(st?.name ?? "")} has no statewide paid sick leave law, so TrailBook doesn't track sick hours.</p>`}
     </div>
-    ${st.country === "CA" ? remittancesPanel(deposits, st, canWrite, canSetUpBank)
+    ${st.country === "CA" ? `${remittancesPanel(deposits, st, canWrite, canSetUpBank)}
+    ${canadaDirectDepositPanel(directDeposit, canSetUpBank)}`
       : `${taxDepositsPanel(deposits, canWrite, canSetUpBank)}
     ${directDepositPanel(directDeposit, canSetUpBank)}`}
     ${canWrite && active.length ? `<div class="panel">
@@ -2592,6 +2601,30 @@ function depositsTable(t, canPay, title, intro, settings) {
   </div>`;
 }
 
+/** Canada: the business's details for CPA 005 payroll files. */
+function canadaDirectDepositPanel(dd, canEdit) {
+  const v = (x) => esc(x ?? "");
+  return `<div class="panel">
+    <div class="row" style="justify-content:space-between"><h2>Direct deposit</h2>${dd ? `<span class="pill">Set up</span>` : ""}</div>
+    <p class="muted">After a pay run is approved, download its CPA 005 payroll file and upload it to your bank's payroll or direct deposit service. Your bank moves the money; TrailBook never does.
+      Ask your bank to set up CPA 005 file uploads if it isn't turned on; they'll give you the originator ID and processing centre below.</p>
+    ${dd ? `<p>Originator ID ${esc(dd.originatorId)}, processing centre ${esc(dd.dataCentre)}, shown to employees as <strong>${esc(dd.shortName)}</strong>. Returned payments go to institution ${esc(dd.returnInstitution)}, transit ${esc(dd.returnTransit)}, account ending ${esc(dd.returnAccountLast4)}.${dd.lastFileNumber ? ` Last file number ${dd.lastFileNumber}.` : ""}</p>` : ""}
+    ${canEdit ? `<details ${dd ? "" : "open"}><summary>${dd ? "Change bank details" : "Add your bank details"}</summary>
+      <form data-form="ca-dd-settings">
+        <div class="grid">
+          <label>Originator ID (from your bank)<input name="originatorId" value="${v(dd?.originatorId)}" maxlength="10" required></label>
+          <label>Processing centre (destination data centre)<input name="dataCentre" value="${v(dd?.dataCentre)}" inputmode="numeric" maxlength="5" required placeholder="5 digits"></label>
+          <label>Name on employees' bank statements<input name="shortName" value="${v(dd?.shortName ?? (state.entity.entity.legalName ?? "").slice(0, 15))}" maxlength="15"></label>
+          <label>Business's full name<input name="longName" value="${v(dd?.longName ?? (state.entity.entity.legalName ?? "").slice(0, 30))}" maxlength="30"></label>
+          <label>Your business account's institution number<input name="returnInstitution" value="${v(dd?.returnInstitution)}" inputmode="numeric" maxlength="3" required placeholder="3 digits"></label>
+          <label>Transit number<input name="returnTransit" value="${v(dd?.returnTransit)}" inputmode="numeric" maxlength="5" required placeholder="5 digits"></label>
+          <label>Account number<input name="returnAccount" autocomplete="off" inputmode="numeric" ${dd ? "" : "required"} placeholder="${dd ? `On file, ends ${esc(dd.returnAccountLast4)}` : "Where returned payments go"}"></label>
+        </div>
+        <div class="row" style="margin-top:12px"><button type="submit" class="secondary">Save bank details</button></div>
+      </form></details>` : ""}
+  </div>`;
+}
+
 function directDepositPanel(dd, canEdit) {
   const v = (x) => esc(x ?? "");
   return `<div class="panel">
@@ -2630,8 +2663,8 @@ function payEmployeesPanel(r) {
   return `<div class="panel no-print">
     <h2>Pay your employees</h2>
     ${dd.warnings.map((w) => `<div class="alert warn">${esc(w)}</div>`).join("")}
-    ${dd.deposits.length ? `<p>Direct deposit, ${usd(dd.totalMinor)} in all:</p><ul>${dd.deposits.map((d) => `<li>${esc(d.name)}: ${usd(d.amountMinor)} to ${d.accountType} ending ${esc(d.accountLast4)}</li>`).join("")}</ul>` : ""}
-    ${dd.paperChecks.length ? `<p>Write a paper check for:</p><ul>${dd.paperChecks.map((c) => `<li>${esc(c.name)}: ${usd(c.amountMinor)}</li>`).join("")}</ul>` : ""}
+    ${dd.deposits.length ? `<p>Direct deposit, ${usd(dd.totalMinor)} in all:</p><ul>${dd.deposits.map((d) => `<li>${esc(d.name)}: ${usd(d.amountMinor)} to ${state.entity.entity.country === "CA" ? "account" : d.accountType} ending ${esc(d.accountLast4)}</li>`).join("")}</ul>` : ""}
+    ${dd.paperChecks.length ? `<p>${state.entity.entity.country === "CA" ? "Write a cheque for" : "Write a paper check for"}:</p><ul>${dd.paperChecks.map((c) => `<li>${esc(c.name)}: ${usd(c.amountMinor)}</li>`).join("")}</ul>` : ""}
     ${dd.ready && canDownload ? `<div class="row"><button data-action="dd-download" data-id="${r.id}">Download direct deposit file</button>
       <span class="muted">Upload it to your bank at least two business days before ${esc(r.result.payDate)} so the money lands on time.</span></div>`
       : dd.problem && dd.deposits.length ? `<p class="muted">To make the bank file, ${esc(dd.problem)}${dd.problem.startsWith("add") ? ` on the <a href="#/e/${state.entity.entity.id}/payroll">Payroll page</a>` : ""}.</p>` : ""}
@@ -2649,7 +2682,7 @@ function stubCard(r, c, s) {
       <div><strong>${esc(r.employer.name)}</strong><div class="hash">${addr(r.employer.address) || "Add the business address on the Overview page"}</div></div>
       <div style="text-align:right"><strong>Pay stub</strong><div class="hash">Pay date ${r.result.payDate}<br>Period ${r.result.periodStart} to ${r.result.periodEnd}</div></div>
     </div>
-    <div class="row" style="margin:12px 0"><div><strong>${esc(c.name)}</strong><div class="hash">${s?.ssnLast4 ? `SSN xxx-xx-${s.ssnLast4}` : `Employee ID ${esc(c.employeeId.slice(0, 8))}`}${s?.address ? `<br>${addr(s.address)}` : ""}</div></div></div>
+    <div class="row" style="margin:12px 0"><div><strong>${esc(c.name)}</strong><div class="hash">${s?.ssnLast4 ? (state.entity.entity.country === "CA" ? `SIN xxx xx${s.ssnLast4.slice(0, 1)} ${s.ssnLast4.slice(1)}` : `SSN xxx-xx-${s.ssnLast4}`) : `Employee ID ${esc(c.employeeId.slice(0, 8))}`}${s?.address ? `<br>${addr(s.address)}` : ""}</div></div></div>
     <table>
       <thead><tr><th>Earnings</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">This period</th><th class="num">Year to date</th></tr></thead>
       <tbody>${c.earnings.map((e) => `<tr><td>${e.code.charAt(0) + e.code.slice(1).toLowerCase().replace("_", " ")}</td><td class="num">${e.hours ?? ""}</td><td class="num">${e.rate ? `$${Number(e.rate).toFixed(2)}` : ""}</td><td class="num">${usd(e.amountMinor)}</td><td></td></tr>`).join("")}
@@ -3489,7 +3522,7 @@ document.addEventListener("click", async (ev) => {
       Object.assign(document.createElement("a"), { href: url, download: name }).click();
       URL.revokeObjectURL(url);
       b.disabled = false;
-      toast("Bank file downloaded. Upload it on your bank's ACH page, then delete it from this computer");
+      toast(name.startsWith("cpa005") ? "Bank file downloaded. Upload it to your bank's payroll file service, then delete it from this computer" : "Bank file downloaded. Upload it on your bank's ACH page, then delete it from this computer");
     } else if (a === "form-ssn") {
       await formView(state.entity.entity.id, b.dataset.slug, b.dataset.year, b.dataset.quarter || undefined, true);
     } else if (a === "st-range") {
@@ -4042,6 +4075,13 @@ document.addEventListener("submit", async (ev) => {
     } else if (kind === "deposit-schedule") {
       await api(entPath("/payroll-settings"), { body: { federalDepositSchedule: d.federalDepositSchedule } });
       toast("Deposit schedule saved");
+      await payrollView(state.entity.entity.id);
+    } else if (kind === "ca-dd-settings") {
+      await api(entPath("/direct-deposit-settings"), { body: {
+        originatorId: d.originatorId, dataCentre: d.dataCentre, shortName: d.shortName, longName: d.longName,
+        returnInstitution: d.returnInstitution, returnTransit: d.returnTransit, ...(d.returnAccount.trim() ? { returnAccount: d.returnAccount.trim() } : {}),
+      } });
+      toast("Bank details saved");
       await payrollView(state.entity.entity.id);
     } else if (kind === "dd-settings") {
       await api(entPath("/direct-deposit-settings"), { body: {

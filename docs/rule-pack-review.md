@@ -1621,6 +1621,16 @@ What it adds:
 
 **Not scheduled yet:** workers' compensation outside Quebec, provincial health taxes (ON/BC EHT, MB levy, NL HAPSET) and NT/NU payroll tax have their own schedules and returns; the Payroll page says so. Still to come: CPA 005 direct deposit, vacation and statutory holiday pay, GST/HST/PST/QST.
 
+## Canadian direct deposit (`src/payroll/cpa005.ts`), draft
+
+**Status: draft, awaiting Greg's review.** A Canadian business downloads a Payments Canada Standard 005 ("CPA 005") file for each approved pay run and uploads it to its bank, as a US business does with its NACHA file.
+
+- Employees give their institution (3 digits), transit (5 digits) and account (5 to 12 digits) numbers. They're stored as `0` + institution + transit in the same sealed bank columns US employees use, and a Canadian business can't save a US routing number (or the other way round).
+- The business enters its bank's originator ID, processing (destination data) centre, a short name for statements, its long name, and its own account for returned payments (sealed).
+- The file has an "A" header, "C" records with up to six 240-character payroll credits (transaction code 200) each, and a "Z" trailer, all 1,464 characters long with CRLF line endings. The due date is the pay date, written 0YYDDD. Each download takes the next file creation number (1 to 9999, then back to 1), so the bank never sees a duplicate.
+
+⚠️ To check with each bank: banks vary on line endings, blank versus zero filler in unused segments, and whether they want a different transaction code or currency field. RBC, TD, BMO, Scotiabank, CIBC and Desjardins each publish their own CPA 005 guide, and the first real file should be sent as a test.
+
 ## Prepared payroll forms (`src/payroll/forms.ts`)
 
 The forms are worksheets with each line's figure, for copying into the filing site. TrailBook doesn't file them.

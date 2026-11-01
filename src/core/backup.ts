@@ -48,6 +48,8 @@ const TABLES: [string, string][] = [
   // Bank account numbers stay out too; only their last four digits are copied.
   ["direct_deposit_settings", `SELECT entity_id, org_id, odfi_routing, immediate_destination, destination_name, immediate_origin, company_id, company_name,
      balanced, account_type, account_last4, updated_at FROM direct_deposit_settings WHERE entity_id = $1`],
+  ["ca_direct_deposit_settings", `SELECT entity_id, org_id, originator_id, data_centre, short_name, long_name, return_institution, return_transit,
+     return_account_last4, last_file_number, updated_at FROM ca_direct_deposit_settings WHERE entity_id = $1`],
   ["pay_runs", "SELECT * FROM pay_runs WHERE entity_id = $1 ORDER BY created_at"],
   ["tax_deposit_payments", "SELECT * FROM tax_deposit_payments WHERE entity_id = $1 ORDER BY created_at"],
   // Connection credentials stay out; the backup only says the connection existed.

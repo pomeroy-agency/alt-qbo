@@ -7,6 +7,7 @@ import { cleanSin, cleanSsn, seal } from "../core/pii.js";
 import { cleanAddress, type Address } from "../core/sales-tax.js";
 import { localWagePlace } from "../rules/local-minimum-wage.js";
 import { cleanAccountNumber, validRouting } from "./nacha.js";
+import { cleanCanadianAccount, validInstitution, validTransit } from "./cpa005.js";
 import type { DE4 } from "./california.js";
 import type { CanadaTd1 } from "./canada.js";
 import type { StateWithholding } from "./state-withholding.js";
@@ -93,7 +94,8 @@ export interface EmployeeFields {
   sin?: string | null;
   openingYtd?: Partial<Record<keyof OpeningYtd, unknown>> | null;
   /** The account number is write-only, like the SSN; leave it out to keep the one on file. */
-  directDeposit?: { routing?: unknown; accountType?: unknown; account?: unknown } | null;
+  /** US: routing number. Canada: institution and transit numbers instead. */
+  directDeposit?: { routing?: unknown; institution?: unknown; transit?: unknown; accountType?: unknown; account?: unknown } | null;
 }
 
 const COLS = `id, name, email, address_line1, address_city, address_state, address_zip, work_city, hire_date::text, termination_date::text,
@@ -248,6 +250,15 @@ function cleanTd1(t: EmployeeFields["td1"]): CanadaTd1 | null {
   return Object.keys(out).length ? out : null;
 }
 
+/** A Canadian business's employees give an institution and transit number; a US business's give a routing number. */
+async function checkBankCountry(tx: Tx, entityId: string, dd: EmployeeFields["directDeposit"]) {
+  if (!dd) return;
+  const canadianBank = dd.institution !== undefined || dd.transit !== undefined;
+  const country = (await tx.query("SELECT country FROM entities WHERE id = $1", [entityId])).rows[0]?.country;
+  if (country === "CA" && !canadianBank) invalid("enter the employee's institution and transit numbers");
+  if (country !== "CA" && canadianBank) invalid("enter the employee's routing number");
+}
+
 /** An elected rate must be one the state's certificate offers. */
 async function checkStateRate(tx: Tx, entityId: string, cols: Record<string, unknown>) {
   if (typeof cols.state_withholding !== "string") return;
@@ -372,6 +383,21 @@ function columns(f: EmployeeFields): Record<string, unknown> {
 /** Bank details for direct deposit. Without an account number, the routing number and type change and the account on file stays. */
 export function directDepositColumns(dd: EmployeeFields["directDeposit"]): Record<string, unknown> {
   if (dd === null) return { dd_routing: null, dd_account_type: null, dd_account_last4: null, dd_account_sealed: null };
+  if (dd!.institution !== undefined || dd!.transit !== undefined) {
+    // Canada: stored as "0", the institution number and the transit number, as CPA 005 writes it.
+    const institution = typeof dd!.institution === "string" ? dd!.institution.replace(/\s/g, "") : "";
+    const transit = typeof dd!.transit === "string" ? dd!.transit.replace(/[\s-]/g, "") : "";
+    if (!validInstitution(institution)) invalid("the institution number is three digits, like 003 for RBC or 004 for TD; it's on a void cheque or the bank's direct deposit form");
+    if (!validTransit(transit)) invalid("the transit (branch) number is five digits");
+    const out: Record<string, unknown> = { dd_routing: `0${institution}${transit}`, dd_account_type: "checking" };
+    if (dd!.account !== undefined && dd!.account !== null && dd!.account !== "") {
+      const account = typeof dd!.account === "string" ? cleanCanadianAccount(dd!.account) : null;
+      if (!account) invalid("an account number is 5 to 12 digits");
+      out.dd_account_last4 = account.slice(-4);
+      out.dd_account_sealed = seal(account);
+    }
+    return out;
+  }
   const routing = typeof dd!.routing === "string" ? dd!.routing.replace(/\s/g, "") : "";
   if (!validRouting(routing)) invalid("that routing number isn't right; it's the nine digits at the bottom left of a check");
   const type = dd!.accountType ?? "checking";
@@ -426,6 +452,7 @@ export async function createEmployee(
   const cols = columns({ w4: {}, de4: {}, deductions: [], ...input });
   checkShape(cols);
   await checkStateRate(tx, input.entityId, cols);
+  await checkBankCountry(tx, input.entityId, input.directDeposit);
   if (cols.dd_routing && !cols.dd_account_sealed) invalid("enter the account number for direct deposit");
   const names = Object.keys(cols);
   const { rows } = await run(() => tx.query(
@@ -451,6 +478,7 @@ export async function updateEmployee(
   const cols = columns(input);
   checkShape({ pay_type: before.pay_type, overtime_exempt: before.overtime_exempt, ...cols });
   await checkStateRate(tx, input.entityId, cols);
+  await checkBankCountry(tx, input.entityId, input.directDeposit);
   if (cols.dd_routing && !cols.dd_account_sealed && !before.dd_account_last4) invalid("enter the account number for direct deposit");
   if (!Object.keys(cols).length) return employeeOf(before);
   const { rows } = await run(() => tx.query(
