@@ -7,6 +7,7 @@ import { LedgerError, translateDbError } from "./errors.js";
 import type { Actor, Role } from "./ledger.js";
 import { D, parseMoney } from "./money.js";
 import { getDocument, priceLine, type DocumentDetail, type DocumentKind } from "./documents.js";
+import { canadaLineTaxes, invoiceTaxNumbers, invoiceTaxRows, type CanadaInvoiceTax } from "./canada-sales-tax.js";
 import { decideSalesTax, issueInvoice, recordBill, resolveLines, type InvoiceLineInput, type RateLookup } from "./sales-tax.js";
 
 // Getting paid: estimates, recurring invoices and bills, invoices emailed to
@@ -129,6 +130,7 @@ export async function createEstimate(tx: Tx, input: CreateEstimateInput): Promis
   let rate = "0";
   let taxable = resolved.map(() => false);
   let shares: (string | null)[] = resolved.map(() => null);
+  let canada: CanadaInvoiceTax | null | undefined;
   try {
     const d = await decideSalesTax(tx, {
       entityId: input.entityId, contactId: input.contactId, date: input.issueDate,
@@ -139,6 +141,7 @@ export async function createEstimate(tx: Tx, input: CreateEstimateInput): Promis
     rate = d.rate;
     taxable = d.taxable;
     shares = d.taxShare;
+    canada = d.canada;
   } catch (err) {
     if (!(err instanceof LedgerError)) throw err;
     // No tax on the estimate; the invoice will work it out.
@@ -156,6 +159,8 @@ export async function createEstimate(tx: Tx, input: CreateEstimateInput): Promis
     }
     if (unit < 0n) throw new LedgerError("INVALID", `line ${i + 1}: price cannot be negative`);
     const priced = priceLine(l.quantity, unit, Boolean(taxable[i]), new D(rate).toFixed(5), taxable[i] ? shares[i] ?? undefined : undefined);
+    // Canadian taxes: each at its own rate, rounded one by one, as the invoice will.
+    if (canada) priced.taxMinor = Object.values(canadaLineTaxes(priced.amountMinor, canada.lines[i]!.codes, canada.taxes)).reduce<bigint>((s, v) => s + (v ?? 0n), 0n);
     return {
       ...(input.lines[i]!.itemId ? { itemId: input.lines[i]!.itemId } : {}),
       ...(input.lines[i]!.account ? { account: input.lines[i]!.account } : {}),
@@ -596,14 +601,18 @@ async function composeInvoice(tx: Tx, orgId: string, doc: DocumentDetail, opts: 
       : `This is a friendly reminder that invoice ${doc.number} is due on ${longDate(doc.dueDate)}.`
     : `Here is invoice ${doc.number} from ${head.legal_name}.`;
   const lines = doc.lines.map((l) => `- ${l.description || l.accountName}: ${l.quantity} × ${money(l.unitPriceMinor)} = ${money(l.amountMinor)}`);
+  // Canadian invoices: each tax on its own line, and the registration numbers a customer needs to claim them.
+  const taxRows = doc.caTax ? invoiceTaxRows(doc.caTax) : doc.taxMinor ? [{ label: "Sales tax", amountMinor: doc.taxMinor }] : [];
+  const taxNumbers = await invoiceTaxNumbers(tx, head.entity_id, doc.caTax);
   const text = [
     `Hello ${doc.contactName},`, "", opener, "",
     ...lines, "",
     `Subtotal: ${money(doc.subtotalMinor)}`,
-    ...(doc.taxMinor ? [`Sales tax: ${money(doc.taxMinor)}`] : []),
+    ...taxRows.map((t) => `${t.label}: ${money(t.amountMinor)}`),
     `Total: ${money(doc.totalMinor)}`,
     ...(doc.paidMinor ? [`Paid: ${money(doc.paidMinor)}`] : []),
     `Balance due: ${money(doc.dueMinor)} by ${longDate(doc.dueDate)}`,
+    ...(taxNumbers.length ? ["", ...taxNumbers] : []),
     ...(doc.memo ? ["", doc.memo] : []),
     ...(link ? ["", `View or print the invoice: ${link}`] : []),
     "", `Questions? Just reply to this email to reach ${head.legal_name}.`, ...(reminder ? ["If you've already paid, thank you, and please ignore this reminder."] : []),
@@ -613,9 +622,10 @@ async function composeInvoice(tx: Tx, orgId: string, doc: DocumentDetail, opts: 
     <p>Hello ${esc(doc.contactName)},</p><p>${esc(opener)}</p>
     <table style="border-collapse:collapse;width:100%;margin:12px 0">
       ${doc.lines.map((l) => row(`${l.description || l.accountName} (${l.quantity} × ${money(l.unitPriceMinor)})`, money(l.amountMinor))).join("")}
-      ${row("Subtotal", money(doc.subtotalMinor))}${doc.taxMinor ? row("Sales tax", money(doc.taxMinor)) : ""}${row("Total", money(doc.totalMinor))}
+      ${row("Subtotal", money(doc.subtotalMinor))}${taxRows.map((t) => row(t.label, money(t.amountMinor))).join("")}${row("Total", money(doc.totalMinor))}
       ${doc.paidMinor ? row("Paid", money(doc.paidMinor)) : ""}${row(`Balance due by ${longDate(doc.dueDate)}`, money(doc.dueMinor), true)}
     </table>
+    ${taxNumbers.length ? `<p style="color:#555">${taxNumbers.map(esc).join("<br>")}</p>` : ""}
     ${doc.memo ? `<p>${esc(doc.memo)}</p>` : ""}
     ${link ? `<p><a href="${esc(link)}" style="display:inline-block;background:#2f5d50;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none">View or print invoice ${esc(doc.number)}</a></p>` : ""}
     <p style="color:#555">Questions? Just reply to this email to reach ${esc(head.legal_name)}.${reminder ? " If you've already paid, thank you, and please ignore this reminder." : ""}</p>
@@ -763,6 +773,9 @@ export interface PublicView {
   lines: { description: string; quantity: string; unitPriceMinor: bigint; amountMinor: bigint }[];
   subtotalMinor: bigint;
   taxMinor: bigint;
+  /** Each tax on a Canadian invoice ("GST 5%"), and the registration numbers it shows. */
+  taxes?: { label: string; amountMinor: bigint }[];
+  taxNumbers?: string[];
   totalMinor: bigint;
   paidMinor: bigint;
   dueMinor: bigint;
@@ -794,6 +807,7 @@ export async function viewByToken(pool: pg.Pool, token: string): Promise<PublicV
         kind: "invoice", business, number: d.number, customer: d.contactName, issueDate: d.issueDate, dueDate: d.dueDate, currency: d.currency,
         lines: d.lines.map((l) => ({ description: l.description || l.accountName, quantity: l.quantity, unitPriceMinor: l.unitPriceMinor, amountMinor: l.amountMinor })),
         subtotalMinor: d.subtotalMinor, taxMinor: d.taxMinor, totalMinor: d.totalMinor, paidMinor: d.paidMinor, dueMinor: d.dueMinor, status: d.status, memo: d.memo,
+        ...(d.caTax ? { taxes: invoiceTaxRows(d.caTax), taxNumbers: await invoiceTaxNumbers(tx, link.entity_id, d.caTax) } : {}),
       };
     }
     const e = await getEstimate(tx, link.estimate_id);

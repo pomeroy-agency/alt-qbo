@@ -53,6 +53,7 @@ import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
 import { createEmployee, listEmployees, setSickLeavePolicy, setStateTaxRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
 import { directDepositFile, directDepositSummary, getEntityDirectDepositSettings, saveCanadaDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
+import { canadaRegistrations, canadaSalesTaxReturn, setCanadaSalesTaxSettings, type CaReturnTax } from "../core/canada-sales-tax.js";
 import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
 import { form940, form941, formDe9, formsFor, formStateQuarterly, formW2, type PreparedForm } from "../payroll/forms.js";
 import { federalDepositSchedule, recordDepositPayment, remitterTypes, setFederalDepositSchedule, setRemitterType, taxDeposits } from "../payroll/tax-deposits.js";
@@ -942,6 +943,10 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
         return recordBill(tx, {
           ...common,
           useTax: typeof b.useTax === "boolean" ? b.useTax : undefined, lookup: ctx.opts.taxRates, manual: manualTax(b.manualTax),
+          ...(b.caTax && typeof b.caTax === "object" ? { caTax: {
+            gstHst: typeof b.caTax.gstHst === "string" ? b.caTax.gstHst.trim().slice(0, 20) : undefined,
+            qst: typeof b.caTax.qst === "string" ? b.caTax.qst.trim().slice(0, 20) : undefined,
+          } } : {}),
           lines: lines.map((l, i) => {
             if (!l.account) throw new HttpError(400, `line ${i + 1}: choose an account`);
             if (!l.unitPrice) throw new HttpError(400, `line ${i + 1}: enter a price`);
@@ -2137,6 +2142,9 @@ route("GET", "/api/orgs/:org/entities/:entity/sales-tax", async (req, p, ctx) =>
   if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new HttpError(400, "year should be like 2027");
   return tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
+    if ((await tx.query("SELECT country FROM entities WHERE id = $1", [p.entity])).rows[0].country === "CA") {
+      return json({ year, today, country: "CA", ...await canadaRegistrations(tx, p.entity!, year) });
+    }
     const settings = await salesTaxSettings(tx, p.entity!);
     const periods = settings.filingFrequency ? returnPeriods(settings.filingFrequency, year, today, settings.startDate) : [];
     return json({ year, today, ...settings, frequencies: FILING_FREQUENCIES, periods });
@@ -2145,6 +2153,21 @@ route("GET", "/api/orgs/:org/entities/:entity/sales-tax", async (req, p, ctx) =>
 
 route("POST", "/api/orgs/:org/entities/:entity/sales-tax-settings", async (req, p, ctx) => {
   const b = await body(req);
+  if (b.country === "CA") {
+    for (const k of ["gstAccount", "gstFrequency", "qstAccount", "qstFrequency"]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
+    if (b.pst !== undefined && (typeof b.pst !== "object" || b.pst === null || Array.isArray(b.pst))) throw new HttpError(400, "pst should list registrations by province");
+    for (const r of Object.values(b.pst ?? {}) as any[]) {
+      if (r !== null && (typeof r !== "object" || ["account", "frequency"].some((k) => r[k] !== undefined && r[k] !== null && typeof r[k] !== "string"))) throw new HttpError(400, "each PST registration needs an account and a frequency");
+    }
+    const saved = await tenant(ctx, async (tx) => {
+      await ensureEntity(tx, p.entity!);
+      return setCanadaSalesTaxSettings(tx, {
+        orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor, gstRegistered: b.gstRegistered === true,
+        gstAccount: b.gstAccount, gstFrequency: b.gstFrequency, qstAccount: b.qstAccount, qstFrequency: b.qstFrequency, pst: b.pst,
+      });
+    });
+    return json(saved);
+  }
   for (const k of ["sellerPermit", "cdtfaAccount", "filingFrequency", "startDate"]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
   const saved = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
@@ -2158,9 +2181,15 @@ route("POST", "/api/orgs/:org/entities/:entity/sales-tax-settings", async (req, 
 
 /** The prepared return for one period. */
 route("GET", "/api/orgs/:org/entities/:entity/sales-tax/return", async (req, p, ctx) => {
-  const period = new URL(req.url).searchParams.get("period") ?? "";
+  const q = new URL(req.url).searchParams;
+  const period = q.get("period") ?? "";
+  const tax = q.get("tax");
   return tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
+    if (tax) {
+      if (!["gst", "qst", "pst_bc", "pst_mb", "pst_sk"].includes(tax)) throw new HttpError(400, "tax should be gst, qst, pst_bc, pst_mb or pst_sk");
+      return json(await canadaSalesTaxReturn(tx, p.entity!, tax as CaReturnTax, period));
+    }
     return json(await prepareSalesTaxReturn(tx, p.entity!, period));
   });
 });
