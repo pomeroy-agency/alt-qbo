@@ -3,6 +3,7 @@ import type { Tx } from "../db/pool.js";
 import { appendAudit, canonicalJson } from "./audit.js";
 import { LedgerError, translateDbError } from "./errors.js";
 import { getEntry, postJournal, reverseEntry, type Actor, type LineInput, type Role } from "./ledger.js";
+import { canadaLineTaxes, type CanadaDocTax, type CanadaInvoiceTax, type CanadaLineTax } from "./canada-sales-tax.js";
 import { D, parseMoney } from "./money.js";
 
 // Invoices (receivables) and bills (payables). Each document posts its own
@@ -205,10 +206,12 @@ export interface DocumentLineInput {
 export interface DocumentTax {
   /** Fraction, up to five decimals ("0.08625"). */
   rate: string;
-  source: "none" | "not_taxable" | "resale" | "out_of_state" | "lookup" | "manual" | "direct_pay";
+  source: "none" | "not_taxable" | "resale" | "out_of_state" | "lookup" | "manual" | "direct_pay" | "canada";
   jurisdiction?: string | null;
   address?: string | null;
   note?: string | null;
+  /** Canadian invoices: each tax and the lines it applies to (source "canada"). See core/canada-sales-tax.ts. */
+  canada?: CanadaInvoiceTax;
 }
 
 /** A bill's use tax: what the business owes the state on purchases the vendor didn't tax. See core/sales-tax.ts. */
@@ -257,6 +260,10 @@ interface PricedLine {
   taxExemption: string | null;
   useTaxable: boolean;
   useTaxMinor: bigint;
+  /** Canadian invoices: the line's own combined rate, and its taxes. */
+  lineRate: string | null;
+  caTax: CanadaLineTax | null;
+  caTaxMinor: Partial<Record<string, bigint>>;
 }
 
 /**
@@ -303,6 +310,9 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
   if (input.kind === "bill" && input.tax && input.tax.source !== "none") throw new LedgerError("INVALID", "bills don't charge sales tax");
   const tax: DocumentTax = input.kind === "invoice" && input.tax ? input.tax : { rate: "0", source: "none" };
   if (!/^(0(\.\d{1,5})?|1(\.0{1,5})?)$/.test(tax.rate)) throw new LedgerError("INVALID", "the tax rate must be a fraction between 0 and 1, up to five decimals");
+  const canada = tax.source === "canada" ? tax.canada : undefined;
+  if (tax.source === "canada" && (!canada || canada.lines.length !== input.lines.length)) throw new LedgerError("INVALID", "the Canadian taxes don't match the invoice lines");
+  if (tax.source !== "canada" && tax.canada) throw new LedgerError("INVALID", "Canadian taxes need tax source canada");
   const taxRate = new D(tax.rate).toFixed(5);
   if (input.kind === "invoice" && input.useTax) throw new LedgerError("INVALID", "invoices don't accrue use tax");
   const useTax = input.kind === "bill" ? input.useTax : undefined;
@@ -339,7 +349,8 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
       throw new LedgerError("INVALID", `line ${i + 1}: price must be an amount like 125.00`);
     }
     if (unitPriceMinor < 0n) throw new LedgerError("INVALID", `line ${i + 1}: price cannot be negative`);
-    const taxable = input.kind === "invoice" && Boolean(l.taxable);
+    const ca = canada?.lines[i];
+    const taxable = ca ? ca.codes.length > 0 : input.kind === "invoice" && Boolean(l.taxable);
     const invoice = input.kind === "invoice";
     // A bill keeps its lines' kinds and access dates only when they decided its use tax.
     const keepKind = invoice || Boolean(useTax);
@@ -348,17 +359,48 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     if (l.servicePeriodEnd && (!l.servicePeriodStart || l.servicePeriodEnd < l.servicePeriodStart)) {
       throw new LedgerError("INVALID", `line ${i + 1}: the access period ends before it starts`);
     }
+    const priced = priceLine(l.quantity, unitPriceMinor, taxable, taxRate, taxable && !ca ? l.taxShare : undefined);
+    let lineRate: string | null = null;
+    let caTax: CanadaLineTax | null = null;
+    let caTaxMinor: Partial<Record<string, bigint>> = {};
+    if (ca) {
+      caTaxMinor = canadaLineTaxes(priced.amountMinor, ca.codes, canada!.taxes);
+      lineRate = ca.codes.reduce((s, c) => s.add(canada!.taxes.find((t) => t.code === c)!.rate), new D(0)).toFixed(5);
+      priced.taxMinor = Object.values(caTaxMinor).reduce<bigint>((s, v) => s + (v ?? 0n), 0n);
+      priced.taxableMinor = null;
+      caTax = { supply: ca.supply, taxes: Object.fromEntries(Object.entries(caTaxMinor).map(([k, v]) => [k, v!.toString()])) };
+    }
     return {
       accountId: a.id, accountCode: a.code, description: (l.description ?? "").slice(0, 300),
       quantity: new D(l.quantity).toFixed(4), unitPriceMinor, taxable,
       taxCategory: keepKind ? l.taxCategory ?? null : null, itemId: l.itemId ?? null,
       servicePeriodStart: keepKind ? l.servicePeriodStart ?? null : null, servicePeriodEnd: keepKind ? l.servicePeriodEnd ?? null : null,
-      taxExemption: invoice ? l.taxExemption ?? null : null,
-      ...priceLine(l.quantity, unitPriceMinor, taxable, taxRate, taxable ? l.taxShare : undefined),
+      taxExemption: invoice && !ca ? l.taxExemption ?? null : null,
+      ...priced,
       useTaxable,
       useTaxMinor: priceLine(l.quantity, unitPriceMinor, useTaxable, useTaxRate).taxMinor,
+      lineRate, caTax, caTaxMinor,
     };
   });
+  // A Canadian invoice's own rate is its highest line rate; each line keeps its own.
+  const docRate = canada ? lines.reduce((m, l) => (new D(l.lineRate!).gt(m) ? l.lineRate! : m), "0.00000") : taxRate;
+  let caDoc: CanadaDocTax | null = null;
+  if (canada) {
+    const sum = (f: (l: PricedLine) => bigint) => lines.reduce((s, l) => s + f(l), 0n).toString();
+    caDoc = {
+      place: canada.place,
+      supplies: {
+        taxable: sum((l) => (l.caTax!.supply === "taxable" ? l.amountMinor : 0n)),
+        zeroRated: sum((l) => (l.caTax!.supply === "zero_rated" ? l.amountMinor : 0n)),
+        exempt: sum((l) => (l.caTax!.supply === "exempt" ? l.amountMinor : 0n)),
+      },
+      taxes: canada.taxes.map((t) => ({
+        ...t,
+        baseMinor: sum((l) => (l.caTaxMinor[t.code] !== undefined ? l.amountMinor : 0n)),
+        amountMinor: sum((l) => l.caTaxMinor[t.code] ?? 0n),
+      })),
+    };
+  }
   const subtotal = lines.reduce((s, l) => s + l.amountMinor, 0n);
   const taxTotal = lines.reduce((s, l) => s + l.taxMinor, 0n);
   const useTaxTotal = lines.reduce((s, l) => s + l.useTaxMinor, 0n);
@@ -372,23 +414,25 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
   await run(() => tx.query(
     `INSERT INTO documents (id, org_id, entity_id, kind, number, reference, contact_id, issue_date, due_date, memo,
         currency, tax_rate, tax_source, tax_jurisdiction, tax_address, tax_note, subtotal_minor, tax_minor, total_minor,
-        idempotency_key, created_by, use_tax_rate, use_tax_minor, use_tax_source, use_tax_jurisdiction, use_tax_address, use_tax_note)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
+        idempotency_key, created_by, use_tax_rate, use_tax_minor, use_tax_source, use_tax_jurisdiction, use_tax_address, use_tax_note, ca_tax)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
     [docId, input.orgId, input.entityId, input.kind, number, input.reference?.trim() || null, input.contactId,
-     input.issueDate, dueDate, (input.memo ?? "").slice(0, 300), currency, taxRate, tax.source,
+     input.issueDate, dueDate, (input.memo ?? "").slice(0, 300), currency, docRate, tax.source,
      tax.jurisdiction?.slice(0, 200) || null, tax.address || null, tax.note?.slice(0, 300) || null,
      subtotal, taxTotal, subtotal + taxTotal, key, input.actor.id,
-     useTaxRate, useTaxTotal, useTax?.source ?? "none", useTax?.jurisdiction?.slice(0, 200) || null, useTax?.address || null, useTax?.note?.slice(0, 300) || null],
+     useTaxRate, useTaxTotal, useTax?.source ?? "none", useTax?.jurisdiction?.slice(0, 200) || null, useTax?.address || null, useTax?.note?.slice(0, 300) || null,
+     caDoc ? JSON.stringify(caDoc) : null],
   ));
   for (const [i, l] of lines.entries()) {
     await run(() => tx.query(
       `INSERT INTO document_lines (org_id, entity_id, document_id, line_no, description, account_id, quantity,
           unit_price_minor, amount_minor, taxable, tax_rate, tax_minor, tax_category, item_id,
-          service_period_start, service_period_end, taxable_minor, tax_exemption, use_taxable, use_tax_rate, use_tax_minor)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+          service_period_start, service_period_end, taxable_minor, tax_exemption, use_taxable, use_tax_rate, use_tax_minor, ca_tax)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
       [input.orgId, input.entityId, docId, i + 1, l.description, l.accountId, l.quantity, l.unitPriceMinor,
-       l.amountMinor, l.taxable, taxRate, l.taxMinor, l.taxCategory, l.itemId,
-       l.servicePeriodStart, l.servicePeriodEnd, l.taxableMinor, l.taxExemption, l.useTaxable, useTaxRate, l.useTaxMinor],
+       l.amountMinor, l.taxable, l.lineRate ?? taxRate, l.taxMinor, l.taxCategory, l.itemId,
+       l.servicePeriodStart, l.servicePeriodEnd, l.taxableMinor, l.taxExemption, l.useTaxable, useTaxRate, l.useTaxMinor,
+       l.caTax ? JSON.stringify(l.caTax) : null],
     ));
   }
 
@@ -398,7 +442,13 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
   for (const l of lines) perAccount.set(l.accountCode, (perAccount.get(l.accountCode) ?? 0n) + l.amountMinor + l.useTaxMinor);
   const side = input.kind === "invoice" ? "credit" : "debit";
   const jl: LineInput[] = [...perAccount].filter(([, v]) => v > 0n).map(([account, v]) => ({ account, [side]: v, description: number }));
-  if (taxTotal > 0n) jl.push({ account: "sales_tax_payable", credit: taxTotal, description: `${number} sales tax` });
+  if (caDoc) {
+    // Each Canadian tax to its own account: GST/HST, QST and PST are owed to different governments.
+    for (const t of caDoc.taxes) {
+      const amount = BigInt(t.amountMinor);
+      if (amount > 0n) jl.push({ account: byKey.has(t.account) ? t.account : "sales_tax_payable", credit: amount, description: `${number} ${t.label}` });
+    }
+  } else if (taxTotal > 0n) jl.push({ account: "sales_tax_payable", credit: taxTotal, description: `${number} sales tax` });
   if (useTaxTotal > 0n) jl.push({ account: "sales_tax_payable", credit: useTaxTotal, description: `${number} use tax` });
   if (input.kind === "invoice") jl.unshift({ account: CONTROL.invoice, debit: subtotal + taxTotal, description: number });
   else jl.push({ account: CONTROL.bill, credit: subtotal + taxTotal, description: number });
@@ -414,7 +464,8 @@ export async function issueDocument(tx: Tx, input: IssueDocumentInput): Promise<
     action: input.kind === "invoice" ? "invoice.issued" : "bill.recorded",
     objectType: input.kind, objectId: docId,
     after: {
-      number, contactId: input.contactId, issueDate: input.issueDate, dueDate, subtotal, tax: taxTotal, total: subtotal + taxTotal, taxRate, entryId: entry.id,
+      number, contactId: input.contactId, issueDate: input.issueDate, dueDate, subtotal, tax: taxTotal, total: subtotal + taxTotal, taxRate: docRate, entryId: entry.id,
+      ...(caDoc ? { caTax: caDoc.taxes.map((t) => ({ code: t.code, amount: t.amountMinor })) } : {}),
       ...(useTax ? { useTax: useTaxTotal, useTaxRate } : {}),
     },
     context: {
@@ -449,6 +500,8 @@ export interface DocumentSummary {
   useTaxJurisdiction: string | null;
   useTaxAddress: string | null;
   useTaxNote: string | null;
+  /** Canadian invoices: each tax, its base and amount, and the sales by GST/HST treatment. */
+  caTax: CanadaDocTax | null;
   subtotalMinor: bigint;
   taxMinor: bigint;
   totalMinor: bigint;
@@ -466,7 +519,7 @@ export interface DocumentDetail extends DocumentSummary {
   lines: { lineNo: number; description: string; accountCode: string; accountName: string; quantity: string;
     unitPriceMinor: bigint; amountMinor: bigint; taxable: boolean; taxMinor: bigint; taxCategory: string | null; itemId: string | null;
     servicePeriodStart: string | null; servicePeriodEnd: string | null; taxableMinor: bigint | null; taxExemption: string | null;
-    useTaxable: boolean; useTaxMinor: bigint }[];
+    useTaxable: boolean; useTaxMinor: bigint; taxRate: string; caTax: CanadaLineTax | null }[];
   payments: { id: string; date: string; amountMinor: bigint; bankAccountCode: string; entryId: string; createdBy: string }[];
   requestHash?: string;
   replayed: boolean;
@@ -475,7 +528,7 @@ export interface DocumentDetail extends DocumentSummary {
 const SUMMARY_SQL = `
   SELECT d.id, d.kind, d.number, d.reference, d.contact_id, c.name AS contact_name, d.issue_date, d.due_date, d.memo,
          d.currency, d.tax_rate::text AS tax_rate, d.tax_source, d.tax_jurisdiction, d.tax_address, d.tax_note,
-         d.use_tax_rate::text AS use_tax_rate, d.use_tax_minor, d.use_tax_source, d.use_tax_jurisdiction, d.use_tax_address, d.use_tax_note, d.subtotal_minor, d.tax_minor, d.total_minor, d.status, d.entry_id, d.void_entry_id,
+         d.use_tax_rate::text AS use_tax_rate, d.use_tax_minor, d.use_tax_source, d.use_tax_jurisdiction, d.use_tax_address, d.use_tax_note, d.ca_tax, d.subtotal_minor, d.tax_minor, d.total_minor, d.status, d.entry_id, d.void_entry_id,
          d.void_date, d.void_reason, d.created_by,
          coalesce((SELECT sum(p.amount_minor) FROM document_payments p
                     WHERE p.document_id = d.id AND p.payment_date <= $2::date), 0)::bigint AS paid
@@ -495,7 +548,7 @@ function summary(r: any, asOf: string): DocumentSummary {
     issueDate: r.issue_date, dueDate: r.due_date, memo: r.memo, currency: r.currency.trim(),
     taxRate: r.tax_rate, taxSource: r.tax_source, taxJurisdiction: r.tax_jurisdiction, taxAddress: r.tax_address, taxNote: r.tax_note,
     useTaxRate: r.use_tax_rate, useTaxMinor: r.use_tax_minor, useTaxSource: r.use_tax_source,
-    useTaxJurisdiction: r.use_tax_jurisdiction, useTaxAddress: r.use_tax_address, useTaxNote: r.use_tax_note,
+    useTaxJurisdiction: r.use_tax_jurisdiction, useTaxAddress: r.use_tax_address, useTaxNote: r.use_tax_note, caTax: r.ca_tax ?? null,
     subtotalMinor: r.subtotal_minor, taxMinor: r.tax_minor, totalMinor: r.total_minor, paidMinor: r.paid,
     dueMinor: r.status === "void" && r.void_date <= asOf ? 0n : (r.total_minor as bigint) - (r.paid as bigint),
     status: statusOf(r, asOf), entryId: r.entry_id, voidEntryId: r.void_entry_id,
@@ -523,7 +576,7 @@ export async function getDocument(tx: Tx, documentId: string, requestHashHint?: 
   const lines = await tx.query(
     `SELECT l.line_no, l.description, a.code, a.name, l.quantity::text AS quantity, l.unit_price_minor, l.amount_minor,
             l.taxable, l.tax_minor, l.tax_category, l.item_id, l.service_period_start, l.service_period_end, l.taxable_minor, l.tax_exemption,
-            l.use_taxable, l.use_tax_minor
+            l.use_taxable, l.use_tax_minor, l.tax_rate::text AS tax_rate, l.ca_tax
        FROM document_lines l JOIN accounts a ON a.id = l.account_id WHERE l.document_id = $1 ORDER BY l.line_no`,
     [documentId],
   );
@@ -548,7 +601,7 @@ export async function getDocument(tx: Tx, documentId: string, requestHashHint?: 
       quantity: new D(l.quantity).toString(), unitPriceMinor: l.unit_price_minor, amountMinor: l.amount_minor,
       taxable: l.taxable, taxMinor: l.tax_minor, taxCategory: l.tax_category, itemId: l.item_id,
       servicePeriodStart: l.service_period_start, servicePeriodEnd: l.service_period_end, taxableMinor: l.taxable_minor, taxExemption: l.tax_exemption,
-      useTaxable: l.use_taxable, useTaxMinor: l.use_tax_minor,
+      useTaxable: l.use_taxable, useTaxMinor: l.use_tax_minor, taxRate: l.tax_rate, caTax: l.ca_tax ?? null,
     })),
     payments: pays.rows.map((p) => ({
       id: p.id, date: p.payment_date, amountMinor: p.amount_minor, bankAccountCode: p.code, entryId: p.entry_id, createdBy: p.created_by,

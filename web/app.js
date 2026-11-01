@@ -937,6 +937,10 @@ const DEFAULT_KIND = "professional_service";
 const DEFAULT_PURCHASE_KIND = "prewritten_software";
 const useTaxOn = () => Boolean(document.querySelector("form[data-form=document][data-kind=bill] [name=useTax]")?.checked);
 const pct = (rate) => `${(Number(rate) * 100).toFixed(3).replace(/\.?0+$/, "")}%`;
+/** A Canadian business: GST/HST, PST and QST instead of US sales and use tax. */
+const inCanada = () => state.entity?.entity?.country === "CA";
+/** The GST/HST rate where the business is, for the bill helper; the server works out invoices itself. */
+const homeGstRate = () => ({ ON: 0.13, NB: 0.15, NL: 0.15, NS: 0.14, PE: 0.15 })[state.entity?.entity?.region] ?? 0.05;
 
 function kindOptions(selected) {
   return taxCategories().map((c) => `<option value="${c.id}" title="${esc(c.help)}" ${c.id === selected ? "selected" : ""}>${esc(c.label)}</option>`).join("");
@@ -998,7 +1002,7 @@ function readDocLines() {
 }
 
 /** What the server said about this invoice's sales tax, for the figures shown while typing. */
-const docTax = { rate: null, explanation: "", error: "", taxable: null, taxShare: null, timer: null, seq: 0 };
+const docTax = { rate: null, explanation: "", error: "", taxable: null, taxShare: null, lineRates: null, taxLabel: "", timer: null, seq: 0 };
 
 /** Asks the server how this invoice will be taxed. Called when the customer, date or kinds of sale change. */
 function scheduleTaxPreview() {
@@ -1017,15 +1021,19 @@ async function runTaxPreview() {
   const seq = ++docTax.seq;
   const show = (rate, explanation, error = "", r = {}) => {
     if (seq !== docTax.seq) return;
-    Object.assign(docTax, { rate, explanation, error, taxable: r.taxable ?? null, taxShare: r.taxShare ?? null });
+    Object.assign(docTax, {
+      rate, explanation, error, taxable: r.taxable ?? null, taxShare: r.taxShare ?? null, lineRates: r.lineRates ?? null,
+      taxLabel: r.canada?.taxes?.length ? r.canada.taxes.map((t) => t.label).join(" + ") : "",
+    });
     const note = document.getElementById("doc-tax-note");
     note.className = error || r.warnings?.length ? "alert warn" : "hash";
     note.textContent = [error || explanation, ...(r.warnings ?? [])].filter(Boolean).join(" ");
     const manual = form.querySelector("[data-manual]");
-    if (manual) manual.hidden = !error;
+    // Canadian taxes come from the registrations and the customer's province; there's no rate to set by hand.
+    if (manual) manual.hidden = !error || inCanada();
     updateDocTotals();
   };
-  if (!anyTaxable) return show("0", "No sales tax: nothing on this invoice is taxable in California.");
+  if (!anyTaxable) return show("0", inCanada() ? "No GST/HST: nothing on this invoice is taxable." : "No sales tax: nothing on this invoice is taxable in California.");
   if (!d.contactId || d.contactId === "__new") return show(null, "Sales tax will be worked out from the new customer's address when you issue the invoice.");
   const manualTax = d.manualRate && d.manualReason ? { ratePercent: d.manualRate, reason: d.manualReason } : undefined;
   try {
@@ -1047,7 +1055,7 @@ async function runUseTaxPreview() {
   const seq = ++docTax.seq;
   const show = (rate, explanation, error = "", r = {}) => {
     if (seq !== docTax.seq) return;
-    Object.assign(docTax, { rate, explanation, error, taxable: r.taxable ?? null, taxShare: null });
+    Object.assign(docTax, { rate, explanation, error, taxable: r.taxable ?? null, taxShare: null, lineRates: null, taxLabel: "" });
     const note = document.getElementById("doc-tax-note");
     note.className = error ? "alert warn" : "hash";
     note.textContent = on ? error || explanation : "";
@@ -1091,7 +1099,8 @@ function updateDocTotals() {
     if (p === null || !(q > 0)) { bad = true; tr.querySelector("[data-amount]").textContent = ""; return; }
     const amt = BigInt(Math.round(q * Number(p)));
     sub += amt;
-    if (cat && (!bill || useTax) && lineTaxable(i, cat.value)) tax += BigInt(Math.round(Math.round(Number(amt) * Number(docTax.taxShare?.[i] ?? 1)) * rate));
+    const lineRate = docTax.lineRates?.[i] !== undefined ? Number(docTax.lineRates[i]) : rate;
+    if (cat && (!bill || useTax) && lineTaxable(i, cat.value)) tax += BigInt(Math.round(Math.round(Number(amt) * Number(docTax.taxShare?.[i] ?? 1)) * lineRate));
     tr.querySelector("[data-amount]").textContent = usd(amt);
   });
   document.getElementById("doc-sub").textContent = usd(sub);
@@ -1101,14 +1110,19 @@ function updateDocTotals() {
     if (ut) ut.textContent = useTax && docTax.rate === null ? "—" : usd(useTax ? tax : 0n);
     const ul = document.getElementById("doc-use-tax-label");
     if (ul) ul.textContent = useTax && docTax.rate && Number(docTax.rate) > 0 ? `Use tax you owe the state, ${pct(docTax.rate)} (not paid to the vendor)` : "Use tax you owe the state (not paid to the vendor)";
-    document.getElementById("doc-total").textContent = usd(sub);
+    // Canadian bills: the GST/HST and QST the vendor charged are part of what's owed, and come back as credits.
+    const credit = (n) => cents(form.querySelector(`[name=${n}]`)?.value.trim() || "0");
+    const credits = inCanada() ? [credit("caGst"), credit("caQst")] : [];
+    if (credits.some((c) => c === null)) bad = true;
+    const extra = credits.reduce((t, c) => t + BigInt(c ?? 0), 0n);
+    document.getElementById("doc-total").textContent = usd(sub + extra);
     document.getElementById("doc-save").disabled = bad || sub <= 0n;
     return;
   }
   const t = document.getElementById("doc-tax");
   if (t) t.textContent = docTax.rate === null && tax === 0n && form.dataset.kind === "invoice" && !document.getElementById("doc-tax-note").textContent.startsWith("No sales tax") ? "—" : usd(tax);
   const tl = document.getElementById("doc-tax-label");
-  if (tl) tl.textContent = docTax.rate && Number(docTax.rate) > 0 ? `Sales tax ${pct(docTax.rate)}` : "Sales tax";
+  if (tl) tl.textContent = docTax.taxLabel ? docTax.taxLabel : inCanada() ? "GST/HST and other taxes" : docTax.rate && Number(docTax.rate) > 0 ? `Sales tax ${pct(docTax.rate)}` : "Sales tax";
   document.getElementById("doc-total").textContent = usd(sub + tax);
   document.getElementById("doc-save").disabled = bad || sub + tax <= 0n;
 }
@@ -1264,14 +1278,21 @@ async function docsView(id, kind) {
           <div data-new-contact class="row" ${who.length ? "hidden" : ""}>
             <label>New ${d.who.toLowerCase()} name<input name="newContact" placeholder="${kind === "invoice" ? "Acme Corp" : "Pixel Freelance"}"></label>
             ${kind === "invoice" ? `<label>Street<input name="newLine1" placeholder="123 Main St"></label><label>City<input name="newCity" style="width:140px"></label>
-              <label>State<input name="newState" value="CA" maxlength="2" style="width:56px"></label><label>ZIP<input name="newZip" inputmode="numeric" style="width:90px"></label>` : ""}
+              <label>${inCanada() ? "Province" : "State"}<input name="newState" value="${inCanada() ? esc(state.entity.entity.region) : "CA"}" maxlength="2" style="width:56px"></label><label>${inCanada() ? "Postal code" : "ZIP"}<input name="newZip" ${inCanada() ? "" : 'inputmode="numeric"'} style="width:90px"></label>` : ""}
           </div>
           <label>Date<input type="date" name="issueDate" value="${issue}" min="${booksStart()}" required></label>
           <label>Due<input type="date" name="dueDate" value="${plusDays(issue, 30)}" required></label>
           ${kind === "invoice" ? "" : `<label>Vendor's invoice no.<input name="reference" style="width:150px"></label>`}
           <label style="flex:1;min-width:200px">Memo<input name="memo"></label>
         </div>
-        ${kind === "bill" ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" name="useTax" ${useTaxDefault ? "checked" : ""}> The vendor didn't charge California sales tax: add the use tax I owe</label>` : ""}
+        ${kind === "bill" && inCanada() ? `<div class="row" style="margin-bottom:12px;align-items:flex-end">
+          <label>GST/HST the vendor charged<input name="caGst" class="mono" inputmode="decimal" placeholder="0.00" style="width:110px"></label>
+          <button type="button" class="link" data-action="ca-calc" data-tax="gst">Work out at ${pct(homeGstRate())}</button>
+          ${state.entity.entity.region === "QC" ? `<label>QST the vendor charged<input name="caQst" class="mono" inputmode="decimal" placeholder="0.00" style="width:110px"></label>
+          <button type="button" class="link" data-action="ca-calc" data-tax="qst">Work out at 9.975%</button>` : ""}
+          <span class="hash" style="flex:1;min-width:220px">Copy these from the vendor's invoice. They're claimed back as input tax credits${state.entity.entity.region === "QC" ? " and refunds" : ""} on your return, not added to the expense. PST you paid stays in the expense.</span>
+        </div>`
+        : kind === "bill" ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" name="useTax" ${useTaxDefault ? "checked" : ""}> The vendor didn't charge California sales tax: add the use tax I owe</label>` : ""}
         <div class="row" style="margin-bottom:12px">
           <label>Repeat<select name="repeat">${REPEAT.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></label>
           <label>Repeat until (optional)<input type="date" name="repeatEnd"></label>
@@ -1282,7 +1303,7 @@ async function docsView(id, kind) {
           <tbody id="doc-lines">${docLineRow(kind, {}, useTaxDefault)}</tbody>
           <tfoot>
             <tr><td><button type="button" class="link" data-action="add-doc-line" data-kind="${kind}">+ Add line</button></td><td colspan="${kind === "invoice" ? 4 : 3}" class="num muted">Subtotal</td><td class="num" id="doc-sub">$0.00</td><td></td></tr>
-            ${kind === "invoice" ? `<tr><td colspan="5" class="num muted" id="doc-tax-label">Sales tax</td><td class="num" id="doc-tax">$0.00</td><td></td></tr>` : ""}
+            ${kind === "invoice" ? `<tr><td colspan="5" class="num muted" id="doc-tax-label">${inCanada() ? "GST/HST and other taxes" : "Sales tax"}</td><td class="num" id="doc-tax">$0.00</td><td></td></tr>` : ""}
             <tr><td colspan="${kind === "invoice" ? 5 : 4}" class="num">Total</td><td class="num" id="doc-total">$0.00</td><td></td></tr>
             ${kind === "bill" ? `<tr data-use-tax ${useTaxDefault ? "" : "hidden"}><td colspan="4" class="num muted" id="doc-use-tax-label">Use tax you owe the state (not paid to the vendor)</td><td class="num" id="doc-use-tax">$0.00</td><td></td></tr>` : ""}
           </tfoot>
@@ -1377,11 +1398,12 @@ async function docPageView(id, kind, docId) {
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
-        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.taxable ? ` <span class="hash">taxable${l.taxableMinor !== null && l.taxableMinor !== undefined ? ` on ${usd(l.taxableMinor)}` : ""}</span>` : ""}${l.useTaxable ? ` <span class="hash">use tax ${usd(l.useTaxMinor)}</span>` : ""}${l.servicePeriodStart ? `<div class="hash">Access ${longDate(l.servicePeriodStart)}${l.servicePeriodEnd ? ` to ${longDate(l.servicePeriodEnd)}` : ""}</div>` : ""}</td>
+        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.caTax ? (l.caTax.supply === "taxable" ? "" : ` <span class="hash">${l.caTax.supply === "zero_rated" ? "zero-rated" : "exempt"}</span>`) : l.taxable ? ` <span class="hash">taxable${l.taxableMinor !== null && l.taxableMinor !== undefined ? ` on ${usd(l.taxableMinor)}` : ""}</span>` : ""}${l.useTaxable ? ` <span class="hash">use tax ${usd(l.useTaxMinor)}</span>` : ""}${l.servicePeriodStart ? `<div class="hash">Access ${longDate(l.servicePeriodStart)}${l.servicePeriodEnd ? ` to ${longDate(l.servicePeriodEnd)}` : ""}</div>` : ""}</td>
           <td class="num">${esc(l.quantity)}</td><td class="num">${usd(l.unitPriceMinor)}</td><td class="num">${usd(l.amountMinor)}</td></tr>`).join("")}</tbody>
         <tfoot>
           <tr><td colspan="3" class="num muted">Subtotal</td><td class="num">${usd(x.subtotalMinor)}</td></tr>
-          ${invoice && BigInt(x.taxMinor) ? `<tr><td colspan="3" class="num muted">Sales tax ${pct(x.taxRate)}</td><td class="num">${usd(x.taxMinor)}</td></tr>` : ""}
+          ${invoice && x.caTax ? x.caTax.taxes.filter((t) => BigInt(t.amountMinor)).map((t) => `<tr><td colspan="3" class="num muted">${esc(t.label)}</td><td class="num">${usd(t.amountMinor)}</td></tr>`).join("")
+            : invoice && BigInt(x.taxMinor) ? `<tr><td colspan="3" class="num muted">Sales tax ${pct(x.taxRate)}</td><td class="num">${usd(x.taxMinor)}</td></tr>` : ""}
           <tr><td colspan="3" class="num">Total</td><td class="num">${usd(x.totalMinor)}</td></tr>
           ${!invoice && BigInt(x.useTaxMinor) ? `<tr><td colspan="3" class="num muted">Use tax you owe the state, ${pct(x.useTaxRate)} (not paid to the vendor)</td><td class="num">${usd(x.useTaxMinor)}</td></tr>` : ""}
           ${BigInt(x.paidMinor) ? `<tr><td colspan="3" class="num muted">Paid</td><td class="num">${usd(-BigInt(x.paidMinor))}</td></tr><tr><td colspan="3" class="num">Balance due</td><td class="num">${usd(due)}</td></tr>` : ""}
@@ -1427,6 +1449,8 @@ function taxExplanation(x) {
     direct_pay: `No sales tax on software: ${x.taxNote ?? "the buyer pays California use tax directly"}.`,
     manual: `Sales tax ${pct(x.taxRate)}, set by hand: ${x.taxNote}.`,
     user_entered: `Sales tax ${pct(x.taxRate)}, entered by hand before the rate was worked out automatically.`,
+    canada: x.caTax?.taxes.length ? `${x.taxNote}.` : `No tax charged${x.taxNote ? `: ${x.taxNote}` : ""}.`,
+    none: x.taxNote ? `No sales tax: ${x.taxNote}.` : "No sales tax.",
   }[x.taxSource] ?? "No sales tax.";
 }
 
@@ -2927,6 +2951,7 @@ async function salesTaxView(id, yearParam) {
   const year = Number(yearParam) || Number(bookDate().slice(0, 4));
   const t = await api(entPath(`/sales-tax?year=${year}`));
   const canSet = ["owner", "admin", "accountant"].includes(state.org.role);
+  if (t.country === "CA") return canadaSalesTaxView(id, year, t, canSet);
   const freq = Object.entries(t.frequencies).map(([k, l]) => `<option value="${k}" ${k === t.filingFrequency ? "selected" : ""}>${esc(l)}</option>`).join("");
   app.innerHTML = shell("sales-tax", `
     <div class="head"><div><h1>Sales tax returns</h1>
@@ -2949,8 +2974,71 @@ async function salesTaxView(id, yearParam) {
     </div>`);
 }
 
+const CA_FREQ = [["monthly", "Monthly"], ["quarterly", "Quarterly"], ["annual", "Annual"]];
+const caFreqOptions = (sel) => `<option value="">Not set</option>${CA_FREQ.map(([v, l]) => `<option value="${v}" ${v === sel ? "selected" : ""}>${l}</option>`).join("")}`;
+const PST_NAMES = { BC: "BC PST", MB: "Manitoba RST", SK: "Saskatchewan PST" };
+
+/** A Canadian business's GST/HST, QST and PST registrations, and its return periods. */
+function canadaSalesTaxView(id, year, t, canSet) {
+  const s = t.settings;
+  const dis = canSet ? "" : "disabled";
+  const region = state.entity.entity.region;
+  app.innerHTML = shell("sales-tax", `
+    <div class="head"><div><h1>Sales tax returns</h1>
+      <p class="muted">Your GST/HST, QST and PST returns. TrailBook charges each tax on your invoices once you record the registration here, and fills in each return from the invoices you've issued and the tax you paid on bills. File and pay in CRA My Business Account, Revenu Québec My Account or your province's site, or hand the figures to your accountant. TrailBook doesn't file or pay anything.</p></div>
+      <div class="row"><a class="btn secondary" href="#/e/${id}/sales-tax/${year - 1}">${year - 1}</a>${year <= Number(bookDate().slice(0, 4)) ? `<a class="btn secondary" href="#/e/${id}/sales-tax/${year + 1}">${year + 1}</a>` : ""}</div></div>
+    <div class="panel">
+      <h2>Registrations</h2>
+      <form data-form="ca-sales-tax-settings">
+        <div class="row" style="margin-bottom:12px;align-items:flex-end">
+          <label class="check"><input type="checkbox" name="gstRegistered" ${s.gstRegistered ? "checked" : ""} ${dis}> Registered for GST/HST</label>
+          <label>GST/HST account<input name="gstAccount" class="mono" value="${esc(s.gstAccount ?? "")}" placeholder="123456789 RT 0001" style="width:180px" ${dis}></label>
+          <label>Filing period<select name="gstFrequency" ${dis}>${caFreqOptions(s.gstFrequency)}</select></label>
+        </div>
+        <div class="row" style="margin-bottom:12px">
+          <label>QST number<input name="qstAccount" class="mono" value="${esc(s.qstAccount ?? "")}" placeholder="1234567890 TQ 0001" style="width:180px" ${dis}></label>
+          <label>QST filing period<select name="qstFrequency" ${dis}>${caFreqOptions(s.qstFrequency)}</select></label>
+        </div>
+        <div class="row" style="margin-bottom:12px">
+          ${Object.entries(PST_NAMES).map(([p, n]) => `<label>${n} number<input name="pst_${p}" class="mono" value="${esc(s.pst?.[p]?.account ?? "")}" style="width:150px" ${dis}></label>
+            <label>Filing period<select name="pstFreq_${p}" ${dis}>${caFreqOptions(s.pst?.[p]?.frequency)}</select></label>`).join("")}
+        </div>
+        ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+        <p class="hash" style="margin-top:8px">Until you're registered for GST/HST, TrailBook charges no tax and warns once your sales pass the $30,000 small-supplier limit over four calendar quarters. Your filing period is on your CRA registration. ${region === "QC" ? "Revenu Québec runs both GST and QST for Quebec businesses. " : "Record a QST number only if you're registered with Revenu Québec. "}Record a PST number only for a province you're registered in; TrailBook warns on a sale that looks like it needs one you haven't recorded.</p>
+      </form>
+    </div>
+    ${t.registrations.map((r) => `<div class="panel">
+      <h2>${esc(r.name)} <span class="hash">${esc(r.account)} · ${esc(r.authority)} · ${esc(r.frequency)}</span></h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Period</th><th>Due</th><th></th></tr></thead>
+        <tbody>${r.periods.map((p) => `<tr><td>${esc(p.label)}</td><td>${esc(p.dueDate)}</td>
+          <td><a href="#/e/${id}/sales-tax/return/${encodeURIComponent(`${r.tax}:${p.key}`)}">Open</a></td></tr>`).join("")}</tbody>
+      </table></div>
+    </div>`).join("") || `<div class="panel"><p class="muted">Record a registration and its filing period to see your return periods and due dates.</p></div>`}`);
+}
+
+async function canadaSalesTaxReturnView(id, tax, period) {
+  const f = await api(entPath(`/sales-tax/return?tax=${encodeURIComponent(tax)}&period=${encodeURIComponent(period)}`));
+  app.innerHTML = shell("sales-tax", `
+    <div class="head no-print"><div><p><a href="#/e/${id}/sales-tax/${f.period.from.slice(0, 4)}">&larr; Sales tax returns</a></p><h1>${esc(f.title)}</h1>
+      <p class="muted">${esc(f.period.from)} to ${esc(f.period.to)} · due ${esc(f.period.dueDate)} · file with ${esc(f.authority)}.</p></div>
+      <div class="row"><button class="secondary" data-action="print">Print</button></div></div>
+    <div class="panel">
+      <div><strong>${esc(f.business)}</strong> · account ${esc(f.account)} · ${f.invoices} invoice${f.invoices === 1 ? "" : "s"}</div>
+      <div class="table-wrap" style="margin-top:12px"><table>
+        <thead><tr><th>Line</th><th>Description</th><th class="num">Amount</th></tr></thead>
+        <tbody>${f.lines.map((l) => `<tr><td style="white-space:nowrap">${esc(l.line)}</td><td>${esc(l.label)}${l.note ? `<div class="hash">${esc(l.note)}</div>` : ""}</td><td class="num">${usd(l.valueMinor)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      <p style="margin-top:12px"><strong>${BigInt(f.netMinor) >= 0n ? `You owe ${usd(f.netMinor)}` : `Refund of ${usd(-BigInt(f.netMinor))}`}</strong> for this period.</p>
+      ${f.notes.map((n) => `<p class="hash">${esc(n)}</p>`).join("")}
+    </div>`);
+}
+
 async function salesTaxReturnView(id, key) {
   await loadEntity(id);
+  // Canadian returns are keyed by the tax and its period, like "gst:2026-Q4".
+  const m = /^(gst|qst|pst_bc|pst_mb|pst_sk):(.+)$/.exec(key);
+  if (m) return canadaSalesTaxReturnView(id, m[1], m[2]);
   const f = await api(entPath(`/sales-tax/return?period=${encodeURIComponent(key)}`));
   const s = f.seller;
   app.innerHTML = shell("sales-tax", `
@@ -3507,7 +3595,7 @@ document.addEventListener("change", (ev) => {
     const useTax = t.form.querySelector("[name=useTax]");
     if (useTax) useTax.checked = Boolean((state.docContacts ?? []).find((c) => c.id === t.value)?.accrueUseTax);
   }
-  if (t.closest("form[data-form=document][data-kind=bill]") && ["contactId", "useTax", "issueDate", "taxCategory", "servicePeriodStart", "servicePeriodEnd", "manualRate", "manualReason"].includes(t.name)) {
+  if (t.closest("form[data-form=document][data-kind=bill]") && ["contactId", "useTax", "issueDate", "taxCategory", "servicePeriodStart", "servicePeriodEnd", "manualRate", "manualReason", "caGst", "caQst"].includes(t.name)) {
     updateDocTotals();
     scheduleTaxPreview();
   }
@@ -3663,6 +3751,12 @@ document.addEventListener("click", async (ev) => {
       document.getElementById("doc-lines").insertAdjacentHTML("beforeend", docLineRow(b.dataset.kind));
       updateDocTotals();
       if (b.dataset.kind === "invoice" || useTaxOn()) scheduleTaxPreview();
+    } else if (a === "ca-calc") {
+      // Fills in the tax a vendor would normally charge on this bill's subtotal; check it against their invoice.
+      const sub = readDocLines().reduce((t, l) => t + Math.round(Number(l.quantity || 0) * Number(cents(l.unitPrice) ?? 0)), 0);
+      const rate = b.dataset.tax === "qst" ? 0.09975 : homeGstRate();
+      document.querySelector(`[name=${b.dataset.tax === "qst" ? "caQst" : "caGst"}]`).value = (Math.round(sub * rate) / 100).toFixed(2);
+      updateDocTotals();
     } else if (a === "remove-doc-line") {
       if (document.querySelectorAll("#doc-lines tr").length > 1) b.closest("tr").remove();
       updateDocTotals();
@@ -4111,13 +4205,14 @@ document.addEventListener("submit", async (ev) => {
       }
       const lines = readDocLines().filter((l) => l.unitPrice || l.itemId);
       const manualTax = d.manualRate?.trim() ? { ratePercent: d.manualRate.trim(), reason: d.manualReason ?? "" } : undefined;
-      const useTax = k === "bill" ? useTaxOn() : undefined;
+      const useTax = k === "bill" && !inCanada() ? useTaxOn() : undefined;
+      const caTax = k === "bill" && inCanada() ? { gstHst: d.caGst?.trim() || undefined, qst: d.caQst?.trim() || undefined } : undefined;
       if (ev.submitter?.dataset.as === "estimate") {
         const est = await api(entPath("/estimates"), { body: { contactId, issueDate: d.issueDate, expiryDate: d.dueDate, memo: d.memo, lines } });
         toast(`Estimate ${est.number} saved for ${usd(est.totalMinor)}`);
         return await docsView(state.entity.entity.id, k);
       }
-      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, useTax, idempotencyKey: crypto.randomUUID() } });
+      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, useTax, caTax, idempotencyKey: crypto.randomUUID() } });
       const notes = [`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`];
       if (d.repeat) {
         try {
@@ -4190,6 +4285,14 @@ document.addEventListener("submit", async (ev) => {
       state.entity.fresh = false;
       toast(r.late ? "Recorded. It was paid after the due date, so a late-deposit penalty may follow" : "Payment recorded and posted to the books");
       await payrollView(state.entity.entity.id);
+    } else if (kind === "ca-sales-tax-settings") {
+      const pst = Object.fromEntries(["BC", "MB", "SK"].map((p) => [p, { account: d[`pst_${p}`] || null, frequency: d[`pstFreq_${p}`] || null }]));
+      await api(entPath("/sales-tax-settings"), { body: {
+        country: "CA", gstRegistered: Boolean(d.gstRegistered), gstAccount: d.gstAccount || null, gstFrequency: d.gstFrequency || null,
+        qstAccount: d.qstAccount || null, qstFrequency: d.qstFrequency || null, pst,
+      } });
+      toast("Registrations saved");
+      await route();
     } else if (kind === "sales-tax-settings") {
       await api(entPath("/sales-tax-settings"), { body: { sellerPermit: d.sellerPermit, cdtfaAccount: d.cdtfaAccount, filingFrequency: d.filingFrequency, startDate: d.startDate } });
       toast("Sales tax settings saved");

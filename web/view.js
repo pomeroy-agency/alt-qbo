@@ -58,11 +58,13 @@ async function load() {
       <tbody>${v.lines.map((l) => `<tr><td>${esc(l.description)}</td><td class="num">${esc(l.quantity)}</td><td class="num">${m(l.unitPriceMinor)}</td><td class="num">${m(l.amountMinor)}</td></tr>`).join("")}</tbody>
       <tfoot>
         <tr><td colspan="3" class="num muted">Subtotal</td><td class="num">${m(v.subtotalMinor)}</td></tr>
-        ${BigInt(v.taxMinor) ? `<tr><td colspan="3" class="num muted">${invoice ? "Sales tax" : "Estimated sales tax"}</td><td class="num">${m(v.taxMinor)}</td></tr>` : ""}
+        ${v.taxes ? v.taxes.map((t) => `<tr><td colspan="3" class="num muted">${esc(t.label)}</td><td class="num">${m(t.amountMinor)}</td></tr>`).join("")
+          : BigInt(v.taxMinor) ? `<tr><td colspan="3" class="num muted">${invoice ? "Sales tax" : "Estimated sales tax"}</td><td class="num">${m(v.taxMinor)}</td></tr>` : ""}
         <tr><td colspan="3" class="num">Total</td><td class="num">${m(v.totalMinor)}</td></tr>
         ${invoice && BigInt(v.paidMinor) ? `<tr><td colspan="3" class="num muted">Paid</td><td class="num">${m(-BigInt(v.paidMinor))}</td></tr><tr><td colspan="3" class="num">Balance due</td><td class="num">${m(v.dueMinor)}</td></tr>` : ""}
       </tfoot>
     </table></div>
+    ${v.taxNumbers?.length ? `<p class="muted" style="margin-top:16px">${v.taxNumbers.map(esc).join("<br>")}</p>` : ""}
     ${v.memo ? `<p style="margin-top:16px">${esc(v.memo)}</p>` : ""}
   </article>`;
   document.getElementById("print").hidden = false;

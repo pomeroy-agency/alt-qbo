@@ -4,9 +4,11 @@ import { regionOf } from "../rules/jurisdictions.js";
 /** States with no state or local sales tax (Alaska and Montana have local ones, so they aren't here). */
 const NO_STATE_SALES_TAX = ["OR", "NH", "DE"];
 import { latestSalesTaxRules, salesTaxRules, type SalesTaxRulePack } from "../rules/sales-tax/us-ca-2026.js";
+import { CA_REGIONS, canadaSalesTaxRules } from "../rules/sales-tax/ca-2026.js";
 import { appendAudit } from "./audit.js";
+import { canadaCreditLines, decideCanadaTax, explainCanadaTax, type BillCanadaTax, type CanadaInvoiceTax, type CanadaLineTax, type CanadaTaxSpec } from "./canada-sales-tax.js";
 import { LedgerError, translateDbError } from "./errors.js";
-import { issueDocument, type DocumentDetail, type DocumentLineInput, type DocumentTax, type DocumentUseTax, type IssueDocumentInput } from "./documents.js";
+import { issueDocument, priceLine, type DocumentDetail, type DocumentLineInput, type DocumentTax, type DocumentUseTax, type IssueDocumentInput } from "./documents.js";
 import type { Actor, Role } from "./ledger.js";
 import { D, parseMoney } from "./money.js";
 
@@ -44,6 +46,9 @@ export interface TaxDecision {
   warnings: string[];
   /** Rule packs used, as "id@version", comma-separated when lines fall under different years. */
   rules: string | null;
+  /** Canadian invoices: each line's combined rate, and the taxes each line carries. */
+  lineRates?: string[];
+  canada?: CanadaInvoiceTax | null;
 }
 
 /** Each line's access period, for software; and its amount, for the direct-payment warning. */
@@ -108,13 +113,17 @@ export function rulesFor(region: string | null, date: string): SalesTaxRulePack 
 
 /** The kinds of sale to choose from today, falling back to the newest pack for the state. */
 export function currentCategories(region: string | null, today = new Date().toISOString().slice(0, 10)) {
+  if (region && CA_REGIONS.has(region)) {
+    return Object.entries(canadaSalesTaxRules(today).categories).map(([id, c]) => ({ id, label: c.label, help: c.help, taxable: c.taxable, digitalProduct: false }));
+  }
   const pack = salesTaxRules(region, today) ?? latestSalesTaxRules(region);
   if (!pack) return [];
   return Object.entries(pack.categories).map(([id, c]) => ({ id, label: c.label, help: c.help, taxable: c.taxable, digitalProduct: Boolean(c.digitalProduct) }));
 }
 
 /** One line a person can read: why this invoice has the tax it has. */
-export function explainTax(t: Pick<TaxDecision, "rate" | "source" | "jurisdiction" | "address" | "note">): string {
+export function explainTax(t: Pick<TaxDecision, "rate" | "source" | "jurisdiction" | "address" | "note" | "canada">): string {
+  if (t.source === "canada" || t.canada !== undefined) return explainCanadaTax(t);
   const pct = `${new D(t.rate).mul(100).toFixed(3).replace(/\.?0+$/, "")}%`;
   switch (t.source) {
     case "not_taxable": return "No sales tax: nothing on this invoice is taxable in California.";
@@ -185,6 +194,16 @@ export async function decideSalesTax(
     manual?: { ratePercent: string; reason: string; actor: Actor };
   },
 ): Promise<TaxDecision> {
+  const country = (await tx.query("SELECT country FROM entities WHERE id = $1", [input.entityId])).rows[0]?.country;
+  if (country === "CA") {
+    if (input.manual) throw new LedgerError("INVALID", "Canadian sales taxes are worked out from your registrations and the customer's province; they can't be set by hand");
+    const d = await decideCanadaTax(tx, { entityId: input.entityId, contactId: input.contactId, date: input.date, categories: input.categories, amounts: input.lines?.map((l) => l.amountMinor ?? 0n) });
+    return {
+      rate: d.rate, source: d.source, jurisdiction: d.jurisdiction, address: d.address, note: d.note, taxable: d.taxable,
+      taxShare: d.taxable.map(() => null), exemptions: d.taxable.map(() => null), warnings: d.warnings, rules: d.rules,
+      lineRates: d.lineRates, canada: d.canada,
+    };
+  }
   const ent = (await tx.query(
     "SELECT region, seller_permit, sales_tax_start::text, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1",
     [input.entityId],
@@ -357,7 +376,7 @@ export async function issueInvoice(tx: Tx, input: IssueInvoiceInput): Promise<Do
   const lines = await resolveLines(tx, input.entityId, input.lines);
   const manual = input.manual ? { ...input.manual, actor: input.actor } : undefined;
   const prior = (await tx.query(
-    "SELECT tax_rate::text AS rate, tax_source, tax_jurisdiction, tax_address, tax_note FROM documents WHERE entity_id = $1 AND idempotency_key = $2",
+    "SELECT tax_rate::text AS rate, tax_source, tax_jurisdiction, tax_address, tax_note, ca_tax FROM documents WHERE entity_id = $1 AND idempotency_key = $2",
     [input.entityId, `invoice:${input.idempotencyKey}`],
   )).rows[0];
   let tax: DocumentTax;
@@ -366,7 +385,7 @@ export async function issueInvoice(tx: Tx, input: IssueInvoiceInput): Promise<Do
     // A retry: the lines as they were taxed the first time, so the replay matches.
     tax = { rate: prior.rate, source: prior.tax_source, jurisdiction: prior.tax_jurisdiction, address: prior.tax_address, note: prior.tax_note };
     const { rows } = await tx.query(
-      `SELECT l.taxable, l.amount_minor, l.taxable_minor, l.tax_exemption FROM document_lines l JOIN documents d ON d.id = l.document_id
+      `SELECT l.taxable, l.amount_minor, l.taxable_minor, l.tax_exemption, l.ca_tax FROM document_lines l JOIN documents d ON d.id = l.document_id
         WHERE d.entity_id = $1 AND d.idempotency_key = $2 ORDER BY l.line_no`,
       [input.entityId, `invoice:${input.idempotencyKey}`],
     );
@@ -374,13 +393,21 @@ export async function issueInvoice(tx: Tx, input: IssueInvoiceInput): Promise<Do
       taxable: r.taxable, taxExemption: r.tax_exemption ?? undefined,
       taxShare: r.tax_exemption === "mpu" && r.amount_minor > 0n ? new D(r.taxable_minor.toString()).div(r.amount_minor.toString()).toFixed(4) : undefined,
     }));
+    if (prior.ca_tax) {
+      tax.canada = {
+        place: prior.ca_tax.place,
+        taxes: prior.ca_tax.taxes.map(({ code, label, rate, authority, account }: CanadaTaxSpec) => ({ code, label, rate, authority, account })),
+        lines: rows.map((r) => ({ supply: (r.ca_tax as CanadaLineTax).supply, codes: Object.keys((r.ca_tax as CanadaLineTax).taxes) as CanadaTaxSpec["code"][] })),
+      };
+      taxed = rows.map((r) => ({ taxable: r.taxable, taxShare: undefined, taxExemption: undefined }));
+    }
   } else {
     const d = await decideSalesTax(tx, {
       entityId: input.entityId, contactId: input.contactId, date: input.issueDate,
       categories: lines.map((l) => l.taxCategory ?? ""), lines: lines.map((l) => ({ periodStart: l.servicePeriodStart, periodEnd: l.servicePeriodEnd })),
       lookup: input.lookup, manual,
     });
-    tax = { rate: d.rate, source: d.source, jurisdiction: d.jurisdiction, address: d.address, note: d.note };
+    tax = { rate: d.rate, source: d.source, jurisdiction: d.jurisdiction, address: d.address, note: d.note, ...(d.canada ? { canada: d.canada } : {}) };
     taxed = d.taxable.map((t, i) => ({ taxable: t, taxShare: d.taxShare[i] ?? undefined, taxExemption: d.exemptions[i] ?? undefined }));
   }
   const { lookup: _l, manual: _m, ...rest } = input;
@@ -416,8 +443,9 @@ export async function decideUseTax(
     manual?: { ratePercent: string; reason: string; actor: Actor };
   },
 ): Promise<UseTaxDecision> {
-  const ent = (await tx.query("SELECT region, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1", [input.entityId])).rows[0];
+  const ent = (await tx.query("SELECT country, region, address_line1, address_city, address_state, address_zip FROM entities WHERE id = $1", [input.entityId])).rows[0];
   if (!ent) throw new LedgerError("INVALID", "entity not found");
+  if (ent.country === "CA") throw new LedgerError("INVALID", "use tax is a US tax; on a Canadian bill, enter the GST/HST and QST the vendor charged instead");
   const pack = rulesFor(ent.region, input.date);
   const { lines, rules } = lineRules(ent.region, input.date, input.categories, input.lines);
   const taxable = lines.map((l) => l.taxable);
@@ -454,6 +482,8 @@ export function explainUseTax(t: Pick<UseTaxDecision, "rate" | "source" | "juris
 export interface RecordBillInput extends Omit<IssueDocumentInput, "kind" | "tax" | "useTax"> {
   /** Add use tax because the vendor didn't charge California tax. Left out, the vendor's setting decides. */
   useTax?: boolean;
+  /** Canadian businesses: the GST/HST and QST the vendor charged, claimed back as credits. */
+  caTax?: BillCanadaTax;
   lookup?: RateLookup;
   manual?: { ratePercent: string; reason: string };
 }
@@ -464,7 +494,21 @@ export interface RecordBillInput extends Omit<IssueDocumentInput, "kind" | "tax"
  * bill without looking the rate up again.
  */
 export async function recordBill(tx: Tx, input: RecordBillInput): Promise<DocumentDetail> {
-  const { lookup, manual: manualInput, useTax: wanted, ...rest } = input;
+  const { lookup, manual: manualInput, useTax: wanted, caTax, ...rest } = input;
+  const country = (await tx.query("SELECT country FROM entities WHERE id = $1", [input.entityId])).rows[0]?.country;
+  if (country === "CA") {
+    if (wanted) throw new LedgerError("INVALID", "use tax is a US tax; on a Canadian bill, enter the GST/HST and QST the vendor charged instead");
+    if (!caTax || (!caTax.gstHst && !caTax.qst)) return issueDocument(tx, { ...rest, kind: "bill" });
+    const subtotal = input.lines.reduce((s, l, i) => {
+      try {
+        return s + priceLine(l.quantity, parseMoney(l.unitPrice).minor, false, "0").amountMinor;
+      } catch {
+        throw new LedgerError("INVALID", `line ${i + 1}: price must be an amount like 125.00`);
+      }
+    }, 0n);
+    return issueDocument(tx, { ...rest, kind: "bill", lines: [...input.lines, ...canadaCreditLines(caTax, subtotal)] });
+  }
+  if (caTax && (caTax.gstHst || caTax.qst)) throw new LedgerError("INVALID", "GST/HST and QST credits are for Canadian businesses");
   const vendor = (await tx.query("SELECT accrue_use_tax FROM contacts WHERE id = $1 AND entity_id = $2", [input.contactId, input.entityId])).rows[0];
   if (!(wanted ?? vendor?.accrue_use_tax)) return issueDocument(tx, { ...rest, kind: "bill" });
   const manual = manualInput ? { ...manualInput, actor: input.actor } : undefined;
