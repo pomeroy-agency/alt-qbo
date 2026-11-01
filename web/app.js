@@ -1489,17 +1489,67 @@ async function itemsView(id) {
 
 const bankUi = { account: null, status: "new" };
 
+const FEED_STATUS = { active: "Connected", needs_login: "The bank needs you to sign in again", error: "Last update failed" };
+
+/** The selected account's automatic feed, or a way to connect one. */
+function feedPanel(f) {
+  if (!f.enabled) return "";
+  const feed = f.feeds.find((x) => x.bankAccount === bankUi.account);
+  const canConnect = ["owner", "admin", "accountant"].includes(state.org.role);
+  const canWrite = !["read_only", "approver"].includes(state.org.role);
+  if (!feed) {
+    return `<div class="panel"><h2>Connect this account to the bank</h2>
+      <p class="muted">New transactions then arrive every morning, ready to review. TrailBook only reads transactions; it can't move money. The connection runs through Plaid${f.env === "sandbox" ? " (test mode)" : ""}.</p>
+      ${canConnect ? `<button data-action="feed-connect">Connect ${esc(bankUi.account)}</button>` : `<p class="hash">An owner, admin or accountant can connect it.</p>`}</div>`;
+  }
+  return `<div class="panel"><div class="row" style="justify-content:space-between">
+      <div><strong>${esc(feed.institution ?? "Bank")}</strong> ${feed.accountName ? `· ${esc(feed.accountName)}` : ""} ${feed.accountMask ? `<span class="mono">···${esc(feed.accountMask)}</span>` : ""}
+        <div class="${feed.status === "active" ? "muted" : ""}" ${feed.status === "active" ? "" : `style="color:var(--bad-ink)"`}>${FEED_STATUS[feed.status]}${feed.lastSyncedAt ? ` · updated ${esc(new Date(feed.lastSyncedAt).toLocaleString())}` : ""}${feed.lastError && feed.status !== "active" ? `: ${esc(feed.lastError)}` : ""}</div></div>
+      <div class="row">
+        ${feed.status === "needs_login" && canConnect ? `<button data-action="feed-relink" data-id="${feed.id}">Sign in again</button>` : ""}
+        ${canWrite && feed.status !== "needs_login" ? `<button class="secondary" data-action="feed-sync" data-id="${feed.id}">Update now</button>` : ""}
+        ${canConnect ? `<button class="link" data-action="feed-remove" data-id="${feed.id}">Disconnect</button>` : ""}
+      </div></div></div>`;
+}
+
+/** Loads Plaid Link only when someone connects a bank. */
+let plaidScript = null;
+function loadPlaid() {
+  plaidScript ||= new Promise((resolve, reject) => {
+    const s = Object.assign(document.createElement("script"), { src: "https://cdn.plaid.com/link/v2/stable/link-initialize.js", onload: resolve, onerror: () => reject(new Error("couldn't load the bank connection window")) });
+    document.head.append(s);
+  });
+  return plaidScript;
+}
+
+async function openPlaid(feedId) {
+  const [{ linkToken }] = await Promise.all([api(entPath("/bank-feeds/link-token"), { body: feedId ? { feedId } : {} }), loadPlaid()]);
+  await new Promise((resolve, reject) => {
+    window.Plaid.create({
+      token: linkToken,
+      onSuccess: (publicToken, meta) => resolve(feedId
+        ? api(entPath(`/bank-feeds/${feedId}/reconnected`), { body: {} })
+        : api(entPath("/bank-feeds"), { body: { bankAccount: bankUi.account, publicToken, providerAccountId: meta.accounts?.[0]?.id, institution: meta.institution?.name } })),
+      onExit: (err) => (err ? reject(new Error(err.display_message || err.error_message || "the bank connection was cancelled")) : resolve(null)),
+    }).open();
+  }).then((r) => {
+    if (r) toast(feedId ? "Reconnected" : `Connected. ${r.sync?.added ?? 0} recent transaction${r.sync?.added === 1 ? "" : "s"} brought in`);
+  });
+  await bankView(state.entity.entity.id);
+}
+
 async function bankView(id) {
   await loadEntity(id);
   const banks = state.entity.accounts.filter((a) => a.is_active && a.subtype === "bank");
   if (!banks.some((a) => a.code === bankUi.account)) bankUi.account = banks[0]?.code ?? null;
   const q = `?account=${encodeURIComponent(bankUi.account ?? "")}&status=${bankUi.status}`;
-  const [{ lines }, inv, bills, { rules }, { counts: files }] = await Promise.all([
+  const [{ lines }, inv, bills, { rules }, { counts: files }, feeds] = await Promise.all([
     api(entPath(`/bank-lines${q}`)),
     bankUi.status === "new" ? api(entPath("/invoices")) : { documents: [] },
     bankUi.status === "new" ? api(entPath("/bills")) : { documents: [] },
     api(entPath("/bank-rules")),
     api(entPath("/attachments?type=bank_line")),
+    api(entPath("/bank-feeds")).catch(() => ({ enabled: false, feeds: [] })),
   ]);
   const open = (docs) => docs.filter((d) => d.status !== "void" && d.dueMinor !== "0");
   const openInv = open(inv.documents), openBills = open(bills.documents);
@@ -1526,6 +1576,7 @@ async function bankView(id) {
         <div class="row">${tab("new", "To review")}${tab("posted", "Recorded")}${tab("excluded", "Excluded")}</div>
       </div>
     </div>
+    ${banks.length ? feedPanel(feeds) : ""}
     ${canWrite && banks.length ? `<div class="panel">
       <h2>Import a statement</h2>
       <p class="muted">Download your bank's activity as an OFX, QFX (Quicken) or QBO (QuickBooks Web Connect) file, or as a CSV with a date, a description, and either an Amount column or separate withdrawal and deposit columns. Lines already imported are skipped, so overlapping downloads are fine.</p>
@@ -3678,6 +3729,18 @@ document.addEventListener("click", async (ev) => {
       try { localStorage.setItem("altqbo_org", b.dataset.org); } catch {}
       state.org = null; state.entity = null;
       if (location.hash === b.dataset.go) await route(); else location.hash = b.dataset.go;
+    } else if (a === "feed-connect" || a === "feed-relink") {
+      await openPlaid(a === "feed-relink" ? b.dataset.id : null);
+    } else if (a === "feed-sync") {
+      b.disabled = true;
+      const r = await api(entPath(`/bank-feeds/${b.dataset.id}/sync`), { body: {} });
+      toast(r.status === "active" ? `${r.added} new line${r.added === 1 ? "" : "s"}${r.autoRecorded ? `, ${r.autoRecorded} recorded by your rules` : ""}` : r.message ?? "The bank didn't answer");
+      await bankView(state.entity.entity.id);
+    } else if (a === "feed-remove") {
+      b.disabled = true;
+      await api(entPath(`/bank-feeds/${b.dataset.id}/remove`), { body: {} });
+      toast("Disconnected. Lines already brought in stay");
+      await bankView(state.entity.entity.id);
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);

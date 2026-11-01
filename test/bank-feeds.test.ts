@@ -68,3 +68,83 @@ describe("OFX, QFX and QBO bank files", () => {
     await expectLedgerError(withTenant(pool, org.id, (tx) => importBankCsv(tx, { orgId: org.id, entityId: entity.id, bankAccount: "1000", csv: "<OFX></OFX>", actor: bookkeeper })), "INVALID");
   });
 });
+
+import { connectFeed, listFeeds, removeFeed, syncAllFeeds, syncFeed } from "../src/core/bank-feeds.js";
+import { PlaidError, plaidClient, type PlaidClient, type PlaidTransaction } from "../src/app/plaid.js";
+import { accountant } from "./helpers.js";
+
+/** A stand-in for Plaid: pages of transactions, and a switch to make the bank ask for a sign-in. */
+function fakePlaid(pages: PlaidTransaction[][]) {
+  const calls: string[] = [];
+  let loginNeeded = false;
+  const c: PlaidClient & { calls: string[]; needLogin(): void; more(p: PlaidTransaction[]): void } = {
+    env: "sandbox", calls,
+    needLogin: () => { loginNeeded = true; },
+    more: (p) => { pages.push(p); },
+    linkToken: async () => "link-sandbox-1",
+    exchange: async (t) => { calls.push(`exchange:${t}`); return { accessToken: "access-sandbox-secret", itemId: "item-1" }; },
+    accounts: async () => [{ id: "acc-chk", name: "Business Checking", mask: "0000", type: "checking" }, { id: "acc-sav", name: "Savings", mask: "1111", type: "savings" }],
+    sync: async (_token, cursor) => {
+      if (loginNeeded) throw new PlaidError("the bank needs you to sign in again", "ITEM_LOGIN_REQUIRED");
+      const i = cursor ? Number(cursor) : 0;
+      calls.push(`sync:${i}`);
+      return { added: pages[i] ?? [], modified: [], removed: [], nextCursor: String(Math.min(i + 1, pages.length)), hasMore: i + 1 < pages.length };
+    },
+    remove: async () => { calls.push("remove"); },
+  };
+  return c;
+}
+
+const txn = (id: string, amount: number, extra: Partial<PlaidTransaction> = {}): PlaidTransaction =>
+  ({ transaction_id: id, account_id: "acc-chk", amount, date: "2026-03-10", name: "ADOBE *CREATIVE", merchant_name: "Adobe", pending: false, ...extra });
+
+describe("automatic bank feeds", () => {
+  it("connects one account, brings in posted lines only, keeps the token sealed, and never adds a line twice", async () => {
+    const { org, entity } = await setupCaliforniaBusiness("Feed Co");
+    const t = <T>(fn: (tx: Tx) => Promise<T>) => withTenant(pool, org.id, fn);
+    const base = { orgId: org.id, entityId: entity.id };
+    const plaid = fakePlaid([[txn("t1", 54.99), txn("t2", -1500, { name: "DEPOSIT", merchant_name: null }), txn("t3", 9, { pending: true }), txn("t4", 20, { account_id: "acc-sav" })], [txn("t5", 40.5, { name: "SHELL OIL", merchant_name: "Shell" })]]);
+
+    await expectLedgerError(t((tx) => connectFeed(tx, plaid, { ...base, bankAccount: "1000", publicToken: "public-1", actor: accountant })), "INVALID");
+    expect(plaid.calls).toContain("remove"); // an unused login isn't left connected
+    await expectLedgerError(t((tx) => connectFeed(tx, plaid, { ...base, bankAccount: "1000", publicToken: "public-1", providerAccountId: "acc-chk", actor: bookkeeper })), "FORBIDDEN");
+
+    const { feed, sync } = await t((tx) => connectFeed(tx, plaid, { ...base, bankAccount: "1000", publicToken: "public-1", providerAccountId: "acc-chk", institution: "First Platypus Bank", actor: accountant }));
+    expect(feed).toMatchObject({ bankAccount: "1000", institution: "First Platypus Bank", accountMask: "0000", status: "active" });
+    expect(sync).toMatchObject({ added: 3, status: "active" });
+    const lines = await t((tx) => listBankLines(tx, { entityId: entity.id, bankAccount: "1000", status: "new" }));
+    expect(lines.map((l) => [l.description, l.amountMinor])).toEqual(expect.arrayContaining([["ADOBE *CREATIVE", -5499n], ["DEPOSIT", 150000n], ["SHELL OIL", -4050n]]));
+    const row = (await t((tx) => tx.query("SELECT access_token_sealed, sync_cursor FROM bank_feeds WHERE id = $1", [feed.id]))).rows[0];
+    expect(row.access_token_sealed).not.toContain("access-sandbox-secret");
+    expect(row.sync_cursor).toBe("2");
+
+    // Nothing new: nothing added. A second connection on the same account is refused.
+    expect(await t((tx) => syncFeed(tx, plaid, { ...base, feedId: feed.id, actor: bookkeeper }))).toMatchObject({ added: 0 });
+    await expectLedgerError(t((tx) => connectFeed(tx, plaid, { ...base, bankAccount: "1000", publicToken: "public-2", providerAccountId: "acc-chk", actor: accountant })), "INVALID");
+
+    // The daily run picks up new lines; a bank asking for a sign-in marks the connection, not the run.
+    plaid.more([txn("t6", 12)]);
+    expect(await syncAllFeeds(pool, plaid)).toMatchObject({ synced: expect.any(Number), added: expect.any(Number) });
+    expect((await t((tx) => listBankLines(tx, { entityId: entity.id, bankAccount: "1000", status: "new" }))).length).toBe(4);
+    plaid.needLogin();
+    expect(await t((tx) => syncFeed(tx, plaid, { ...base, feedId: feed.id, actor: bookkeeper }))).toMatchObject({ status: "needs_login", added: 0 });
+    expect((await t((tx) => listFeeds(tx, entity.id)))[0]!.status).toBe("needs_login");
+
+    await t((tx) => removeFeed(tx, plaid, { ...base, feedId: feed.id, actor: accountant }));
+    expect(await t((tx) => listFeeds(tx, entity.id))).toEqual([]);
+    expect((await t((tx) => listBankLines(tx, { entityId: entity.id, bankAccount: "1000", status: "new" }))).length).toBe(4);
+  });
+
+  it("talks to Plaid's API with the keys in the body and reads its errors", async () => {
+    const seen: { url: string; body: any }[] = [];
+    const fetchImpl = (async (url: string, init: any) => {
+      seen.push({ url, body: JSON.parse(init.body) });
+      if (url.endsWith("/transactions/sync")) return new Response(JSON.stringify({ error_code: "ITEM_LOGIN_REQUIRED", error_message: "login required" }), { status: 400 });
+      return new Response(JSON.stringify({ link_token: "link-sandbox-x" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const c = plaidClient({ clientId: "cid", secret: "sec", env: "sandbox" }, fetchImpl);
+    expect(await c.linkToken({ userId: "o:u" })).toBe("link-sandbox-x");
+    expect(seen[0]).toMatchObject({ url: "https://sandbox.plaid.com/link/token/create", body: { client_id: "cid", secret: "sec", products: ["transactions"], user: { client_user_id: "o:u" } } });
+    await expect(c.sync("tok", null)).rejects.toMatchObject({ code: "ITEM_LOGIN_REQUIRED" });
+  });
+});

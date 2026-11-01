@@ -29,6 +29,8 @@ import { GatewayError } from "../billing/gateway.js";
 import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
 import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
 import { clientOverview } from "../core/firm.js";
+import { connectFeed, feedAccessToken, listFeeds, markReconnected, removeFeed, syncFeed } from "../core/bank-feeds.js";
+import { PlaidError, type PlaidClient } from "./plaid.js";
 import { importChart, importContacts, importOpenDocuments, importOpeningBalances, migrationStatus } from "../core/migration.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
@@ -90,6 +92,8 @@ export interface ApiOptions {
   newsletter?: NewsletterConfig;
   /** The Pomeroy account hub: where TrailBook reports each organisation's status (hub.ts). */
   hub?: HubOptions;
+  /** Automatic bank feeds through Plaid (plaid.ts). Without it, the bank page offers file import only. */
+  plaid?: PlaidClient;
   /** Where receipts and other attached files are kept (Netlify Blobs in production). Without it, files can't be added. */
   files?: FileStore;
   /** Starts the newsletter's background worker. */
@@ -1237,6 +1241,62 @@ route("POST", "/api/orgs/:org/entities/:entity/bank-imports", async (req, p, ctx
   return json(out, 201);
 });
 
+// ---------------------------------------------------- automatic bank feeds
+
+function plaidOf(ctx: Ctx): PlaidClient {
+  if (!ctx.opts.plaid) throw new HttpError(503, "automatic bank feeds aren't switched on yet; import an OFX, QFX or CSV file instead");
+  return ctx.opts.plaid;
+}
+
+route("GET", "/api/orgs/:org/entities/:entity/bank-feeds", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ enabled: Boolean(ctx.opts.plaid), env: ctx.opts.plaid?.env ?? null, feeds: await listFeeds(tx, p.entity!) });
+  }),
+);
+
+/** A token for Plaid Link: a new connection, or (with feedId) signing in again to one. */
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/link-token", async (req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  const b = await body(req);
+  if (!["owner", "admin", "accountant"].includes(ctx.role)) throw new HttpError(403, "only an owner, admin or accountant can connect a bank");
+  const accessToken = typeof b.feedId === "string" ? await tenant(ctx, (tx) => feedAccessToken(tx, p.entity!, uuid(b.feedId, "connection"))) : undefined;
+  return json({ linkToken: await plaid.linkToken({ userId: `${ctx.orgId}:${ctx.user.id}`, accessToken }) });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds", async (req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  const b = await body(req);
+  const out = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return connectFeed(tx, plaid, {
+      orgId: ctx.orgId, entityId: p.entity!, bankAccount: str(b.bankAccount, "bank account", 40), publicToken: str(b.publicToken, "bank sign-in", 300),
+      providerAccountId: typeof b.providerAccountId === "string" ? b.providerAccountId.slice(0, 100) : undefined,
+      institution: typeof b.institution === "string" ? b.institution : undefined, actor: ctx.actor,
+    });
+  });
+  return json(out, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/:feed/sync", async (_req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  return json(await tenant(ctx, (tx) => syncFeed(tx, plaid, { orgId: ctx.orgId, entityId: p.entity!, feedId: p.feed!, actor: ctx.actor })));
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/:feed/reconnected", async (_req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  return json(await tenant(ctx, async (tx) => {
+    await markReconnected(tx, { orgId: ctx.orgId, entityId: p.entity!, feedId: p.feed!, actor: ctx.actor });
+    return syncFeed(tx, plaid, { orgId: ctx.orgId, entityId: p.entity!, feedId: p.feed!, actor: ctx.actor });
+  }));
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/:feed/remove", async (_req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  await tenant(ctx, (tx) => removeFeed(tx, plaid, { orgId: ctx.orgId, entityId: p.entity!, feedId: p.feed!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
 async function ensureLine(tx: Tx, entityId: string, lineId: string) {
   const { rows } = await tx.query("SELECT 1 FROM bank_lines WHERE id = $1 AND entity_id = $2", [lineId, entityId]);
   if (!rows[0]) throw new HttpError(404, "bank line not found");
@@ -2275,7 +2335,7 @@ async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): P
  * prepared filings count as these too. The example business is practice
  * data, so it's left out.
  */
-const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings|contacts\/[^/]+\/tax-form)$/;
+const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings|contacts\/[^/]+\/tax-form|bank-feeds|bank-feeds\/link-token|bank-feeds\/[^/]+\/(remove|reconnected))$/;
 const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return|contractor-forms\/prepared)$/;
 
 export function needsSecondFactor(method: string, path: string): boolean {
@@ -2748,6 +2808,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
     if (err instanceof HubSignInError) return json({ error: err.message, code: err.code }, 409);
     if (err instanceof NewsletterError) return json({ error: err.message }, err.status);
     if (err instanceof BrevoError) return json({ error: err.message }, 502);
+    if (err instanceof PlaidError) return json({ error: err.message, code: err.code }, 502);
     console.error(err);
     return json({ error: "something went wrong on our side" }, 500);
   }
