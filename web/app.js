@@ -1180,6 +1180,34 @@ function recurringPanel(kind, templates, canWrite) {
 }
 
 /** Automatic reminders to customers, and where their replies go. */
+const PAY_STATUS = { paid: "Recorded", processing: "Bank payment clearing", expired: "Not completed", needs_review: "Needs a look" };
+const PAY_METHOD = { card: "Card", us_bank_account: "Bank (ACH)" };
+
+/** Card and bank payments through the business's own Stripe account. Hidden until it's switched on. */
+function onlinePaymentsPanel(o) {
+  if (!o.enabled) return "";
+  const canConnect = ["owner", "admin"].includes(state.org.role);
+  if (!o.connection) {
+    return `<div class="panel"><h2>Take card and bank payments</h2>
+      <p class="muted">Connect your own Stripe account and every invoice link gets a Pay button. Customers pay on Stripe's page and the money goes straight to your Stripe balance; TrailBook adds no fee and never holds it. Stripe charges its own processing fee, which TrailBook records for you.${o.livemode === false ? " (Test mode.)" : ""}</p>
+      ${!o.available ? `<p class="hash">${esc(o.reason)}</p>` : canConnect ? `<button data-action="stripe-connect">Connect Stripe</button>` : `<p class="hash">An owner or admin can connect Stripe.</p>`}</div>`;
+  }
+  const c = o.connection;
+  return `<div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div><h2 style="margin:0">Card and bank payments</h2>
+        <div class="muted">Stripe${c.name ? `: ${esc(c.name)}` : ""} <span class="mono">${esc(c.accountId)}</span>${c.livemode ? "" : " · test mode"}. Payments land in <strong>${esc(c.bankAccount)} Stripe balance</strong>; when Stripe pays out, categorize the deposit as a transfer from ${esc(c.bankAccount)}.</div></div>
+      ${canConnect ? `<button class="link" data-action="stripe-disconnect">Disconnect</button>` : ""}
+    </div>
+    ${o.recent.length ? `<div class="table-wrap" style="margin-top:12px"><table>
+      <thead><tr><th>Invoice</th><th>Started</th><th>Method</th><th class="num">Amount</th><th class="num">Stripe fee</th><th>Status</th></tr></thead>
+      <tbody>${o.recent.map((r) => `<tr><td>${esc(r.number)}</td><td>${esc(new Date(r.createdAt).toLocaleDateString())}</td><td>${esc(PAY_METHOD[r.paymentMethod] ?? r.paymentMethod ?? "")}</td>
+        <td class="num">${usd(r.amountMinor)}</td><td class="num">${r.feeMinor ? usd(r.feeMinor) : ""}</td>
+        <td>${esc(PAY_STATUS[r.status] ?? r.status)}${r.note ? `<div class="hash">${esc(r.note)}</div>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div>` : `<p class="hash" style="margin-top:12px">No online payments yet.</p>`}
+  </div>`;
+}
+
 function remindersPanel(m, canSet) {
   return `<div class="panel">
     <h2>Emails to customers</h2>
@@ -1204,6 +1232,8 @@ async function docsView(id, kind) {
     api(entPath("/recurring")),
     invoice ? api(entPath("/invoice-emails")) : null,
   ]);
+  // Online payments are optional; a failure here shouldn't stop the page.
+  const online = invoice ? await api(entPath("/online-payments")).catch(() => null) : null;
   const recurring = templates.filter((t) => t.kind === kind);
   const canSetEmails = ["owner", "admin", "accountant"].includes(state.org.role);
   state.items = items;
@@ -1269,6 +1299,7 @@ async function docsView(id, kind) {
     ${invoice ? estimatesPanel(id, estimates, canWrite, Boolean(mail?.emailEnabled)) : ""}
     ${recurringPanel(kind, recurring, canWrite)}
     ${invoice && mail ? remindersPanel(mail, canSetEmails) : ""}
+    ${online ? onlinePaymentsPanel(online) : ""}
     <div class="panel">
       <h2>All ${d.title.toLowerCase()}</h2>
       <div class="table-wrap"><table>
@@ -3736,6 +3767,15 @@ document.addEventListener("click", async (ev) => {
       const r = await api(entPath(`/bank-feeds/${b.dataset.id}/sync`), { body: {} });
       toast(r.status === "active" ? `${r.added} new line${r.added === 1 ? "" : "s"}${r.autoRecorded ? `, ${r.autoRecorded} recorded by your rules` : ""}` : r.message ?? "The bank didn't answer");
       await bankView(state.entity.entity.id);
+    } else if (a === "stripe-connect") {
+      b.disabled = true;
+      const { url } = await api(entPath("/online-payments/connect"), { body: {} });
+      location.href = url;
+    } else if (a === "stripe-disconnect") {
+      b.disabled = true;
+      await api(entPath("/online-payments/disconnect"), { body: {} });
+      toast("Stripe disconnected");
+      await docsView(state.entity.entity.id, "invoice");
     } else if (a === "feed-remove") {
       b.disabled = true;
       await api(entPath(`/bank-feeds/${b.dataset.id}/remove`), { body: {} });

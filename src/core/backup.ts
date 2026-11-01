@@ -45,6 +45,8 @@ const TABLES: [string, string][] = [
   // Bank connection tokens stay out; the backup only says which accounts were connected.
   ["bank_feeds", `SELECT id, org_id, entity_id, bank_account_id, provider, institution, account_name, account_mask, status, last_synced_at, created_by, created_at, removed_at
      FROM bank_feeds WHERE entity_id = $1 ORDER BY created_at`],
+  ["stripe_connections", "SELECT * FROM stripe_connections WHERE entity_id = $1 ORDER BY connected_at"],
+  ["invoice_payment_sessions", "SELECT * FROM invoice_payment_sessions WHERE entity_id = $1 ORDER BY created_at"],
   // Contractors' taxpayer numbers stay out; only their last four digits are copied.
   ["contractor_tax_info", `SELECT contact_id, org_id, entity_id, form, recipient_type, tin_kind, tin_last4, legal_name, updated_by, updated_at
      FROM contractor_tax_info WHERE entity_id = $1 ORDER BY contact_id`],

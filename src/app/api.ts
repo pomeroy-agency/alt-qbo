@@ -31,6 +31,8 @@ import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-
 import { clientOverview } from "../core/firm.js";
 import { connectFeed, feedAccessToken, listFeeds, markReconnected, removeFeed, syncFeed } from "../core/bank-feeds.js";
 import { PlaidError, type PlaidClient } from "./plaid.js";
+import { ConnectError, type InvoicePayments } from "./stripe-connect.js";
+import { confirmFromView, connectStart, disconnect, finishConnect, payableByToken, paymentsStatus, readConnectState, startCheckout } from "../core/invoice-payments.js";
 import { importChart, importContacts, importOpenDocuments, importOpeningBalances, migrationStatus } from "../core/migration.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
@@ -94,6 +96,8 @@ export interface ApiOptions {
   hub?: HubOptions;
   /** Automatic bank feeds through Plaid (plaid.ts). Without it, the bank page offers file import only. */
   plaid?: PlaidClient;
+  /** Card and bank payments on invoices through each business's own Stripe account (stripe-connect.ts). Off without it. */
+  invoicePayments?: InvoicePayments;
   /** Where receipts and other attached files are kept (Netlify Blobs in production). Without it, files can't be added. */
   files?: FileStore;
   /** Starts the newsletter's background worker. */
@@ -1297,6 +1301,73 @@ route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/:feed/remove", async (
   return json({ ok: true });
 });
 
+// ------------------------------------------------- payments on invoices
+
+function paymentsOf(ctx: Ctx): InvoicePayments {
+  if (!ctx.opts.invoicePayments) throw new HttpError(503, "online payments on invoices aren't switched on yet");
+  return ctx.opts.invoicePayments;
+}
+
+route("GET", "/api/orgs/:org/entities/:entity/online-payments", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const example = (await tx.query("SELECT name FROM organizations WHERE id = $1", [ctx.orgId])).rows[0]?.name === EXAMPLE_ORG_NAME;
+    const st = await paymentsStatus(tx, p.entity!, ctx.opts.invoicePayments);
+    return json(example ? { ...st, available: false, reason: "The example business can't take real payments." } : st);
+  }),
+);
+
+/** Where to send the owner to sign in to Stripe and connect their account. */
+route("POST", "/api/orgs/:org/entities/:entity/online-payments/connect", async (req, p, ctx) => {
+  const payments = paymentsOf(ctx);
+  const url = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    if ((await tx.query("SELECT name FROM organizations WHERE id = $1", [ctx.orgId])).rows[0]?.name === EXAMPLE_ORG_NAME) {
+      throw new HttpError(422, "the example business can't take real payments");
+    }
+    return connectStart(tx, payments, {
+      orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor, userId: ctx.user.id, email: ctx.user.email,
+      redirectUri: `${appUrl(req, ctx.opts)}/api/stripe/connect/callback`,
+    });
+  });
+  return json({ url });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/online-payments/disconnect", async (_req, p, ctx) =>
+  json(await tenant(ctx, (tx) => disconnect(tx, ctx.opts.invoicePayments, { orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor }))),
+);
+
+/** Stripe sends the owner back here after they connect (or decline). */
+async function stripeConnectCallback(req: Request, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
+  const url = new URL(req.url);
+  const base = appUrl(req, opts);
+  const page = (title: string, text: string, href: string) => new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="/styles.css"><main class="panel" style="max-width:520px;margin:60px auto"><h1>${title}</h1><p>${text.replace(/[&<>"']/g, "")}</p><p><a class="btn" href="${href}">Back to TrailBook</a></p></main>`,
+    { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+  );
+  const state = readConnectState(url.searchParams.get("state") ?? "");
+  if (!state) return page("Stripe wasn't connected", "This sign-in link has expired. Start again from the Invoices page.", `${base}/#/`);
+  const back = `${base}/#/e/${state.entityId}/invoices`;
+  if (!opts.invoicePayments) return page("Stripe wasn't connected", "Online payments aren't switched on.", back);
+  if (url.searchParams.get("error")) return page("Stripe wasn't connected", "You left Stripe before connecting. Nothing was changed.", back);
+  const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+  if (!user || user.id !== state.userId) return page("Stripe wasn't connected", "Sign in to TrailBook as the person who started connecting Stripe, then try again.", back);
+  const role = await membershipRole(pool, user.id, state.orgId);
+  if (!role) return page("Stripe wasn't connected", "You're no longer part of this organisation.", `${base}/#/`);
+  try {
+    await requireMfaIfOrgDoes(pool, state.orgId, user.id);
+    await withTenant(pool, state.orgId, (tx) => finishConnect(tx, opts.invoicePayments!, {
+      orgId: state.orgId, entityId: state.entityId, code: url.searchParams.get("code") ?? "", actor: { id: `user:${user.email}`, role },
+    }));
+  } catch (err) {
+    if (err instanceof LedgerError || err instanceof ConnectError || err instanceof AuthError || err instanceof HttpError) {
+      return page("Stripe wasn't connected", err.message, back);
+    }
+    throw err;
+  }
+  return new Response(null, { status: 302, headers: { location: back, "cache-control": "no-store" } });
+}
+
 async function ensureLine(tx: Tx, entityId: string, lineId: string) {
   const { rows } = await tx.query("SELECT 1 FROM bank_lines WHERE id = $1 AND entity_id = $2", [lineId, entityId]);
   if (!rows[0]) throw new HttpError(404, "bank line not found");
@@ -2335,7 +2406,7 @@ async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): P
  * prepared filings count as these too. The example business is practice
  * data, so it's left out.
  */
-const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings|contacts\/[^/]+\/tax-form|bank-feeds|bank-feeds\/link-token|bank-feeds\/[^/]+\/(remove|reconnected))$/;
+const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings|contacts\/[^/]+\/tax-form|bank-feeds|bank-feeds\/link-token|bank-feeds\/[^/]+\/(remove|reconnected)|online-payments\/(connect|disconnect))$/;
 const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return|contractor-forms\/prepared)$/;
 
 export function needsSecondFactor(method: string, path: string): boolean {
@@ -2525,6 +2596,7 @@ async function mfaRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOpt
 }
 
 async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response | null> {
+  if (req.method === "GET" && path === "/api/stripe/connect/callback") return stripeConnectCallback(req, pool, opts);
   if (req.method === "GET" && path === "/api/auth/options") return json({ email: Boolean(opts.mailer), hub: hubSignInOn(opts.hub) });
   if (path.startsWith("/api/auth/hub/") || path.startsWith("/api/auth/hub-link/")) return hubSignInRoutes(req, path, pool, opts);
   // Checks the sales tax rate lookup end to end with one fixed address
@@ -2768,7 +2840,15 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       const b = await body(req);
       const v = typeof b.token === "string" ? await viewByToken(pool, b.token) : null;
       if (!v) throw new HttpError(404, "this link isn't valid; ask the business for a new one");
-      return json(v);
+      return json({ ...v, payable: await payableByToken(pool, opts.invoicePayments, b.token as string) });
+    }
+    // The customer pays on Stripe's page, on the business's own Stripe account.
+    if (req.method === "POST" && (path === "/api/view/pay" || path === "/api/view/pay/confirm")) {
+      if (!opts.invoicePayments) throw new HttpError(404, "this business doesn't take online payments");
+      const b = await body(req);
+      const token = typeof b.token === "string" ? b.token : "";
+      if (path.endsWith("/confirm")) return json(await confirmFromView(pool, opts.invoicePayments, { token, sessionId: typeof b.session === "string" ? b.session : "" }));
+      return json(await startCheckout(pool, opts.invoicePayments, { token, appUrl: appUrl(req, opts) }));
     }
     const open = await authRoutes(req, path, pool, opts);
     if (open) return open;
@@ -2809,6 +2889,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
     if (err instanceof NewsletterError) return json({ error: err.message }, err.status);
     if (err instanceof BrevoError) return json({ error: err.message }, 502);
     if (err instanceof PlaidError) return json({ error: err.message, code: err.code }, 502);
+    if (err instanceof ConnectError) return json({ error: err.message }, 502);
     console.error(err);
     return json({ error: "something went wrong on our side" }, 500);
   }

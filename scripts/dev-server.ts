@@ -1,6 +1,7 @@
 // Local server: serves web/ and the API against DATABASE_URL.
 //   DATABASE_URL=postgres://... npm run dev
 import { plaidFromEnv } from "../src/app/plaid.js";
+import { invoicePaymentsFromEnv } from "../src/app/stripe-connect.js";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -51,7 +52,7 @@ createServer(async (req, res) => {
       headers: req.headers as Record<string, string>,
       body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
     });
-    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups, files, oauthClients: oauthClientsFromEnv(), milepost: { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" }, newsletter, startNewsletterJob, plaid: plaidFromEnv() });
+    const response = await handleApi(request, pool, { signupCode: process.env.SIGNUP_CODE, mailer, appUrl: `http://localhost:${port}`, taxRates, billing, backups, files, oauthClients: oauthClientsFromEnv(), milepost: { url: process.env.MILEPOST_URL || "https://crm.pomeroyagency.com" }, newsletter, startNewsletterJob, plaid: plaidFromEnv(), invoicePayments: invoicePaymentsFromEnv() });
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
     return;
