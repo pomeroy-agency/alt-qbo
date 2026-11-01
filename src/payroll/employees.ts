@@ -64,6 +64,12 @@ export interface Employee {
   sickBalanceHours: string;
   /** Front-loaded sick leave: the year the hours were last granted. */
   sickGrantedYear: number | null;
+  /** Canada: vacation pay with each paycheck, or accrued into a balance. */
+  vacationMethod: "accrue" | "each_pay";
+  /** Canada: vacation pay owed, in dollars (accrual). */
+  vacationBalance: string;
+  /** Canada: the employer's own vacation pay percentage when above the law's (6 for 6%); null for the law's. */
+  vacationPercent: string | null;
   ssnLast4: string | null;
   openingYtd: OpeningYtd | null;
   /** Where net pay goes by direct deposit; null means a paper check. */
@@ -88,6 +94,9 @@ export interface EmployeeFields {
   td1?: Partial<Record<keyof CanadaTd1, unknown>> | null;
   deductions?: { kind?: unknown; amount?: unknown; description?: unknown }[];
   sickBalanceHours?: string;
+  vacationMethod?: string;
+  vacationBalance?: string;
+  vacationPercent?: string | null;
   /** Write-only: sealed on the way in, only the last four digits come back. */
   ssn?: string | null;
   /** Canada: the Social Insurance Number, kept like an SSN (write-only, sealed). */
@@ -100,6 +109,7 @@ export interface EmployeeFields {
 
 const COLS = `id, name, email, address_line1, address_city, address_state, address_zip, work_city, hire_date::text, termination_date::text,
   pay_type, pay_frequency, pay_rate::text, usual_hours::text, overtime_exempt, w4, de4, state_withholding, td1, deductions, sick_balance_hours::text, sick_granted_year,
+  vacation_method, vacation_balance::text, vacation_rate::text,
   ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4`;
 
 function employeeOf(r: any): Employee {
@@ -111,7 +121,9 @@ function employeeOf(r: any): Employee {
     status: r.termination_date ? "terminated" : "active",
     payType: r.pay_type, payFrequency: r.pay_frequency, payRate: trimZeros(r.pay_rate), usualHours: r.usual_hours ? trimZeros(r.usual_hours) : null,
     overtimeExempt: r.overtime_exempt, w4: r.w4, de4: r.de4, stateWithholding: r.state_withholding ?? null, td1: r.td1 ?? null, deductions: r.deductions,
-    sickBalanceHours: trimZeros(r.sick_balance_hours), sickGrantedYear: r.sick_granted_year, ssnLast4: r.ssn_last4, openingYtd: r.opening_ytd,
+    sickBalanceHours: trimZeros(r.sick_balance_hours), sickGrantedYear: r.sick_granted_year,
+    vacationMethod: r.vacation_method, vacationBalance: new D(r.vacation_balance).toFixed(2), vacationPercent: r.vacation_rate ? new D(r.vacation_rate).mul(100).toString() : null,
+    ssnLast4: r.ssn_last4, openingYtd: r.opening_ytd,
     directDeposit: r.dd_routing ? { routing: r.dd_routing, accountType: r.dd_account_type, accountLast4: r.dd_account_last4 } : null,
   };
 }
@@ -361,6 +373,16 @@ function columns(f: EmployeeFields): Record<string, unknown> {
   }
   if (f.deductions !== undefined) out.deductions = JSON.stringify(cleanDeductions(f.deductions));
   if (f.sickBalanceHours !== undefined) out.sick_balance_hours = amount(f.sickBalanceHours, "sick leave balance", { places: 4 });
+  if (f.vacationMethod !== undefined) {
+    if (f.vacationMethod !== "accrue" && f.vacationMethod !== "each_pay") invalid("pick vacation pay with each paycheck or accrued");
+    out.vacation_method = f.vacationMethod;
+  }
+  if (f.vacationBalance !== undefined) out.vacation_balance = amount(f.vacationBalance || "0", "vacation pay owed");
+  if (f.vacationPercent !== undefined) {
+    const r = f.vacationPercent === null || f.vacationPercent === "" ? null : amount(f.vacationPercent, "vacation pay percentage");
+    if (r && (new D(r).lte(0) || new D(r).gte(50))) invalid("the vacation pay percentage should be between 0 and 50, like 6 for 6%");
+    out.vacation_rate = r ? new D(r).div(100).toString() : null;
+  }
   if (f.ssn !== undefined) {
     const ssn = f.ssn ? cleanSsn(f.ssn) : null;
     out.ssn_last4 = ssn ? ssn.slice(5) : null;

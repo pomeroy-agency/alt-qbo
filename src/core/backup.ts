@@ -39,7 +39,7 @@ const TABLES: [string, string][] = [
   ["reconciliation_lines", "SELECT * FROM reconciliation_lines WHERE entity_id = $1 ORDER BY reconciliation_id, journal_line_id"],
   // Social Security and bank account numbers stay out; only their last four digits are copied.
   ["employees", `SELECT id, org_id, entity_id, name, email, address_line1, address_city, address_state, address_zip, hire_date, termination_date,
-     pay_type, pay_frequency, pay_rate, usual_hours, overtime_exempt, w4, de4, deductions, sick_balance_hours, ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4, created_at, updated_at
+     pay_type, pay_frequency, pay_rate, usual_hours, overtime_exempt, w4, de4, deductions, sick_balance_hours, vacation_method, vacation_balance, vacation_rate, ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4, created_at, updated_at
      FROM employees WHERE entity_id = $1 ORDER BY lower(name)`],
   ["migration_account_map", "SELECT * FROM migration_account_map WHERE entity_id = $1 ORDER BY source, source_key"],
   // Bank connection tokens stay out; the backup only says which accounts were connected.

@@ -1,7 +1,7 @@
 import type { Tx } from "../db/pool.js";
 import { LedgerError } from "../core/errors.js";
 import type { Actor } from "../core/ledger.js";
-import { D, toMinor } from "../core/money.js";
+import { D, toMajor, toMinor } from "../core/money.js";
 import { unseal } from "../core/pii.js";
 import { resolveRules, type StateRulePack } from "../rules/index.js";
 import type { CanadaFederalRulePack } from "../rules/canada/types.js";
@@ -270,6 +270,14 @@ export async function formRoe(tx: Tx, input: { orgId: string; entityId: string; 
   if (!e.sinLast4) warnings.push(`${e.name} has no SIN on file; the ROE needs it.`);
   if (e.payType === "salary" && !e.usualHours) warnings.push("Salaried hours are counted at 40 a week; change them in ROE Web if the employee's usual hours were different.");
   warnings.push("Pick the reason for issuing (Block 16) in ROE Web: A shortage of work, E quit, M dismissal, N leave of absence, K other, and so on. Add any vacation pay or other money paid on separation (Block 17) there too.");
+  // Vacation pay paid out with the final pay goes in Block 17A; a balance still owed must be paid first.
+  const finalVacation = mine[0]?.p.vacation;
+  if (finalVacation && BigInt(finalVacation.paidMinor) > 0n) {
+    warnings.push(`Block 17A: vacation pay of ${toMajor(BigInt(finalVacation.paidMinor)).toFixed(2)} was paid with the final pay (period ending ${finalPeriodEnd}).`);
+  }
+  if (finalVacation && BigInt(finalVacation.balanceMinor) > 0n) {
+    warnings.push(`${e.name} is still owed ${toMajor(BigInt(finalVacation.balanceMinor)).toFixed(2)} of vacation pay; pay it in a final run before issuing the ROE.`);
+  }
 
   return {
     form: "ROE", title: `Record of Employment: ${e.name}`, period: `Last day ${e.terminationDate}`,

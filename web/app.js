@@ -2374,6 +2374,12 @@ function employeeForm(e = null) {
       <label>After-tax deduction ($)<input name="postTax" value="${v(ded("post_tax"))}" inputmode="decimal" placeholder="0"></label>
       ${pay.state?.sickLeave === null ? "" : `<label>Sick leave balance (hours)<input name="sickBalanceHours" value="${v(e?.sickBalanceHours ?? "0")}" inputmode="decimal"></label>`}
     </div>
+    ${canada ? `<h3>Vacation pay <span class="muted">(hourly employees; a salary simply continues during vacation)</span></h3>
+    <div class="grid">
+      <label>How it's paid${sel("vacationMethod", [["accrue", "Saved up, paid when they take vacation"], ["each_pay", "Added to every pay"]], e?.vacationMethod ?? "accrue")}</label>
+      <label>Vacation pay owed now ($)<input name="vacationBalance" value="${v(e?.vacationBalance ?? "0")}" inputmode="decimal"></label>
+      <label>Your own rate, if higher than the law (%)<input name="vacationPercent" value="${v(e?.vacationPercent ?? "")}" inputmode="decimal" placeholder="The law's: 4% to start"></label>
+    </div>` : ""}
     <details ${o.wages ? "open" : ""}><summary>Paid earlier this year, before TrailBook</summary>
       <p class="hash">If you switched from another payroll service mid-year, enter this year's totals so far. ${canada
         ? `They keep ${pay.state?.code === "QC" ? "QPP, EI and QPIP" : "CPP and EI"} from going over their yearly maximums, and they go on the ${pay.state?.code === "QC" ? "T4 and RL-1" : "T4"}.`
@@ -2416,6 +2422,7 @@ function employeeBody(f) {
       deductions: [{ kind: "registered_retirement", amount: d.rrsp }, { kind: "post_tax", amount: d.postTax }],
       openingYtd: d.ytdWages ? { year: d.ytdYear, wages: d.ytdWages, federalIncomeTax: d.ytdFit, socialSecurityTax: d.ytdSs, medicareTax: d.ytdMed, caIncomeTax: d.ytdPit, caSdi: d.ytdSdi } : null,
       sickBalanceHours: d.sickBalanceHours || "0",
+      vacationMethod: d.vacationMethod, vacationBalance: money(d.vacationBalance) ?? "0", vacationPercent: money(d.vacationPercent) ?? null,
     };
     if (d.terminationDate !== undefined) body.terminationDate = d.terminationDate;
     if (d.sin?.trim()) body.sin = d.sin.trim();
@@ -2470,6 +2477,11 @@ function runLine(e) {
     <td>${hours("bonus")}<label class="check hash" title="Given at your sole discretion, not promised or tied to hours, sales or performance; it adds no overtime"><input type="checkbox" data-line="bonusDiscretionary"> discretionary</label></td>
     <td>${hours("commission")}</td><td>${hours("reimbursement")}</td>
   </tr>
+  ${pay.state?.country === "CA" && e.payType === "hourly" ? `<tr data-ca-line="${e.id}"><td></td><td colspan="8"><div class="row hash" style="align-items:center">
+    <label>Hours worked on a statutory holiday${hours("holidayHoursWorked")}</label>
+    <label class="check" title="Alberta pays holiday pay only when the holiday would have been a normal work day"><input type="checkbox" data-line="noHolidayPay"> holiday wasn't a usual work day</label>
+    ${e.vacationMethod !== "each_pay" ? `<label>Vacation pay from balance ($)${hours("vacationPay")}<span>${usd(Math.round(Number(e.vacationBalance ?? 0) * 100))} owed</span></label>` : `<span>Vacation pay is added to every pay</span>`}
+  </div></td></tr>` : ""}
   ${e.payType === "hourly" ? `<tr hidden data-daily="${e.id}"><td colspan="9">
     <p class="hash">Hours each day, two workweeks. ${pay.state?.overtime?.dailyAfter
       ? `${esc(pay.state.name)} overtime is worked out from these: over ${esc(pay.state.overtime.dailyAfter)} in a day, over ${esc(pay.state.overtime.weeklyAfter)} in a week${pay.state.overtime.seventhDayDoubleTimeAfter ? ", and the seventh day in a row" : ""}.`
@@ -2483,6 +2495,11 @@ function payRunBody() {
     if (!row.querySelector("[data-line=include]").checked) return [];
     const val = (k) => row.querySelector(`[data-line=${k}]`)?.value.trim() ?? "";
     const line = { employeeId: row.dataset.empLine, regularHours: val("regularHours"), overtimeHours: val("overtimeHours"), doubleTimeHours: val("doubleTimeHours"), bonus: val("bonus"), bonusDiscretionary: Boolean(row.querySelector("[data-line=bonusDiscretionary]")?.checked), commission: val("commission"), reimbursement: val("reimbursement"), sickHoursUsed: val("sickHoursUsed") };
+    const ca = document.querySelector(`tr[data-ca-line="${row.dataset.empLine}"]`);
+    if (ca) {
+      const caVal = (k) => ca.querySelector(`[data-line=${k}]`)?.value.trim() ?? "";
+      Object.assign(line, { holidayHoursWorked: caVal("holidayHoursWorked"), vacationPay: caVal("vacationPay"), noHolidayPay: Boolean(ca.querySelector("[data-line=noHolidayPay]")?.checked) });
+    }
     const daily = document.querySelector(`tr[data-daily="${row.dataset.empLine}"]`);
     if (daily && !daily.hidden) line.dailyHours = [...daily.querySelectorAll("[data-day]")].map((i) => i.value.trim() || "0");
     return [line];
@@ -2506,7 +2523,7 @@ function runTable(run) {
     ${issues.map(([k, m]) => `<div class="alert ${k}">${k === "bad" ? "Must fix before approval: " : ""}${esc(m)}</div>`).join("")}
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th class="num">Gross</th>${ee.map((c) => `<th class="num">${esc(taxLabel(c))}</th>`).join("")}<th class="num">Deductions</th><th class="num">Net pay</th></tr></thead>
-      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${e.code.toLowerCase().replace("_", " ")}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.sickLeave ? `<div class="hash">sick leave ${p.sickLeave.grantedHours ? `${hrs(p.sickLeave.grantedHours)}h granted for the year, ` : ""}+${hrs(p.sickLeave.accruedHours)}h earned, ${hrs(p.sickLeave.usedHours ?? 0)}h taken, balance ${hrs(p.sickLeave.balanceHours)}h</div>` : ""}</td>
+      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${earningLabel(e.code).toLowerCase()}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}${e.note ? ` (${esc(e.note)})` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.vacation ? `<div class="hash">${vacationText(p.vacation)}</div>` : ""}${p.sickLeave ? `<div class="hash">sick leave ${p.sickLeave.grantedHours ? `${hrs(p.sickLeave.grantedHours)}h granted for the year, ` : ""}+${hrs(p.sickLeave.accruedHours)}h earned, ${hrs(p.sickLeave.usedHours ?? 0)}h taken, balance ${hrs(p.sickLeave.balanceHours)}h</div>` : ""}</td>
         <td class="num">${usd(p.grossMinor)}</td>${ee.map((c) => `<td class="num">${amt(p, c)}</td>`).join("")}
         <td class="num">${usd(p.deductions.reduce((s, d) => s + BigInt(d.amountMinor), 0n))}</td><td class="num"><strong>${usd(p.netPayMinor)}</strong></td></tr>`).join("")}</tbody>
     </table></div>
@@ -2753,6 +2770,17 @@ function payEmployeesPanel(r) {
   </div>`;
 }
 
+const EARNING_LABELS = { HOLIDAY: "Statutory holiday pay", HOLIDAY_WORKED: "Worked on a statutory holiday", VACATION: "Vacation pay", OVERTIME_ON_BONUS: "Overtime on bonus" };
+function earningLabel(code) {
+  return EARNING_LABELS[code] ?? code.charAt(0) + code.slice(1).toLowerCase().replaceAll("_", " ");
+}
+
+function vacationText(v) {
+  return v.method === "each_pay"
+    ? `Vacation pay at ${esc(v.label ?? "")} of ${usd(v.vacationableMinor)} is included in this pay.`
+    : `Vacation pay: ${usd(v.accruedMinor)} earned (${esc(v.label ?? "")}) and ${usd(v.paidMinor)} paid this period, ${usd(v.balanceMinor)} owed.`;
+}
+
 function stubCard(r, c, s) {
   const y = s?.ytd ?? { grossMinor: 0, netPayMinor: 0, byTax: {}, byDeduction: {} };
   const eeTaxes = c.taxes.filter((t) => t.paidBy === "employee");
@@ -2767,7 +2795,7 @@ function stubCard(r, c, s) {
     <div class="row" style="margin:12px 0"><div><strong>${esc(c.name)}</strong><div class="hash">${s?.ssnLast4 ? (state.entity.entity.country === "CA" ? `SIN xxx xx${s.ssnLast4.slice(0, 1)} ${s.ssnLast4.slice(1)}` : `SSN xxx-xx-${s.ssnLast4}`) : `Employee ID ${esc(c.employeeId.slice(0, 8))}`}${s?.address ? `<br>${addr(s.address)}` : ""}</div></div></div>
     <table>
       <thead><tr><th>Earnings</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">This period</th><th class="num">Year to date</th></tr></thead>
-      <tbody>${c.earnings.map((e) => `<tr><td>${e.code.charAt(0) + e.code.slice(1).toLowerCase().replace("_", " ")}</td><td class="num">${e.hours ?? ""}</td><td class="num">${e.rate ? `$${Number(e.rate).toFixed(2)}` : ""}</td><td class="num">${usd(e.amountMinor)}</td><td></td></tr>`).join("")}
+      <tbody>${c.earnings.map((e) => `<tr><td>${earningLabel(e.code)}${e.code === "HOLIDAY" && e.note ? `<div class="hash">${esc(e.note.split(":")[0])}</div>` : ""}</td><td class="num">${e.hours ?? ""}</td><td class="num">${e.rate ? `$${Number(e.rate).toFixed(2)}` : ""}</td><td class="num">${usd(e.amountMinor)}</td><td></td></tr>`).join("")}
         <tr><td><strong>Gross pay</strong></td><td class="num">${hours || ""}</td><td></td><td class="num"><strong>${usd(c.grossMinor)}</strong></td><td class="num">${usd(y.grossMinor)}</td></tr></tbody>
       <thead><tr><th colspan="3">Taxes withheld</th><th class="num"></th><th class="num"></th></tr></thead>
       <tbody>${eeTaxes.map((t) => `<tr><td colspan="3">${esc(taxLabel(t.code, r.taxLabels))}</td><td class="num">${usd(t.amountMinor)}</td><td class="num">${usd(y.byTax[t.code] ?? 0)}</td></tr>`).join("")}</tbody>
@@ -2775,6 +2803,7 @@ function stubCard(r, c, s) {
       <tbody>${BigInt(c.reimbursementMinor) ? `<tr><td colspan="3">Expense reimbursement (not taxed)</td><td class="num">${usd(c.reimbursementMinor)}</td><td></td></tr>` : ""}
         <tr><td colspan="3"><strong>Net pay</strong></td><td class="num"><strong>${usd(c.netPayMinor)}</strong></td><td class="num">${usd(y.netPayMinor)}</td></tr></tbody>
     </table>
+    ${c.vacation ? `<p class="hash">${vacationText(c.vacation)}</p>` : ""}
     ${c.sickLeave ? `<p class="hash">Paid sick leave: ${c.sickLeave.grantedHours ? `${hrs(c.sickLeave.grantedHours)} hours granted for the year, ` : ""}${hrs(c.sickLeave.accruedHours)} hours earned and ${hrs(c.sickLeave.usedHours ?? 0)} taken this period, ${hrs(c.sickLeave.balanceHours)} hours available.</p>` : ""}
   </div>`;
 }
