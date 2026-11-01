@@ -807,6 +807,58 @@ describe("terms of service", () => {
 });
 
 describe("a Canadian business", () => {
+  it("pays Canadian employees by direct deposit with a CPA 005 file", async () => {
+    const s = await signup();
+    const r = await call(`/api/orgs/${s.orgId}/entities`, { cookie: s.cookie, body: { legalName: "Harbour Studio Ltd", entityType: "ca_corporation", country: "CA", region: "ON", firstFiscalYear: 2026 } });
+    const base = `/api/orgs/${s.orgId}/entities/${r.data.id}`;
+    await call(`${base}/address`, { cookie: s.cookie, body: { address: { line1: "1 Front St", city: "Toronto", state: "ON", zip: "M5J 2N1" } } });
+    await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { stateRatesPercent: { ON_WSIB: "1.2", ON_EHT: "0" } } });
+    const person = { name: "Avery Chen", hireDate: "2026-07-01", payType: "salary", payFrequency: "biweekly", payRate: "52000", sin: "130 692 544", address: { line1: "2 Bay St", city: "Toronto", state: "ON", zip: "M5J 2N1" } };
+    // A Canadian employee gives an institution and transit number, not a US routing number.
+    expect((await call(`${base}/employees`, { cookie: s.cookie, body: { ...person, directDeposit: { routing: "121000358", account: "12345678" } } })).status).toBe(422);
+    expect((await call(`${base}/employees`, { cookie: s.cookie, body: { ...person, directDeposit: { institution: "4", transit: "12345", account: "1234567" } } })).status).toBe(422);
+    const e = await call(`${base}/employees`, { cookie: s.cookie, body: { ...person, directDeposit: { institution: "004", transit: "12345", account: "5678-901" } } });
+    expect(e.status).toBe(201);
+    expect(e.data.directDeposit).toEqual({ routing: "000412345", accountType: "checking", accountLast4: "8901" });
+    expect(JSON.stringify(e.data)).not.toContain("5678901");
+
+    const run = (await call(`${base}/pay-runs`, { cookie: s.cookie, body: { periodStart: "2026-08-01", periodEnd: "2026-08-14", payDate: "2026-08-21", lines: [{ employeeId: e.data.id }] } })).data;
+    expect((await call(`${base}/pay-runs/${run.id}/approve`, { cookie: s.cookie, body: {} })).status).toBe(201);
+    expect((await call(`${base}/pay-runs/${run.id}`, { cookie: s.cookie })).data.directDeposit).toMatchObject({ ready: false, problem: "add your business's bank details for direct deposit first" });
+
+    expect((await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { originatorId: "TBK0001234", dataCentre: "330", returnInstitution: "003", returnTransit: "01234", returnAccount: "1002003" } })).status).toBe(422);
+    expect((await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { originatorId: "TBK0001234", dataCentre: "00330", returnInstitution: "003", returnTransit: "01234" } })).status).toBe(422);
+    const settings = await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { originatorId: "tbk0001234", dataCentre: "00330", returnInstitution: "003", returnTransit: "01234", returnAccount: "1002003" } });
+    expect(settings.data).toEqual({
+      format: "cpa005", originatorId: "TBK0001234", dataCentre: "00330", shortName: "Harbour Studio", longName: "Harbour Studio Ltd",
+      returnInstitution: "003", returnTransit: "01234", returnAccountLast4: "2003", lastFileNumber: 0,
+    });
+    expect((await call(`${base}/employees`, { cookie: s.cookie })).data.directDeposit).toMatchObject({ format: "cpa005", originatorId: "TBK0001234" });
+
+    const detail = (await call(`${base}/pay-runs/${run.id}`, { cookie: s.cookie })).data.directDeposit;
+    expect(detail).toMatchObject({ ready: true, problem: null });
+    const file = await call(`${base}/pay-runs/${run.id}/direct-deposit`, { cookie: s.cookie });
+    expect(file.status).toBe(200);
+    const lines = (file.data as string).split("\r\n").filter(Boolean);
+    expect(lines.map((l) => l[0])).toEqual(["A", "C", "Z"]);
+    expect(lines.every((l) => l.length === 1464)).toBe(true);
+    expect(lines[0]!.slice(20, 24)).toBe("0001");
+    const seg = lines[1]!.slice(24, 264);
+    expect(seg.slice(0, 13)).toBe("200" + String(detail.totalMinor).padStart(10, "0"));
+    expect(seg.slice(19, 40)).toBe("0004123455678901     ");
+    // Each download takes the next file number, so the bank never sees a duplicate.
+    const again = await call(`${base}/pay-runs/${run.id}/direct-deposit`, { cookie: s.cookie });
+    expect((again.data as string).slice(20, 24)).toBe("0002");
+    expect((await call(`${base}/employees`, { cookie: s.cookie })).data.directDeposit.lastFileNumber).toBe(2);
+
+    const audit = JSON.stringify((await call(`/api/orgs/${s.orgId}/audit`, { cookie: s.cookie })).data.events);
+    expect(audit).not.toContain("5678901");
+    expect(audit).not.toContain("1002003");
+    const backup = await call(`${base}/backup`, { cookie: s.cookie, body: {} });
+    expect(backup.data.tables.ca_direct_deposit_settings).toHaveLength(1);
+    expect(JSON.stringify(backup.data)).not.toContain("sealed");
+  });
+
   it("sets up in British Columbia with a business number, payroll account, SIN and TD1", async () => {
     const s = await signup();
     const bad = await call(`/api/orgs/${s.orgId}/entities`, { cookie: s.cookie, body: { legalName: "Coast LLC", entityType: "llc_single", country: "CA", region: "BC", firstFiscalYear: 2026 } });

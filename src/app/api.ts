@@ -47,7 +47,7 @@ import { minimumWageOn } from "../rules/minimum-wage.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
 import { createEmployee, listEmployees, setSickLeavePolicy, setStateTaxRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
-import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
+import { directDepositFile, directDepositSummary, getEntityDirectDepositSettings, saveCanadaDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
 import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
 import { form940, form941, formDe9, formsFor, formStateQuarterly, formW2, type PreparedForm } from "../payroll/forms.js";
@@ -1714,7 +1714,7 @@ route("GET", "/api/orgs/:org/entities/:entity/employees", async (_req, p, ctx) =
       // Kept for older clients: California's UI rate.
       caUiRate: rates.CA_UI ? String(Number(rates.CA_UI)) : null,
       sickLeavePolicy: ent?.sick_leave_policy ?? "accrual",
-      directDeposit: await getDirectDepositSettings(tx, p.entity!),
+      directDeposit: await getEntityDirectDepositSettings(tx, p.entity!),
       workCities: pack.place.region === "CA" ? LOCAL_MINIMUM_WAGE_PLACES : [],
     });
   }),
@@ -2037,9 +2037,14 @@ route("GET", "/api/orgs/:org/entities/:entity/sales-tax/return", async (req, p, 
 route("POST", "/api/orgs/:org/entities/:entity/direct-deposit-settings", async (req, p, ctx) => {
   const b = await body(req);
   const keys = ["odfiRouting", "immediateDestination", "destinationName", "immediateOrigin", "companyId", "companyName", "accountType", "account"];
-  for (const k of keys) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
+  const caKeys = ["originatorId", "dataCentre", "shortName", "longName", "returnInstitution", "returnTransit", "returnAccount"];
+  for (const k of [...keys, ...caKeys]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
   const saved = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
+    const country = (await tx.query("SELECT country FROM entities WHERE id = $1", [p.entity])).rows[0].country;
+    if (country === "CA") {
+      return saveCanadaDirectDepositSettings(tx, { ...Object.fromEntries(caKeys.map((k) => [k, b[k]])), orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor });
+    }
     return saveDirectDepositSettings(tx, { ...Object.fromEntries(keys.map((k) => [k, b[k]])), balanced: b.balanced === true, orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor });
   });
   return json(saved);
