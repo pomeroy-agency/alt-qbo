@@ -1180,6 +1180,34 @@ function recurringPanel(kind, templates, canWrite) {
 }
 
 /** Automatic reminders to customers, and where their replies go. */
+const PAY_STATUS = { paid: "Recorded", processing: "Bank payment clearing", expired: "Not completed", needs_review: "Needs a look" };
+const PAY_METHOD = { card: "Card", us_bank_account: "Bank (ACH)" };
+
+/** Card and bank payments through the business's own Stripe account. Hidden until it's switched on. */
+function onlinePaymentsPanel(o) {
+  if (!o.enabled) return "";
+  const canConnect = ["owner", "admin"].includes(state.org.role);
+  if (!o.connection) {
+    return `<div class="panel"><h2>Take card and bank payments</h2>
+      <p class="muted">Connect your own Stripe account and every invoice link gets a Pay button. Customers pay on Stripe's page and the money goes straight to your Stripe balance; TrailBook adds no fee and never holds it. Stripe charges its own processing fee, which TrailBook records for you.${o.livemode === false ? " (Test mode.)" : ""}</p>
+      ${!o.available ? `<p class="hash">${esc(o.reason)}</p>` : canConnect ? `<button data-action="stripe-connect">Connect Stripe</button>` : `<p class="hash">An owner or admin can connect Stripe.</p>`}</div>`;
+  }
+  const c = o.connection;
+  return `<div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div><h2 style="margin:0">Card and bank payments</h2>
+        <div class="muted">Stripe${c.name ? `: ${esc(c.name)}` : ""} <span class="mono">${esc(c.accountId)}</span>${c.livemode ? "" : " · test mode"}. Payments land in <strong>${esc(c.bankAccount)} Stripe balance</strong>; when Stripe pays out, categorize the deposit as a transfer from ${esc(c.bankAccount)}.</div></div>
+      ${canConnect ? `<button class="link" data-action="stripe-disconnect">Disconnect</button>` : ""}
+    </div>
+    ${o.recent.length ? `<div class="table-wrap" style="margin-top:12px"><table>
+      <thead><tr><th>Invoice</th><th>Started</th><th>Method</th><th class="num">Amount</th><th class="num">Stripe fee</th><th>Status</th></tr></thead>
+      <tbody>${o.recent.map((r) => `<tr><td>${esc(r.number)}</td><td>${esc(new Date(r.createdAt).toLocaleDateString())}</td><td>${esc(PAY_METHOD[r.paymentMethod] ?? r.paymentMethod ?? "")}</td>
+        <td class="num">${usd(r.amountMinor)}</td><td class="num">${r.feeMinor ? usd(r.feeMinor) : ""}</td>
+        <td>${esc(PAY_STATUS[r.status] ?? r.status)}${r.note ? `<div class="hash">${esc(r.note)}</div>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div>` : `<p class="hash" style="margin-top:12px">No online payments yet.</p>`}
+  </div>`;
+}
+
 function remindersPanel(m, canSet) {
   return `<div class="panel">
     <h2>Emails to customers</h2>
@@ -1204,6 +1232,8 @@ async function docsView(id, kind) {
     api(entPath("/recurring")),
     invoice ? api(entPath("/invoice-emails")) : null,
   ]);
+  // Online payments are optional; a failure here shouldn't stop the page.
+  const online = invoice ? await api(entPath("/online-payments")).catch(() => null) : null;
   const recurring = templates.filter((t) => t.kind === kind);
   const canSetEmails = ["owner", "admin", "accountant"].includes(state.org.role);
   state.items = items;
@@ -1269,6 +1299,7 @@ async function docsView(id, kind) {
     ${invoice ? estimatesPanel(id, estimates, canWrite, Boolean(mail?.emailEnabled)) : ""}
     ${recurringPanel(kind, recurring, canWrite)}
     ${invoice && mail ? remindersPanel(mail, canSetEmails) : ""}
+    ${online ? onlinePaymentsPanel(online) : ""}
     <div class="panel">
       <h2>All ${d.title.toLowerCase()}</h2>
       <div class="table-wrap"><table>
@@ -1489,17 +1520,67 @@ async function itemsView(id) {
 
 const bankUi = { account: null, status: "new" };
 
+const FEED_STATUS = { active: "Connected", needs_login: "The bank needs you to sign in again", error: "Last update failed" };
+
+/** The selected account's automatic feed, or a way to connect one. */
+function feedPanel(f) {
+  if (!f.enabled) return "";
+  const feed = f.feeds.find((x) => x.bankAccount === bankUi.account);
+  const canConnect = ["owner", "admin", "accountant"].includes(state.org.role);
+  const canWrite = !["read_only", "approver"].includes(state.org.role);
+  if (!feed) {
+    return `<div class="panel"><h2>Connect this account to the bank</h2>
+      <p class="muted">New transactions then arrive every morning, ready to review. TrailBook only reads transactions; it can't move money. The connection runs through Plaid${f.env === "sandbox" ? " (test mode)" : ""}.</p>
+      ${canConnect ? `<button data-action="feed-connect">Connect ${esc(bankUi.account)}</button>` : `<p class="hash">An owner, admin or accountant can connect it.</p>`}</div>`;
+  }
+  return `<div class="panel"><div class="row" style="justify-content:space-between">
+      <div><strong>${esc(feed.institution ?? "Bank")}</strong> ${feed.accountName ? `· ${esc(feed.accountName)}` : ""} ${feed.accountMask ? `<span class="mono">···${esc(feed.accountMask)}</span>` : ""}
+        <div class="${feed.status === "active" ? "muted" : ""}" ${feed.status === "active" ? "" : `style="color:var(--bad-ink)"`}>${FEED_STATUS[feed.status]}${feed.lastSyncedAt ? ` · updated ${esc(new Date(feed.lastSyncedAt).toLocaleString())}` : ""}${feed.lastError && feed.status !== "active" ? `: ${esc(feed.lastError)}` : ""}</div></div>
+      <div class="row">
+        ${feed.status === "needs_login" && canConnect ? `<button data-action="feed-relink" data-id="${feed.id}">Sign in again</button>` : ""}
+        ${canWrite && feed.status !== "needs_login" ? `<button class="secondary" data-action="feed-sync" data-id="${feed.id}">Update now</button>` : ""}
+        ${canConnect ? `<button class="link" data-action="feed-remove" data-id="${feed.id}">Disconnect</button>` : ""}
+      </div></div></div>`;
+}
+
+/** Loads Plaid Link only when someone connects a bank. */
+let plaidScript = null;
+function loadPlaid() {
+  plaidScript ||= new Promise((resolve, reject) => {
+    const s = Object.assign(document.createElement("script"), { src: "https://cdn.plaid.com/link/v2/stable/link-initialize.js", onload: resolve, onerror: () => reject(new Error("couldn't load the bank connection window")) });
+    document.head.append(s);
+  });
+  return plaidScript;
+}
+
+async function openPlaid(feedId) {
+  const [{ linkToken }] = await Promise.all([api(entPath("/bank-feeds/link-token"), { body: feedId ? { feedId } : {} }), loadPlaid()]);
+  await new Promise((resolve, reject) => {
+    window.Plaid.create({
+      token: linkToken,
+      onSuccess: (publicToken, meta) => resolve(feedId
+        ? api(entPath(`/bank-feeds/${feedId}/reconnected`), { body: {} })
+        : api(entPath("/bank-feeds"), { body: { bankAccount: bankUi.account, publicToken, providerAccountId: meta.accounts?.[0]?.id, institution: meta.institution?.name } })),
+      onExit: (err) => (err ? reject(new Error(err.display_message || err.error_message || "the bank connection was cancelled")) : resolve(null)),
+    }).open();
+  }).then((r) => {
+    if (r) toast(feedId ? "Reconnected" : `Connected. ${r.sync?.added ?? 0} recent transaction${r.sync?.added === 1 ? "" : "s"} brought in`);
+  });
+  await bankView(state.entity.entity.id);
+}
+
 async function bankView(id) {
   await loadEntity(id);
   const banks = state.entity.accounts.filter((a) => a.is_active && a.subtype === "bank");
   if (!banks.some((a) => a.code === bankUi.account)) bankUi.account = banks[0]?.code ?? null;
   const q = `?account=${encodeURIComponent(bankUi.account ?? "")}&status=${bankUi.status}`;
-  const [{ lines }, inv, bills, { rules }, { counts: files }] = await Promise.all([
+  const [{ lines }, inv, bills, { rules }, { counts: files }, feeds] = await Promise.all([
     api(entPath(`/bank-lines${q}`)),
     bankUi.status === "new" ? api(entPath("/invoices")) : { documents: [] },
     bankUi.status === "new" ? api(entPath("/bills")) : { documents: [] },
     api(entPath("/bank-rules")),
     api(entPath("/attachments?type=bank_line")),
+    api(entPath("/bank-feeds")).catch(() => ({ enabled: false, feeds: [] })),
   ]);
   const open = (docs) => docs.filter((d) => d.status !== "void" && d.dueMinor !== "0");
   const openInv = open(inv.documents), openBills = open(bills.documents);
@@ -1518,7 +1599,7 @@ async function bankView(id) {
   };
   const tab = (k, l) => `<button class="${bankUi.status === k ? "" : "secondary"}" data-action="bank-status" data-status="${k}">${l}</button>`;
   app.innerHTML = shell("bank", `
-    <div class="head"><div><h1>Bank</h1><p class="muted">Import statements as CSV, then record each line: match it to an invoice or bill, give it a category, or exclude it. Live bank connections come later.</p></div></div>
+    <div class="head"><div><h1>Bank</h1><p class="muted">Import statements (OFX, QFX, QBO or CSV) or connect the bank, then record each line: match it to an invoice or bill, give it a category, or exclude it.</p></div></div>
     ${banks.length ? "" : `<div class="alert warn">This business has no active bank account in its chart of accounts.</div>`}
     <div class="panel">
       <div class="row" style="justify-content:space-between">
@@ -1526,11 +1607,12 @@ async function bankView(id) {
         <div class="row">${tab("new", "To review")}${tab("posted", "Recorded")}${tab("excluded", "Excluded")}</div>
       </div>
     </div>
+    ${banks.length ? feedPanel(feeds) : ""}
     ${canWrite && banks.length ? `<div class="panel">
       <h2>Import a statement</h2>
-      <p class="muted">Download a CSV from your bank. It needs a date, a description, and either an Amount column or separate withdrawal and deposit columns. Lines already imported are skipped.</p>
+      <p class="muted">Download your bank's activity as an OFX, QFX (Quicken) or QBO (QuickBooks Web Connect) file, or as a CSV with a date, a description, and either an Amount column or separate withdrawal and deposit columns. Lines already imported are skipped, so overlapping downloads are fine.</p>
       <form data-form="bank-import" class="row">
-        <label>CSV file<input type="file" name="file" accept=".csv,text/csv"></label>
+        <label>Statement file<input type="file" name="file" accept=".csv,.ofx,.qfx,.qbo,text/csv,application/x-ofx"></label>
         <label style="flex:1;min-width:240px">or paste it here<textarea name="csv" rows="2" placeholder="Date,Description,Amount"></textarea></label>
         <button type="submit">Import</button>
       </form>
@@ -3678,6 +3760,27 @@ document.addEventListener("click", async (ev) => {
       try { localStorage.setItem("altqbo_org", b.dataset.org); } catch {}
       state.org = null; state.entity = null;
       if (location.hash === b.dataset.go) await route(); else location.hash = b.dataset.go;
+    } else if (a === "feed-connect" || a === "feed-relink") {
+      await openPlaid(a === "feed-relink" ? b.dataset.id : null);
+    } else if (a === "feed-sync") {
+      b.disabled = true;
+      const r = await api(entPath(`/bank-feeds/${b.dataset.id}/sync`), { body: {} });
+      toast(r.status === "active" ? `${r.added} new line${r.added === 1 ? "" : "s"}${r.autoRecorded ? `, ${r.autoRecorded} recorded by your rules` : ""}` : r.message ?? "The bank didn't answer");
+      await bankView(state.entity.entity.id);
+    } else if (a === "stripe-connect") {
+      b.disabled = true;
+      const { url } = await api(entPath("/online-payments/connect"), { body: {} });
+      location.href = url;
+    } else if (a === "stripe-disconnect") {
+      b.disabled = true;
+      await api(entPath("/online-payments/disconnect"), { body: {} });
+      toast("Stripe disconnected");
+      await docsView(state.entity.entity.id, "invoice");
+    } else if (a === "feed-remove") {
+      b.disabled = true;
+      await api(entPath(`/bank-feeds/${b.dataset.id}/remove`), { body: {} });
+      toast("Disconnected. Lines already brought in stay");
+      await bankView(state.entity.entity.id);
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);
@@ -4033,7 +4136,7 @@ document.addEventListener("submit", async (ev) => {
     } else if (kind === "bank-import") {
       const file = f.querySelector("[name=file]").files[0];
       const csv = file ? await file.text() : d.csv;
-      if (!csv?.trim()) throw new Error("Choose a CSV file or paste one");
+      if (!csv?.trim()) throw new Error("Choose a statement file or paste a CSV");
       const r = await api(entPath("/bank-imports"), { body: { bankAccount: bankUi.account, csv, fileName: file?.name ?? "pasted" } });
       toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.autoRecorded ? ` (${r.autoRecorded} recorded by your rules)` : ""}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
       bankUi.status = "new";
