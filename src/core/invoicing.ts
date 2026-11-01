@@ -770,6 +770,13 @@ export interface PublicView {
   memo: string;
 }
 
+/** Which business and document a customer's link opens, or null for a bad link. */
+export async function viewLinkFor(pool: pg.Pool, token: string): Promise<{ orgId: string; entityId: string; documentId: string | null; estimateId: string | null } | null> {
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) return null;
+  const link = await withSystem(pool, async (tx) => (await tx.query("SELECT * FROM view_links WHERE token_hash = $1", [hashToken(token)])).rows[0]);
+  return link ? { orgId: link.org_id, entityId: link.entity_id, documentId: link.document_id, estimateId: link.estimate_id } : null;
+}
+
 /** What a customer's link shows: the document, the business's name and address, nothing else from the books. */
 export async function viewByToken(pool: pg.Pool, token: string): Promise<PublicView | null> {
   if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) return null;

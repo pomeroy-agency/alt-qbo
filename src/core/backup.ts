@@ -42,6 +42,11 @@ const TABLES: [string, string][] = [
      pay_type, pay_frequency, pay_rate, usual_hours, overtime_exempt, w4, de4, deductions, sick_balance_hours, vacation_method, vacation_balance, vacation_rate, ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4, created_at, updated_at
      FROM employees WHERE entity_id = $1 ORDER BY lower(name)`],
   ["migration_account_map", "SELECT * FROM migration_account_map WHERE entity_id = $1 ORDER BY source, source_key"],
+  // Bank connection tokens stay out; the backup only says which accounts were connected.
+  ["bank_feeds", `SELECT id, org_id, entity_id, bank_account_id, provider, institution, account_name, account_mask, status, last_synced_at, created_by, created_at, removed_at
+     FROM bank_feeds WHERE entity_id = $1 ORDER BY created_at`],
+  ["stripe_connections", "SELECT * FROM stripe_connections WHERE entity_id = $1 ORDER BY connected_at"],
+  ["invoice_payment_sessions", "SELECT * FROM invoice_payment_sessions WHERE entity_id = $1 ORDER BY created_at"],
   // Contractors' taxpayer numbers stay out; only their last four digits are copied.
   ["contractor_tax_info", `SELECT contact_id, org_id, entity_id, form, recipient_type, tin_kind, tin_last4, legal_name, updated_by, updated_at
      FROM contractor_tax_info WHERE entity_id = $1 ORDER BY contact_id`],
