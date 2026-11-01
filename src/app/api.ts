@@ -1224,13 +1224,14 @@ route("GET", "/api/orgs/:org/entities/:entity/bank-lines", async (req, p, ctx) =
 
 route("POST", "/api/orgs/:org/entities/:entity/bank-imports", async (req, p, ctx) => {
   const b = await body(req);
-  if (typeof b.csv !== "string" || !b.csv.trim()) throw new HttpError(400, "choose a CSV file");
+  if (typeof b.csv !== "string" || !b.csv.trim()) throw new HttpError(400, "choose a CSV, OFX, QFX or QBO file");
   if (b.csv.length > MAX_CSV_BYTES) throw new HttpError(413, "the file is larger than 2 MB; split it");
   const out = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
     return importBankCsv(tx, {
       orgId: ctx.orgId, entityId: p.entity!, bankAccount: str(b.bankAccount, "bank account", 40), csv: b.csv,
       fileName: typeof b.fileName === "string" ? b.fileName.slice(0, 200) : "", actor: ctx.actor,
+      ofxAccount: typeof b.ofxAccount === "string" && /^\w{1,32}$/.test(b.ofxAccount) ? b.ofxAccount : undefined,
     });
   });
   return json(out, 201);

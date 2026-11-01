@@ -1518,7 +1518,7 @@ async function bankView(id) {
   };
   const tab = (k, l) => `<button class="${bankUi.status === k ? "" : "secondary"}" data-action="bank-status" data-status="${k}">${l}</button>`;
   app.innerHTML = shell("bank", `
-    <div class="head"><div><h1>Bank</h1><p class="muted">Import statements as CSV, then record each line: match it to an invoice or bill, give it a category, or exclude it. Live bank connections come later.</p></div></div>
+    <div class="head"><div><h1>Bank</h1><p class="muted">Import statements (OFX, QFX, QBO or CSV) or connect the bank, then record each line: match it to an invoice or bill, give it a category, or exclude it.</p></div></div>
     ${banks.length ? "" : `<div class="alert warn">This business has no active bank account in its chart of accounts.</div>`}
     <div class="panel">
       <div class="row" style="justify-content:space-between">
@@ -1528,9 +1528,9 @@ async function bankView(id) {
     </div>
     ${canWrite && banks.length ? `<div class="panel">
       <h2>Import a statement</h2>
-      <p class="muted">Download a CSV from your bank. It needs a date, a description, and either an Amount column or separate withdrawal and deposit columns. Lines already imported are skipped.</p>
+      <p class="muted">Download your bank's activity as an OFX, QFX (Quicken) or QBO (QuickBooks Web Connect) file, or as a CSV with a date, a description, and either an Amount column or separate withdrawal and deposit columns. Lines already imported are skipped, so overlapping downloads are fine.</p>
       <form data-form="bank-import" class="row">
-        <label>CSV file<input type="file" name="file" accept=".csv,text/csv"></label>
+        <label>Statement file<input type="file" name="file" accept=".csv,.ofx,.qfx,.qbo,text/csv,application/x-ofx"></label>
         <label style="flex:1;min-width:240px">or paste it here<textarea name="csv" rows="2" placeholder="Date,Description,Amount"></textarea></label>
         <button type="submit">Import</button>
       </form>
@@ -4033,7 +4033,7 @@ document.addEventListener("submit", async (ev) => {
     } else if (kind === "bank-import") {
       const file = f.querySelector("[name=file]").files[0];
       const csv = file ? await file.text() : d.csv;
-      if (!csv?.trim()) throw new Error("Choose a CSV file or paste one");
+      if (!csv?.trim()) throw new Error("Choose a statement file or paste a CSV");
       const r = await api(entPath("/bank-imports"), { body: { bankAccount: bankUi.account, csv, fileName: file?.name ?? "pasted" } });
       toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.autoRecorded ? ` (${r.autoRecorded} recorded by your rules)` : ""}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
       bankUi.status = "new";
