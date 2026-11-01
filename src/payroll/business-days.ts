@@ -21,7 +21,7 @@ export function weekday(date: string): number {
 }
 
 /** The nth given weekday (0 = Sunday) of a month; n = -1 is the last one. */
-function nthWeekday(year: number, month: number, dow: number, n: number): string {
+export function nthWeekday(year: number, month: number, dow: number, n: number): string {
   if (n > 0) {
     const first = new Date(Date.UTC(year, month - 1, 1, 12));
     const offset = (dow - first.getUTCDay() + 7) % 7;
@@ -81,7 +81,7 @@ export function californiaHolidays(year: number): Set<string> {
 }
 
 /** Easter Sunday (Anonymous Gregorian algorithm). */
-function easter(year: number): string {
+export function easter(year: number): string {
   const a = year % 19, b = Math.floor(year / 100), c = year % 100, d = Math.floor(b / 4), e = b % 4;
   const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
   const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
@@ -90,7 +90,7 @@ function easter(year: number): string {
 }
 
 /** The Monday before May 25: Victoria Day, and National Patriots' Day in Quebec. */
-const victoriaDay = (year: number) => addDays(`${year}-05-25`, -(((weekday(`${year}-05-25`) + 6) % 7) || 7));
+export const victoriaDay = (year: number) => addDays(`${year}-05-25`, -(((weekday(`${year}-05-25`) + 6) % 7) || 7));
 
 /**
  * Canada's general holidays under the Canada Labour Code, on their own dates

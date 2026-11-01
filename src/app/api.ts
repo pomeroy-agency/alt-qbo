@@ -53,7 +53,7 @@ import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSetti
 import { form940, form941, formDe9, formsFor, formStateQuarterly, formW2, type PreparedForm } from "../payroll/forms.js";
 import { federalDepositSchedule, recordDepositPayment, remitterTypes, setFederalDepositSchedule, setRemitterType, taxDeposits } from "../payroll/tax-deposits.js";
 import { canadaFormsFor, formRl1, formRoe, formT4, roesFor } from "../payroll/canada-forms.js";
-import { calculateSavedRun, carrySickLeave, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
+import { calculateSavedRun, carrySickLeave, carryVacationPay, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import { CAN_CONNECT, OAuthError, findClient, issueCode, listGrants, parseScopes, redirectWith, revokeGrant, updateGrantSettings, type OAuthClient } from "./oauth.js";
 import { handleOAuth, handlePublicApi } from "./public-api.js";
 import {
@@ -1829,10 +1829,10 @@ function withLocalMinimums(place: Place, employees: Employee[], today: string) {
 /** The parts of an employee in a request; a field left out is left alone. Checked in payroll/employees.ts. */
 function employeeFields(b: Record<string, any>): EmployeeFields {
   const keys = ["name", "email", "address", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours",
-    "overtimeExempt", "w4", "de4", "stateWithholding", "td1", "deductions", "sickBalanceHours", "ssn", "sin", "openingYtd", "directDeposit"] as const;
+    "overtimeExempt", "w4", "de4", "stateWithholding", "td1", "deductions", "sickBalanceHours", "vacationMethod", "vacationBalance", "vacationPercent", "ssn", "sin", "openingYtd", "directDeposit"] as const;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
-  for (const k of ["name", "email", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn", "sin"]) {
+  for (const k of ["name", "email", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "vacationMethod", "vacationBalance", "vacationPercent", "ssn", "sin"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "string") throw new HttpError(400, `${k} should be text`);
   }
   for (const k of ["w4", "de4", "stateWithholding", "td1", "openingYtd", "address", "directDeposit"]) {
@@ -2078,6 +2078,9 @@ function payRunRequest(b: Record<string, any>): PayRunRequest {
         reimbursement: amount(l.reimbursement, `${n} reimbursement`),
         bonusDiscretionary: l.bonusDiscretionary === true,
         sickHoursUsed: amount(l.sickHoursUsed, `${n} sick hours`),
+        holidayHoursWorked: amount(l.holidayHoursWorked, `${n} holiday hours worked`),
+        noHolidayPay: l.noHolidayPay === true,
+        vacationPay: amount(l.vacationPay, `${n} vacation pay`),
       };
     }),
   };
@@ -2213,6 +2216,7 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
     });
     await tx.query("UPDATE pay_runs SET status = 'posted', approved_by = $2, entry_id = $3, result = $4 WHERE id = $1", [p.run, ctx.actor.id, posted.id, toJson(run)]);
     await carrySickLeave(tx, p.entity!, run.paychecks, run.payDate);
+    await carryVacationPay(tx, p.entity!, run.paychecks);
     return posted;
   });
   return json(entry, 201);

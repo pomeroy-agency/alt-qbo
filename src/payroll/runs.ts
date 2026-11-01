@@ -1,12 +1,15 @@
 import type { Tx } from "../db/pool.js";
 import { LedgerError } from "../core/errors.js";
-import { D } from "../core/money.js";
+import { D, toMajor, toMinor } from "../core/money.js";
 import { resolveRules, statePackFor, type Place, type StateWageHourRules } from "../rules/index.js";
 import { minimumWageOn } from "../rules/minimum-wage.js";
 import { localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { listEmployees, openingFor, salaryPerPeriod, type Employee } from "./employees.js";
 import type { EmployeePayInput, Paycheck, SickLeaveInput, SickLeavePolicy, TaxLine, YearToDate } from "./gross-to-net.js";
 import { splitWorkweek } from "./hours.js";
+import { employmentStandardsFor, type EmploymentStandards } from "../rules/canada/employment-standards-2026.js";
+import { holidayPayFor, holidaysInPeriod, usualDailyHours, vacationRateFor, type WageSlice } from "./employment-standards.js";
+import { addDays } from "./business-days.js";
 import { calculatePayRun, type PayRun, type PayRunInput } from "./pay-run.js";
 
 // Pay runs built from saved employees. A run copies each employee's pay and
@@ -28,6 +31,12 @@ export interface PayRunLine {
   reimbursement?: string;
   /** Hours of paid sick leave taken in the period. */
   sickHoursUsed?: string;
+  /** Canada: hours worked on a statutory holiday in the period, on top of the regular hours. */
+  holidayHoursWorked?: string;
+  /** Canada: the holiday wasn't a day the employee would normally have worked (Alberta), so no holiday pay. */
+  noHolidayPay?: boolean;
+  /** Canada: vacation pay taken from the employee's balance this period, in dollars. */
+  vacationPay?: string;
 }
 
 export interface PayRunRequest {
@@ -69,11 +78,81 @@ export async function payRunInputFromEmployees(tx: Tx, entityId: string, req: Pa
     const withArea = rules.state.wageHour.areas && e.workCity ? { ...input, workArea: e.workCity } : input;
     return local ? { ...withArea, localMinimumWage: local } : withArea;
   });
+  const standards = place.country === "CA" ? employmentStandardsFor(place.region) : null;
+  if (standards) {
+    const history = await wageHistory(tx, entityId, addDays(req.periodStart, -45), req.periodStart);
+    for (const [i, l] of req.lines.entries()) {
+      employees[i] = withEmploymentStandards(employees[i]!, all.get(l.employeeId)!, l, standards, req, history.get(l.employeeId) ?? []);
+    }
+  }
   return {
     payRunId, kind: "regular", periodStart: req.periodStart, periodEnd: req.periodEnd, payDate: req.payDate, place,
     employer: Object.keys(entity?.state_tax_rates ?? {}).length ? { stateRates: entity.state_tax_rates } : {},
     employees, live: true,
   };
+}
+
+/** Earlier posted pay for each employee in pay periods ending from `from` to the day before `before`, for holiday pay. */
+async function wageHistory(tx: Tx, entityId: string, from: string, before: string): Promise<Map<string, WageSlice[]>> {
+  const { rows } = await tx.query(
+    `SELECT result FROM pay_runs WHERE entity_id = $1 AND status = 'posted'
+        AND (result->>'periodEnd')::date >= $2 AND (result->>'periodEnd')::date < $3`,
+    [entityId, from, before],
+  );
+  const out = new Map<string, WageSlice[]>();
+  for (const r of rows) {
+    for (const p of r.result.paychecks as Paycheck[]) {
+      const list = out.get(p.employeeId) ?? out.set(p.employeeId, []).get(p.employeeId)!;
+      list.push({ periodStart: r.result.periodStart, periodEnd: r.result.periodEnd, earnings: p.earnings });
+    }
+  }
+  return out;
+}
+
+/**
+ * Canada: statutory holiday pay for holidays in the period and vacation pay,
+ * under the province's or territory's employment standards. Salaried employees
+ * keep their salary over holidays and vacations, so only hourly employees get
+ * these lines.
+ */
+function withEmploymentStandards(
+  input: EmployeePayInput, e: Employee, l: PayRunLine, std: EmploymentStandards, req: PayRunRequest, history: WageSlice[],
+): EmployeePayInput {
+  if (!input.hourlyRate) {
+    if (l.holidayHoursWorked || l.vacationPay) invalid(`${e.name} is salaried; their salary covers holidays and vacation, so enter holiday hours and vacation pay for hourly employees only`);
+    return input;
+  }
+  const out: EmployeePayInput = { ...input };
+  const holidays = holidaysInPeriod(std, req.periodStart, req.periodEnd);
+  const dailyHours = usualDailyHours(e.usualHours, e.payFrequency);
+  if (l.holidayHoursWorked && !holidays.length) invalid(`${e.name}: there's no ${std.name} statutory holiday between ${req.periodStart} and ${req.periodEnd}`);
+  if (holidays.length && !l.noHolidayPay) {
+    // This period's own regular pay counts for the days before each holiday that fall in it.
+    const current: WageSlice = {
+      periodStart: req.periodStart, periodEnd: req.periodEnd,
+      earnings: [{ code: "REGULAR", hours: input.regularHours ?? "0", amountMinor: toMinor(new D(input.hourlyRate).mul(input.regularHours ?? 0)) }],
+    };
+    const pay = holidays
+      .filter((h) => !e.terminationDate || h.date <= e.terminationDate)
+      .filter((h) => h.date >= e.hireDate)
+      .map((h) => holidayPayFor(std, h, { hireDate: e.hireDate, hourlyRate: e.payRate, dailyHours }, [...history, current]))
+      .filter((h) => h !== null);
+    out.holidayPay = pay.map((h) => ({ date: h.date, name: h.name, amount: h.amount, basis: h.basis }));
+    out.holidayNotes = pay.flatMap((h) => (h.warning ? [h.warning] : []));
+  }
+  if (l.holidayHoursWorked) {
+    out.holidayHoursWorked = l.holidayHoursWorked;
+    out.holidayWorkedMultiplier = std.holidayPay.workedMultiplier;
+  }
+  const rate = vacationRateFor(std, e.hireDate, req.periodEnd, e.vacationPercent ? new D(e.vacationPercent).div(100).toString() : null);
+  const lastPay = Boolean(e.terminationDate && e.terminationDate <= req.periodEnd);
+  out.vacation = {
+    method: e.vacationMethod, rate: rate.rate, label: rate.label,
+    excludesOvertime: std.vacationExcludesOvertime, excludesHolidayPay: std.vacationExcludesHolidayPay,
+    ...(e.vacationMethod === "accrue" ? { balance: e.vacationBalance, payout: l.vacationPay, payOutAll: lastPay } : {}),
+  };
+  if (e.vacationMethod === "each_pay" && l.vacationPay) invalid(`${e.name} gets vacation pay with each paycheck, so there's no balance to take it from`);
+  return out;
 }
 
 /** Employees on the payroll on `date`, for minimum wages that depend on the employer's size. */
@@ -237,6 +316,15 @@ export async function calculateSavedRun(tx: Tx, entityId: string, input: PayRunI
       return y ? { ...e, ytd: { socialSecurityWages: y.socialSecurityWages, medicareWages: y.medicareWages, futaWages: y.futaWages, stateWages: y.stateWages, taxesPaid: y.byTax } } : e;
     }),
   });
+}
+
+/** After posting: each employee's vacation pay owed moves to what the paycheck shows (accrual). */
+export async function carryVacationPay(tx: Tx, entityId: string, paychecks: Paycheck[]) {
+  for (const p of paychecks) {
+    if (p.vacation?.method !== "accrue") continue;
+    await tx.query("UPDATE employees SET vacation_balance = $3, updated_at = now() WHERE id = $1 AND entity_id = $2",
+      [p.employeeId, entityId, toMajor(BigInt(p.vacation.balanceMinor)).toFixed(2)]);
+  }
 }
 
 /** After posting: each employee's sick leave balance moves to what the paycheck shows. */
