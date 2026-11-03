@@ -10,6 +10,9 @@ try {
   const q = new URLSearchParams(location.search);
   const found = Object.fromEntries(ATTRIBUTION_KEYS.filter((k) => q.get(k)).map((k) => [k, q.get(k).slice(0, 200)]));
   if (Object.keys(found).length) sessionStorage.setItem("tb-attribution", JSON.stringify(found));
+  // An accounting or HR firm's referral link (?ref=CODE) fills in its code on the sign-up form.
+  const ref = (q.get("ref") || new URLSearchParams(location.hash.split("?")[1] || "").get("ref") || "").replace(/[^A-Za-z0-9]/g, "").slice(0, 12);
+  if (ref) sessionStorage.setItem("tb-ref", ref.toUpperCase());
 } catch { /* storage blocked: nothing is kept */ }
 function attribution() {
   let kept = {};
@@ -178,13 +181,17 @@ function shell(active, content) {
   const billing = ["owner", "admin"].includes(state.org?.role) ? [["billing", "#/billing", "Billing"]] : [];
   const newsletter = state.org?.newsletter ? [["newsletter", "#/newsletter", "Newsletter"]] : [];
   const many = (state.me?.orgs?.length ?? 0) > 1;
-  const org = [...(many ? [["clients", "#/clients", "All clients"]] : []), ["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...newsletter, ["account", "#/account", "Your account"]];
+  // Referrals: firms already in the program, and anyone who looks after more than one organisation.
+  const referrals = ["owner", "admin"].includes(state.org?.role) && (state.org?.referrals || many || ["accounting_firm", "hr_firm"].includes(state.org?.org?.kind))
+    ? [["referrals", "#/referrals", "Referrals"]] : [];
+  const referralFees = state.org?.referralFees ? [["referral-fees", "#/referral-fees", "Referral fees"]] : [];
+  const org = [...(many ? [["clients", "#/clients", "All clients"]] : []), ["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...referrals, ...referralFees, ...newsletter, ["account", "#/account", "Your account"]];
   const main = e ? entityTabs().map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
     ...(e ? [...(many ? [btn("#/clients", "clients", "All clients")] : []), btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
     ...(e ? org.filter(([k]) => k !== "home" && k !== "clients").map(([k, h, l]) => btn(h, k, l)) : []),
   ];
-  const moreOn = e && (["clients", "home", "team", "audit", "billing", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const moreOn = e && (["clients", "home", "team", "audit", "billing", "referrals", "referral-fees", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
   const mobile = `
       <nav class="mobile">
         <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
@@ -200,6 +207,8 @@ function shell(active, content) {
         <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
         <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
         ${billing.length ? `<a href="#/billing" class="${active === "billing" ? "on" : ""}">Billing</a>` : ""}
+        ${referrals.length ? `<a href="#/referrals" class="${active === "referrals" ? "on" : ""}">Referrals</a>` : ""}
+        ${referralFees.length ? `<a href="#/referral-fees" class="${active === "referral-fees" ? "on" : ""}">Referral fees</a>` : ""}
         ${newsletter.length ? `<a href="#/newsletter" class="${active === "newsletter" ? "on" : ""}">Newsletter</a>` : ""}
         <a href="#/account" class="${active === "account" ? "on" : ""}">Your account</a>
       </nav>
@@ -256,6 +265,7 @@ async function authView(mode, error = "", notice = "") {
           ${signup ? `
             <label>Business or firm name<input name="orgName" required></label>
             <label><span>Invite code <span class="hint">(optional, only if someone gave you one)</span></span><input name="inviteCode" autocomplete="off"></label>
+            <label><span>Referral code <span class="hint">(optional, from your accountant or HR firm)</span></span><input name="referralCode" autocomplete="off" maxlength="14" value="${esc((() => { try { return sessionStorage.getItem("tb-ref") || ""; } catch { return ""; } })())}"></label>
             <div class="consent">
               <label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
               <label class="check multi muted"><input type="checkbox" name="adOptOut"><span>Don't share my sign-up with Google or Meta for ad measurement.</span></label>
@@ -3197,6 +3207,7 @@ const bill = { interval: null };
 
 async function billingView() {
   const b = await api(orgPath("/billing"));
+  const ref = b.free ? null : await api(orgPath("/billing/referral")).catch(() => null);
   if (b.free) {
     app.innerHTML = shell("billing", `<div class="head"><div><h1>Billing</h1></div></div><div class="panel"><p>This organisation doesn't pay for TrailBook.</p></div>`);
     return;
@@ -3279,6 +3290,7 @@ async function billingView() {
           <p class="muted">You type the card on our payment processor's secure page (Stripe). TrailBook never sees or stores the card number.</p>` : `<p class="muted">Save the billing details first.</p>`
         : `<p class="muted">Card payments aren't switched on yet. Your trial carries on in the meantime.</p>`}
     </div>
+    ${ref ? referralPanel(ref) : ""}
     ${b.charges.length ? `<div class="panel table-wrap"><h2>Payments</h2><table>
       <thead><tr><th>Date</th><th>For</th><th>Invoice</th><th class="num">Amount</th><th class="num">Tax</th><th class="num">Total</th><th>Status</th></tr></thead>
       <tbody>${b.charges.map((c) => `<tr><td>${new Date(c.created_at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" })}</td><td>${CHARGE_LABEL[c.kind]}, ${c.period_start} to ${c.period_end}</td><td class="mono">${esc(c.invoice_number ?? "")}</td>
@@ -3303,6 +3315,124 @@ async function cardReturnView(sessionId) {
     toast(err.message);
   }
   location.hash = "#/billing";
+}
+
+// ------------------------------------------------------------------ referrals
+
+const money = (minor, currency = "USD") => (currency === "CAD" ? "CA" : "") + usd(minor);
+const REWARD_LABEL = { client_discount: "20% off for the client", firm_fee: "20% referral fee to the firm" };
+
+/** On a client's Billing page: the firm that referred it, and what that means for the price. */
+function referralPanel(r) {
+  const firm = r.firm;
+  const what = firm && (firm.reward === "client_discount"
+    ? `You pay ${r.pct}% less on every charge for as long as you stay.`
+    : `The firm receives a referral fee from us of ${r.pct}% of what you pay, before tax, for your first ${r.months} months. Your price isn't raised for it.`);
+  return `<div class="panel"><h2>Referred by an accountant or HR firm</h2>
+    ${firm ? `<p><strong>${esc(firm.name)}</strong> referred you. ${what}</p>
+      <p class="muted">${esc(firm.name)} can see your business name, whether you subscribe, and any fee it earns from you. It can't open your books unless you invite it under Team.</p>
+      ${r.canChange ? `<button class="secondary" data-action="ref-remove">Remove this firm</button>` : `<p class="muted">To change this after your first payment, contact us.</p>`}`
+    : r.canChange ? `<p class="muted">If your accountant or HR firm gave you a referral code, enter it before your first payment. Depending on the firm, you get ${r.pct}% off for as long as you stay, or the firm gets a referral fee from us and your price stays the same.</p>
+      <form data-form="ref-link" class="row" style="align-items:flex-end"><label>Referral code<input name="code" required maxlength="14" autocomplete="off"></label><button type="submit" class="secondary">Add</button></form>`
+    : `<p class="muted">No firm referred this business.</p>`}
+    <p class="hash" style="margin-top:8px">Are you an accounting or HR firm? <a href="#/referrals">Get your own referral code</a>.</p>
+  </div>`;
+}
+
+/** A firm's Referrals page: join, its code and link, and what each client it brought has earned. */
+async function referralsView() {
+  state.entity = null;
+  const r = await api(orgPath("/referrals"));
+  const terms = `<a href="/referral-terms.html" target="_blank" rel="noopener">referral program terms</a>`;
+  const rewardPick = (cur) => `
+    <label class="check multi"><input type="radio" name="reward" value="client_discount" ${cur !== "firm_fee" ? "checked" : ""}><span><strong>20% off for your clients</strong>, for as long as they stay. A Books client pays $12 a month instead of $15.</span></label>
+    <label class="check multi"><input type="radio" name="reward" value="firm_fee" ${cur === "firm_fee" ? "checked" : ""}><span><strong>A 20% referral fee for your firm</strong>. Your client pays the standard price, and we pay your firm 20% of what they pay, before tax, for their first 12 months.</span></label>`;
+  const payout = (p = {}) => `
+    <div class="grid two">
+      <label>Email for payout notices<input name="payoutEmail" type="email" value="${esc(p.payoutEmail ?? state.me.user.email)}"></label>
+      <label><span>How you'd like to be paid <span class="hint">(no account numbers; we'll ask for details separately)</span></span><input name="payoutNote" maxlength="300" value="${esc(p.payoutNote ?? "")}" placeholder="ACH, Interac e-Transfer or cheque"></label>
+    </div>`;
+  if (!r.joined) {
+    app.innerHTML = shell("referrals", `
+      <div class="head"><div><h1>Referrals</h1><p class="muted">For accounting and HR firms. Bring your clients to TrailBook with your own code. Your firm's own logins stay free either way, and the client is always the customer of record.</p></div></div>
+      <div class="panel"><h2>Join the referral program</h2>
+        <form data-form="ref-partner">
+          <p>Choose what clients you bring get. You can change it later; a change applies to clients who join after it.</p>
+          ${rewardPick("client_discount")}
+          ${payout()}
+          <p class="muted">If you take the fee: we pay it monthly for the previous month, once it reaches $25 (smaller amounts carry over). A US firm sends us a Form W-9 before the first payment. Check your professional rules first: some accountants must tell clients about a referral fee, and some can't take one from certain clients. We show the fee to your client on their Billing page.</p>
+          <label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the ${terms} for ${esc(state.org.org.name)}.</span></label>
+          <button type="submit">Get our referral code</button>
+        </form>
+      </div>`);
+    return;
+  }
+  const link = `${r.appUrl ?? location.origin}/?ref=${r.code}#/signup`;
+  const owed = r.clients.reduce((m, c) => ({ ...m, [c.currency]: (m[c.currency] ?? 0n) + BigInt(c.owedMinor) }), {});
+  app.innerHTML = shell("referrals", `
+    <div class="head"><div><h1>Referrals</h1><p class="muted">Clients you bring with your code get ${r.reward === "firm_fee" ? "the standard price, and your firm earns 20% of what they pay for their first 12 months" : "20% off for as long as they stay"}. <a href="/referral-terms.html" target="_blank" rel="noopener">Program terms</a></p></div></div>
+    ${r.termsVersion !== r.currentTermsVersion ? `<div class="banner info">The referral program terms have been updated. Save your settings below to accept them.</div>` : ""}
+    <div class="panel"><h2>Your code</h2>
+      <p class="stat mono">${esc(r.code)}</p>
+      <p>Sign-up link: <span class="mono">${esc(link)}</span> <button class="link" data-action="copy" data-text="${esc(link)}">Copy</button></p>
+      <p class="muted">A client can also enter the code on their Billing page, any time before their first payment.</p>
+    </div>
+    <div class="panel table-wrap"><h2>Clients you referred</h2>
+      ${r.clients.length ? `<table><thead><tr><th>Client</th><th>Status</th><th>Reward</th><th>Fees until</th><th class="num">Owed to you</th><th class="num">Paid to you</th></tr></thead>
+        <tbody>${r.clients.map((c) => `<tr><td>${esc(c.name)}</td><td>${esc({ trialing: "Free trial", active: "Paying", past_due: "Payment overdue", canceled: "Ended" }[c.status] ?? c.status)}</td>
+          <td>${esc(REWARD_LABEL[c.reward])}</td><td>${c.feeUntil ? longDate(c.feeUntil) : c.reward === "firm_fee" ? `<span class="muted">From the first payment</span>` : ""}</td>
+          <td class="num">${c.reward === "firm_fee" ? money(c.owedMinor, c.currency) : ""}</td><td class="num">${c.reward === "firm_fee" ? money(c.paidMinor, c.currency) : ""}</td></tr>`).join("")}</tbody></table>
+        ${Object.entries(owed).filter(([, v]) => v > 0n).map(([cur, v]) => `<p>Owed to your firm: <strong>${money(v, cur)}</strong>. Paid monthly once it reaches ${money(r.minPayoutMinor, cur)}.${!r.w9Received ? " A US firm: send us a Form W-9 before the first payment." : ""}</p>`).join("")}`
+      : `<p class="muted">No clients yet. Share your code or link.</p>`}
+    </div>
+    ${r.payouts.length ? `<div class="panel table-wrap"><h2>Payments to your firm</h2><table><thead><tr><th>Date</th><th>How</th><th>Reference</th><th class="num">Amount</th></tr></thead>
+      <tbody>${r.payouts.map((p) => `<tr><td>${longDate(p.paidOn)}</td><td>${esc(p.method)}</td><td class="mono">${esc(p.reference ?? "")}</td><td class="num">${money(p.totalMinor, p.currency)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    <div class="panel"><h2>Settings</h2>
+      <form data-form="ref-partner">
+        ${rewardPick(r.reward)}
+        ${payout(r)}
+        ${r.termsVersion !== r.currentTermsVersion ? `<label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the updated ${terms}.</span></label>` : ""}
+        <button type="submit" class="secondary">Save settings</button>
+      </form>
+    </div>`);
+}
+
+/** The operator's page: what every firm is owed, recording payouts made outside TrailBook, and cancelling fees. */
+async function referralFeesView() {
+  state.entity = null;
+  const r = await api(orgPath("/referral-fees"));
+  const owedRows = r.partners.flatMap((p) => p.owed.map((o) => ({ p, o })));
+  app.innerHTML = shell("referral-fees", `
+    <div class="head"><div><h1>Referral fees</h1><p class="muted">What firms in the referral program have earned: 20% of each payment, before tax, by clients they referred, for each client's first 12 months. Pay each firm outside TrailBook (ACH, e-Transfer or cheque), then record it here: the fees are marked paid, the firm is emailed, and a paid bill from the firm goes into your books.</p></div></div>
+    <div class="panel table-wrap"><h2>To pay</h2>
+      ${owedRows.length ? `<table><thead><tr><th>Firm</th><th>How they'd like to be paid</th><th class="num">Owed</th><th>W-9</th><th></th></tr></thead><tbody>
+        ${owedRows.map(({ p, o }) => `<tr><td><strong>${esc(p.name)}</strong><div class="hash">${esc(p.payoutEmail ?? "")} · ${o.fees} payment${o.fees === 1 ? "" : "s"}</div></td><td>${esc(p.payoutNote ?? "")}</td>
+          <td class="num">${money(o.owedMinor, o.currency)}${BigInt(o.owedMinor) < BigInt(r.minPayoutMinor) ? `<div class="hash">under the ${money(r.minPayoutMinor, o.currency)} minimum</div>` : ""}</td>
+          <td>${p.w9Received ? "On file" : `<button class="link" data-action="ref-w9" data-firm="${p.orgId}" data-v="1">Mark received</button>`}</td>
+          <td><form data-form="ref-payout" data-firm="${p.orgId}" data-currency="${o.currency}" class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px">
+            <label>Paid on<input name="paidOn" type="date" required value="${today()}"></label>
+            <label>How<input name="method" required maxlength="80" style="width:110px" placeholder="ACH"></label>
+            <label>Reference<input name="reference" maxlength="120" style="width:110px"></label>
+            <label>Expense account<input name="account" value="6000" maxlength="40" style="width:80px"></label>
+            ${o.currency !== "USD" ? `<label>Cost in USD<input name="bookedAmount" required inputmode="decimal" style="width:90px"></label>` : ""}
+            <button type="submit">Record payment</button></form></td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">Nothing is owed right now.</p>`}
+    </div>
+    <div class="panel table-wrap"><h2>Fees</h2>
+      ${r.fees.length ? `<table><thead><tr><th>Earned</th><th>Firm</th><th>Client</th><th>Invoice</th><th class="num">Payment before tax</th><th class="num">Fee</th><th>Status</th></tr></thead><tbody>
+        ${r.fees.map((f) => `<tr><td>${esc(f.earnedOn)}</td><td>${esc(r.partners.find((p) => p.orgId === f.partnerOrgId)?.name ?? "")}</td><td>${esc(f.client)}</td><td class="mono">${esc(f.invoiceNumber ?? "")}</td>
+          <td class="num">${money(f.baseMinor, f.currency)}</td><td class="num">${money(f.feeMinor, f.currency)}</td>
+          <td>${f.status === "owed" ? `Owed<form data-form="ref-void" data-fee="${f.id}" class="row" style="gap:4px;margin-top:4px"><input name="reason" required maxlength="300" placeholder="Reason to cancel" style="width:140px"><button type="submit" class="link">Cancel fee</button></form>` : f.status === "paid" ? "Paid" : `Cancelled<div class="hash">${esc(f.voidReason ?? "")}</div>`}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">No fees yet.</p>`}
+    </div>
+    <div class="panel table-wrap"><h2>Firms in the program</h2>
+      ${r.partners.length ? `<table><thead><tr><th>Firm</th><th>Code</th><th>Reward</th><th class="num">Clients</th><th>W-9</th></tr></thead><tbody>
+        ${r.partners.map((p) => `<tr><td>${esc(p.name)}</td><td class="mono">${esc(p.code)}</td><td>${esc(REWARD_LABEL[p.reward])}</td><td class="num">${p.clients}</td>
+          <td>${p.w9Received ? `On file <button class="link" data-action="ref-w9" data-firm="${p.orgId}" data-v="0">Undo</button>` : `<button class="link" data-action="ref-w9" data-firm="${p.orgId}" data-v="1">Mark received</button>`}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">No firms have joined yet.</p>`}
+    </div>
+    ${r.payouts.length ? `<div class="panel table-wrap"><h2>Payouts recorded</h2><table><thead><tr><th>Date</th><th>Firm</th><th>How</th><th>Reference</th><th>Bill</th><th class="num">Amount</th></tr></thead>
+      <tbody>${r.payouts.map((p) => `<tr><td>${esc(p.paidOn)}</td><td>${esc(p.name)}</td><td>${esc(p.method)}</td><td class="mono">${esc(p.reference ?? "")}</td><td class="mono">${esc(p.billNumber ?? "")}</td><td class="num">${money(p.totalMinor, p.currency)}</td></tr>`).join("")}</tbody></table></div>` : ""}`);
 }
 
 // ------------------------------------------------------------------ account
@@ -3552,6 +3682,8 @@ async function route() {
     if (parts[0] === "clients") return await clientsView();
     if (parts[0] === "billing" && parts[1] === "card" && parts[2]) return await cardReturnView(parts[2]);
     if (parts[0] === "billing") return await billingView();
+    if (parts[0] === "referrals") return await referralsView();
+    if (parts[0] === "referral-fees") return await referralFeesView();
     if (parts[0] === "audit") return await auditView();
     if (parts[0] === "newsletter" && parts[1]) return await newsletterIssueView(parts[1]);
     if (parts[0] === "newsletter") return await newsletterView();
@@ -3839,6 +3971,18 @@ document.addEventListener("click", async (ev) => {
       state.org.stale = true;
       toast("Subscription cancelled. Your books stay readable and downloadable");
       await billingView();
+    } else if (a === "ref-remove") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remove the firm? Click again"; return; }
+      b.disabled = true;
+      await api(orgPath("/billing/referral"), { body: { remove: true } });
+      toast("Firm removed");
+      await billingView();
+    } else if (a === "copy") {
+      await navigator.clipboard.writeText(b.dataset.text);
+      toast("Copied");
+    } else if (a === "ref-w9") {
+      await api(orgPath(`/referral-fees/firms/${b.dataset.firm}/w9`), { body: { received: b.dataset.v === "1" } });
+      await referralFeesView();
     } else if (a === "bill-resume") {
       b.disabled = true;
       await api(orgPath("/billing/resume"), { body: {} });
@@ -4072,6 +4216,23 @@ document.addEventListener("submit", async (ev) => {
       state.org.stale = true;
       toast("Plan saved");
       await billingView();
+    } else if (kind === "ref-link") {
+      const r = await api(orgPath("/billing/referral"), { body: { code: d.code } });
+      toast(r.reward === "client_discount" ? "Added: 20% off from your next charge" : "Added");
+      await billingView();
+    } else if (kind === "ref-partner") {
+      await api(orgPath("/referrals"), { body: { reward: d.reward, payoutEmail: d.payoutEmail, payoutNote: d.payoutNote, acceptTerms: d.acceptTerms === "on" } });
+      state.org.stale = true;
+      toast("Saved");
+      await route();
+    } else if (kind === "ref-void") {
+      await api(orgPath(`/referral-fees/fees/${f.dataset.fee}/void`), { body: { reason: d.reason } });
+      toast("Fee cancelled");
+      await referralFeesView();
+    } else if (kind === "ref-payout") {
+      const r = await api(orgPath("/referral-fees/payouts"), { body: { partnerOrgId: f.dataset.firm, currency: f.dataset.currency, ...d } });
+      toast(`Recorded ${money(r.totalMinor, r.currency)}, bill ${r.billNumber}`);
+      await referralFeesView();
     } else if (kind === "bill-details") {
       await api(orgPath("/billing/details"), { body: { name: d.name, email: d.email, address: { line1: d.line1, city: d.city, state: d.state, zip: d.zip, country: d.country || "US" } } });
       toast("Billing details saved");
