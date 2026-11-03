@@ -23,6 +23,9 @@ const gateway: PaymentGateway = {
     charges.push(input.amountMinor);
     return { ok: true, id: `pi_${charges.length}` };
   },
+  async settlement() {
+    throw new Error("not used");
+  },
 };
 
 // The hub, as TrailBook sees it: it records each status it's sent, after checking the signature.

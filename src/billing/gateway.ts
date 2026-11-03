@@ -17,17 +17,32 @@ export interface SavedCard {
 
 export type ChargeResult = { ok: true; id: string } | { ok: false; id?: string; message: string };
 
+/** What a charge in another currency paid out, in the processor account's own currency (US dollars). */
+export interface Settlement {
+  /** The converted amount, before the processor's fee. */
+  amountMinor: bigint;
+  currency: string;
+  /** Units of the payout currency per unit charged, such as 0.7123 for CAD to USD. */
+  rate: string;
+}
+
 export interface PaymentGateway {
   /** A page on the processor's site where the customer enters a card. */
   startCardSetup(input: {
     orgId: string; customerId: string | null; email: string; name: string; successUrl: string; cancelUrl: string;
+    /** The currency the card will be charged in; US dollars when left out. */
+    currency?: string;
   }): Promise<{ url: string; customerId: string }>;
   /** The card saved on that page, once the customer finished it. */
   finishCardSetup(sessionId: string): Promise<SavedCard>;
   charge(input: {
     customerId: string; paymentMethodId: string; amountMinor: bigint; description: string; idempotencyKey: string;
     metadata: Record<string, string>;
+    /** US dollars when left out. */
+    currency?: string;
   }): Promise<ChargeResult>;
+  /** What a successful charge paid out after conversion. Needed for charges in Canadian dollars. */
+  settlement(chargeId: string): Promise<Settlement>;
 }
 
 type Fetch = typeof fetch;
@@ -65,7 +80,7 @@ export function stripeGateway(secretKey: string, fetchImpl: Fetch = fetch): Paym
         customerId = c.data.id as string;
       }
       const s = await call("POST", "/checkout/sessions", {
-        mode: "setup", currency: "usd", customer: customerId, payment_method_types: ["card"],
+        mode: "setup", currency: (input.currency ?? "usd").toLowerCase(), customer: customerId, payment_method_types: ["card"],
         client_reference_id: input.orgId, metadata: { org_id: input.orgId },
         success_url: input.successUrl, cancel_url: input.cancelUrl,
       });
@@ -85,12 +100,25 @@ export function stripeGateway(secretKey: string, fetchImpl: Fetch = fetch): Paym
     },
     async charge(input) {
       const r = await call("POST", "/payment_intents", {
-        amount: input.amountMinor.toString(), currency: "usd", customer: input.customerId, payment_method: input.paymentMethodId,
+        amount: input.amountMinor.toString(), currency: (input.currency ?? "usd").toLowerCase(), customer: input.customerId, payment_method: input.paymentMethodId,
         off_session: "true", confirm: "true", description: input.description, metadata: input.metadata,
       }, input.idempotencyKey);
       if (r.ok && r.data.status === "succeeded") return { ok: true, id: r.data.id };
       const err = r.data?.error;
       return { ok: false, id: err?.payment_intent?.id ?? r.data?.id, message: err?.message ?? `the payment didn't go through (${r.data?.status ?? r.status})` };
+    },
+    async settlement(chargeId) {
+      // Reading the conversion needs the restricted key's Charges and Balance permissions (read).
+      if (!/^pi_[\w]+$/.test(chargeId)) throw new GatewayError("that payment reference isn't valid");
+      const r = await call("GET", `/payment_intents/${chargeId}?expand[]=latest_charge.balance_transaction`);
+      if (!r.ok) throw new GatewayError(r.data?.error?.message ?? "the card processor didn't respond");
+      const bt = r.data.latest_charge?.balance_transaction;
+      if (!bt || typeof bt !== "object" || typeof bt.amount !== "number") {
+        throw new GatewayError("the card processor hasn't converted this payment yet");
+      }
+      // A charge in the account's own currency has no exchange rate.
+      const rate = bt.exchange_rate == null ? "1" : String(bt.exchange_rate);
+      return { amountMinor: BigInt(bt.amount), currency: String(bt.currency).toUpperCase(), rate };
     },
   };
 }

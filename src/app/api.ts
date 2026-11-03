@@ -405,7 +405,7 @@ route("GET", "/api/orgs/:org/billing", async (_req, _p, ctx) => {
 route("POST", "/api/orgs/:org/billing/details", async (req, _p, ctx) => {
   requireRole(ctx, ["owner", "admin"]);
   const b = await body(req);
-  await withSystem(ctx.pool, (tx) => saveBillingDetails(tx, ctx.orgId, pacificToday(), b));
+  await withSystem(ctx.pool, (tx) => saveBillingDetails(tx, ctx.orgId, pacificToday(), b, { canada: ctx.opts.billing?.canada }));
   return json({ ok: true });
 });
 
@@ -444,7 +444,7 @@ route("POST", "/api/orgs/:org/billing/card", async (req, _p, ctx) => {
   if (!sub.address_line1) throw new HttpError(400, "add the billing name, email and address first");
   const base = appUrl(req, ctx.opts);
   const out = await gateway.startCardSetup({
-    orgId: ctx.orgId, customerId: sub.processor_customer, email: sub.billing_email!, name: sub.billing_name!,
+    orgId: ctx.orgId, customerId: sub.processor_customer, email: sub.billing_email!, name: sub.billing_name!, currency: sub.currency,
     successUrl: `${base}/#/billing/card/{CHECKOUT_SESSION_ID}`, cancelUrl: `${base}/#/billing`,
   });
   if (!sub.processor_customer) await ctx.pool.query("UPDATE subscriptions SET processor_customer = $2 WHERE org_id = $1", [ctx.orgId, out.customerId]);
