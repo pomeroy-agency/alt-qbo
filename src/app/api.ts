@@ -29,6 +29,7 @@ import { GatewayError } from "../billing/gateway.js";
 import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
 import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
 import { clientOverview } from "../core/firm.js";
+import { accrueReferralFees, clientReferral, linkReferral, operatorOverview, partnerOverview, recordPayout, savePartner, setW9, unlinkReferral, voidFee } from "../billing/referrals.js";
 import { connectFeed, feedAccessToken, listFeeds, markReconnected, removeFeed, syncFeed } from "../core/bank-feeds.js";
 import { PlaidError, type PlaidClient } from "./plaid.js";
 import { ConnectError, type InvoicePayments } from "./stripe-connect.js";
@@ -202,6 +203,73 @@ async function ensureEntity(tx: Tx, entityId: string) {
   if (!rows[0]) throw new HttpError(404, "entity not found");
 }
 
+// ------------------------------------------------------------ referrals
+
+// The referral program: firms get a code; clients enter it; the operator pays fees. See billing/referrals.ts.
+
+/** Owners and admins of the organisation that sells TrailBook; everyone else gets a 404. */
+function requireOperator(ctx: Ctx) {
+  if (!ctx.opts.billing?.seller || ctx.opts.billing.seller.orgId !== ctx.orgId || !["owner", "admin"].includes(ctx.role)) throw new HttpError(404, "not found");
+}
+
+route("GET", "/api/orgs/:org/referrals", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  return withSystem(ctx.pool, async (tx) => json({
+    ...(await partnerOverview(tx, ctx.orgId)), appUrl: ctx.opts.appUrl ?? null,
+  }));
+});
+
+route("POST", "/api/orgs/:org/referrals", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => savePartner(tx, ctx.orgId, ctx.user.id, ctx.actor, b));
+  return json({ ok: true });
+});
+
+route("GET", "/api/orgs/:org/billing/referral", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  return withSystem(ctx.pool, async (tx) => json(await clientReferral(tx, ctx.orgId, pacificToday())));
+});
+
+route("POST", "/api/orgs/:org/billing/referral", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  const out = await withSystem<object>(ctx.pool, (tx) => b.remove === true
+    ? unlinkReferral(tx, ctx.orgId, ctx.actor).then(() => ({ removed: true }))
+    : linkReferral(tx, ctx.orgId, pacificToday(), b.code, ctx.actor));
+  return json(out);
+});
+
+route("GET", "/api/orgs/:org/referral-fees", async (_req, _p, ctx) => {
+  requireOperator(ctx);
+  await accrueReferralFees(ctx.pool);
+  return withSystem(ctx.pool, async (tx) => json(await operatorOverview(tx)));
+});
+
+route("POST", "/api/orgs/:org/referral-fees/payouts", async (req, _p, ctx) => {
+  requireOperator(ctx);
+  const b = await body(req);
+  await accrueReferralFees(ctx.pool);
+  return json(await recordPayout(ctx.pool, billingCfg(ctx), {
+    partnerOrgId: uuid(b.partnerOrgId, "choose a firm"), currency: b.currency, paidOn: date(b.paidOn, "payment date"),
+    method: b.method, reference: b.reference, account: b.account, bookedAmount: b.bookedAmount,
+  }, ctx.actor), 201);
+});
+
+route("POST", "/api/orgs/:org/referral-fees/fees/:fee/void", async (req, p, ctx) => {
+  requireOperator(ctx);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => voidFee(tx, uuid(p.fee, "no such fee"), b.reason));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/referral-fees/firms/:firm/w9", async (req, p, ctx) => {
+  requireOperator(ctx);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => setW9(tx, uuid(p.firm, "no such firm"), b.received === true));
+  return json({ ok: true });
+});
+
 // ------------------------------------------------------------ newsletter
 
 /** The newsletter's settings, for owners and admins of the operator's own organisation; everyone else gets a 404. */
@@ -289,7 +357,12 @@ route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
          FROM entities ORDER BY created_at`,
     )).rows;
     // Countries and their states or provinces, for the place-of-business picker.
-    return json({ org, role: ctx.role, entities, access, countries: COUNTRIES, newsletter: Boolean(newsletterFor(ctx, false)) });
+    return json({
+      org, role: ctx.role, entities, access, countries: COUNTRIES, newsletter: Boolean(newsletterFor(ctx, false)),
+      // Whether to show the Referrals page (a firm in the program) and the Referral fees page (the operator).
+      referrals: Boolean((await ctx.pool.query("SELECT 1 FROM referral_partners WHERE org_id = $1", [ctx.orgId])).rows[0]),
+      referralFees: Boolean(ctx.opts.billing?.seller?.orgId === ctx.orgId && ["owner", "admin"].includes(ctx.role)),
+    });
   });
 });
 
@@ -2442,8 +2515,11 @@ async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): P
 const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings|contacts\/[^/]+\/tax-form|bank-feeds|bank-feeds\/link-token|bank-feeds\/[^/]+\/(remove|reconnected)|online-payments\/(connect|disconnect))$/;
 const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return|contractor-forms\/prepared)$/;
 
+// Recording money paid out to a referring firm.
+const SECOND_FACTOR_ORG_PATHS = /^\/api\/orgs\/[^/]+\/referral-fees\/payouts$/;
+
 export function needsSecondFactor(method: string, path: string): boolean {
-  return method === "GET" ? SECOND_FACTOR_READS.test(path) : SECOND_FACTOR_PATHS.test(path);
+  return method === "GET" ? SECOND_FACTOR_READS.test(path) : SECOND_FACTOR_PATHS.test(path) || SECOND_FACTOR_ORG_PATHS.test(path);
 }
 
 async function requireSecondFactor(pool: pg.Pool, orgId: string, user: SessionUser): Promise<void> {
@@ -2728,6 +2804,10 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
         const org = await createOrganization(tx, { name: orgName!, actor: { id: `user:${email}`, role: "owner" } });
         await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [uid, org.id]);
         await acceptTerms(tx, org.id, uid);
+        // A firm's referral code, from its sign-up link or typed in.
+        if (typeof b.referralCode === "string" && b.referralCode.trim()) {
+          await linkReferral(tx, org.id, pacificToday(), b.referralCode, { id: `user:${email}`, role: "owner" });
+        }
         created = org.id;
       }
       return uid;
