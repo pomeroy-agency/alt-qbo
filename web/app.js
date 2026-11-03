@@ -3215,7 +3215,10 @@ async function billingView() {
   const owner = state.org.role === "owner";
   const interval = bill.interval ?? b.nextInterval ?? b.interval;
   const per = interval === "month" ? "a month" : "a year";
-  const price = (minor) => usd(minor).replace(/\.00$/, "");
+  const cad = b.currency === "CAD";
+  // Canadian-dollar subscriptions show C$, as on pomeroyagency.com.
+  const amt = (minor, ccy = b.currency) => (ccy === "CAD" ? usd(minor).replace("$", "C$") : usd(minor));
+  const price = (minor) => amt(minor).replace(/\.00$/, "");
   const status = {
     trialing: b.comped && !b.compUntil
       ? `<span class="pill">Complimentary</span> ${PLAN_LABEL[b.plan]} is included${b.compReason ? ` with ${esc(b.compReason)}` : ""}, with nothing charged, people paid included, for as long as that lasts.`
@@ -3241,9 +3244,10 @@ async function billingView() {
       <div class="muted small">Each extra business ${price(b.prices.extraBusiness[k][interval])} ${per}</div>
     </label>`;
   };
-  const next = b.next ? `<p>Next charge on ${longDate(b.next.periodStart)}: <strong>${usd(b.next.subtotalMinor)}</strong> plus California sales tax where it applies, for ${longDate(b.next.periodStart)} to ${longDate(b.next.periodEnd)}.</p>
-      <ul class="muted">${b.next.lines.map((l) => `<li>${esc(l.description)}${l.quantity > 1 ? ` × ${l.quantity}` : ""}: ${usd(l.quantity * l.unitMinor)}</li>`).join("")}</ul>` : "";
+  const next = b.next ? `<p>Next charge on ${longDate(b.next.periodStart)}: <strong>${amt(b.next.subtotalMinor)}</strong>${cad ? " in Canadian dollars" : " plus California sales tax where it applies"}, for ${longDate(b.next.periodStart)} to ${longDate(b.next.periodEnd)}.</p>
+      <ul class="muted">${b.next.lines.map((l) => `<li>${esc(l.description)}${l.quantity > 1 ? ` × ${l.quantity}` : ""}: ${amt(l.quantity * l.unitMinor)}</li>`).join("")}</ul>` : "";
   const addr = b.billing.address ?? {};
+  const country = addr.country ?? (cad ? "CA" : "US");
   app.innerHTML = shell("billing", `
     <div class="head"><div><h1>Billing</h1><p class="muted">One price per business, unlimited users, invoices and bills. Prices are before sales tax. <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a> · <a href="/promises.html" target="_blank" rel="noopener">Our promises</a></p></div></div>
     <div class="panel"><p>${status}</p>
@@ -3255,21 +3259,26 @@ async function billingView() {
       <div class="row" style="justify-content:space-between"><h2>Plan</h2>
         <div class="row seg"><button class="${interval === "month" ? "" : "secondary"}" data-action="bill-interval" data-v="month">Monthly</button><button class="${interval === "year" ? "" : "secondary"}" data-action="bill-interval" data-v="year">Yearly, 2 months free</button></div></div>
       <form data-form="bill-plan" data-interval="${interval}">
-        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: state and city overtime and minimum-wage checks, pay stubs, direct-deposit file, prepared 941, W-2 and state quarterly forms.")}</div>
+        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: state and city overtime and minimum-wage checks, pay stubs, direct-deposit file, prepared 941, W-2 and state quarterly forms, or T4, RL-1 and ROE in Canada.")}</div>
         <p class="muted">${b.businesses ? `You have ${b.businesses} business${b.businesses === 1 ? "" : "es"} here.` : "No businesses added yet; the plan price covers the first one."} ${b.status === "trialing" ? "Changes apply right away." : "Moving up to Books + Payroll applies now, charged for the days left; anything else applies at the next renewal."}</p>
         <button type="submit">Save plan</button>
       </form>
     </div>
     <div class="panel"><h2>Billing details</h2>
-      <p class="muted">The name and address on your invoices. California sales tax is worked out from this address.</p>
+      <p class="muted">The name and address on your invoices. ${b.canadaOpen
+        ? "A US address is billed in US dollars, with California sales tax worked out from it where it applies. A Canadian address is billed in Canadian dollars."
+        : "California sales tax is worked out from this address."}${b.status !== "trialing" || b.charges.length ? ` You pay in ${cad ? "Canadian" : "US"} dollars.` : ""}</p>
       <form data-form="bill-details">
         <div class="grid two">
           <label>Business name<input name="name" required value="${esc(b.billing.name ?? state.org.org.name)}"></label>
           <label>Billing email<input name="email" type="email" required value="${esc(b.billing.email ?? state.me.user.email)}"></label>
+          ${b.canadaOpen || country === "CA" ? `<label>Country<select name="country">
+            <option value="US" ${country === "US" ? "selected" : ""}>United States</option>
+            <option value="CA" ${country === "CA" ? "selected" : ""}>Canada</option></select></label><span></span>` : ""}
           <label>Street address<input name="line1" required value="${esc(addr.line1 ?? "")}"></label>
           <label>City<input name="city" required value="${esc(addr.city ?? "")}"></label>
-          <label>State<input name="state" required maxlength="2" value="${esc(addr.state ?? "CA")}"></label>
-          <label>ZIP code<input name="zip" required value="${esc(addr.zip ?? "")}"></label>
+          <label>${b.canadaOpen ? "State, province or territory" : "State"}<input name="state" required maxlength="2" placeholder="${b.canadaOpen ? "CA, BC, ON" : "CA"}" value="${esc(addr.state ?? (country === "CA" ? "" : "CA"))}"></label>
+          <label>${b.canadaOpen ? "ZIP or postal code" : "ZIP code"}<input name="zip" required value="${esc(addr.zip ?? "")}"></label>
         </div>
         <button type="submit" class="secondary">Save details</button>
       </form>
@@ -3285,7 +3294,7 @@ async function billingView() {
     ${b.charges.length ? `<div class="panel table-wrap"><h2>Payments</h2><table>
       <thead><tr><th>Date</th><th>For</th><th>Invoice</th><th class="num">Amount</th><th class="num">Tax</th><th class="num">Total</th><th>Status</th></tr></thead>
       <tbody>${b.charges.map((c) => `<tr><td>${new Date(c.created_at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" })}</td><td>${CHARGE_LABEL[c.kind]}, ${c.period_start} to ${c.period_end}</td><td class="mono">${esc(c.invoice_number ?? "")}</td>
-        <td class="num">${usd(c.subtotal_minor)}</td><td class="num">${c.tax_minor == null ? "" : usd(c.tax_minor)}</td><td class="num">${c.total_minor == null ? "" : usd(c.total_minor)}</td>
+        <td class="num">${amt(c.subtotal_minor, c.currency)}</td><td class="num">${c.tax_minor == null ? "" : amt(c.tax_minor, c.currency)}</td><td class="num">${c.total_minor == null ? "" : amt(c.total_minor, c.currency)}</td>
         <td>${CHARGE_STATUS[c.status]}${c.failure ? `<div class="hash">${esc(c.failure)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
     ${owner ? `<div class="panel"><h2>${b.status === "canceled" || b.cancelAtPeriodEnd ? "Restart" : "Cancel"}</h2>
       ${b.status === "canceled" || b.cancelAtPeriodEnd
@@ -4225,7 +4234,7 @@ document.addEventListener("submit", async (ev) => {
       toast(`Recorded ${money(r.totalMinor, r.currency)}, bill ${r.billNumber}`);
       await referralFeesView();
     } else if (kind === "bill-details") {
-      await api(orgPath("/billing/details"), { body: { name: d.name, email: d.email, address: { line1: d.line1, city: d.city, state: d.state, zip: d.zip } } });
+      await api(orgPath("/billing/details"), { body: { name: d.name, email: d.email, address: { line1: d.line1, city: d.city, state: d.state, zip: d.zip, country: d.country || "US" } } });
       toast("Billing details saved");
       await billingView();
     } else if (kind === "mfa-enable") {

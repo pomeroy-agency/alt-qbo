@@ -2,13 +2,13 @@ import type pg from "pg";
 import { COUNTRIES, isLive } from "../rules/jurisdictions.js";
 import { withSystem, withTenant, type Tx } from "../db/pool.js";
 import { createContact, recordPayment, updateContact, type ContactAddress } from "../core/documents.js";
-import { issueInvoice, type RateLookup } from "../core/sales-tax.js";
+import { CANADIAN_PROVINCES, issueInvoice, type RateLookup } from "../core/sales-tax.js";
 import type { Mailer } from "../app/mail.js";
 import { recordFirstPayment, type AdEventsConfig } from "../app/ad-events.js";
 import type { PaymentGateway, SavedCard } from "./gateway.js";
 import {
   CURRENT_PRICES, FOUNDING_LOCK_MONTHS, FOUNDING_SEATS, GRACE_DAYS, PLAN_NAMES, RETRY_DAYS, TRIAL_DAYS,
-  addDays, addMonths, daysBetween, periodEnd, type Interval, type Plan, type PriceList,
+  addDays, addMonths, currentPrices, daysBetween, formatMoney, periodEnd, type BillingCurrency, type Interval, type Plan, type PriceList,
 } from "./plans.js";
 
 // TrailBook's own subscriptions. Each organisation starts with a 30-day trial
@@ -18,6 +18,12 @@ import {
 // and the card is then charged for that invoice's total. A business that
 // stops paying never loses its books: they stay readable and downloadable,
 // and only changes are paused.
+//
+// Businesses with a Canadian billing address pay in Canadian dollars, at the
+// fixed Canadian price list. The seller's books are in US dollars, so those
+// charges are made by card first, and the invoice in the seller's books is
+// for the US dollars the card processor actually paid out, with the Canadian
+// amount and the rate written on it.
 
 export interface BillingConfig {
   gateway?: PaymentGateway;
@@ -32,6 +38,8 @@ export interface BillingConfig {
   appUrl?: string;
   /** Reports an organisation's first payment to Google and Meta, if its sign-up was recorded. */
   adEvents?: AdEventsConfig;
+  /** When on, businesses with a Canadian billing address can subscribe, in Canadian dollars. */
+  canada?: boolean;
 }
 
 const SYSTEM = { id: "system:billing", role: "system" as const };
@@ -53,6 +61,7 @@ interface Sub {
   processor_customer: string | null; processor_card: string | null; card_brand: string | null; card_last4: string | null; card_exp: string | null;
   seller_contact_id: string | null; partner_discount_pct: number;
   comp_until: string | null; comp_reason: string | null; canceled_at: Date | null;
+  currency: BillingCurrency; address_country: "US" | "CA"; activated_at: Date | null;
 }
 
 export interface ChargeLine { description: string; quantity: number; unitMinor: number; periodStart: string; periodEnd: string }
@@ -185,13 +194,25 @@ export async function estimateRenewal(tx: Tx, sub: Sub, today: string): Promise<
 
 // --------------------------------------------------------------- changes
 
-const ADDRESS_FIELDS = ["line1", "city", "state", "zip"] as const;
+const ADDRESS_FIELDS = ["line1", "city", "state", "zip", "country"] as const;
 
+const liveNames = (country: string) => {
+  const names = COUNTRIES.find((c) => c.code === country)!.regions.filter((r) => r.status === "live").map((r) => r.name);
+  return names.join(", ").replace(/, ([^,]*)$/, " or $1");
+};
+
+/**
+ * Saves the name, email and address on the invoices. The address decides
+ * the currency: Canadian dollars for a Canadian address (when Canadian
+ * billing is on), US dollars otherwise. The currency can change only until
+ * the first payment.
+ */
 export async function saveBillingDetails(
   tx: Tx, orgId: string, today: string,
   d: { name?: unknown; email?: unknown; address?: Partial<Record<(typeof ADDRESS_FIELDS)[number], unknown>> },
+  opts: { canada?: boolean } = {},
 ): Promise<void> {
-  await ensureSubscription(tx, orgId, today);
+  const sub = await ensureSubscription(tx, orgId, today);
   const text = (v: unknown, field: string, max = 120) => {
     if (typeof v !== "string" || !v.trim()) throw new BillingError(`${field} is required`);
     if (v.length > max) throw new BillingError(`${field} is too long`);
@@ -202,18 +223,40 @@ export async function saveBillingDetails(
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BillingError("enter a valid billing email");
   const a = d.address ?? {};
   const line1 = text(a.line1, "the street address"), city = text(a.city, "the city");
-  const state = text(a.state, "the state", 2).toUpperCase(), zip = text(a.zip, "the ZIP code", 10);
-  if (!/^[A-Z]{2}$/.test(state)) throw new BillingError("the state is two letters, like CA");
-  if (!/^\d{5}(-\d{4})?$/.test(zip)) throw new BillingError("the ZIP code looks like 90012");
-  // TrailBook is sold to businesses in the states it has launched in.
-  if (!isLive("US", state)) {
-    const live = COUNTRIES.find((c) => c.code === "US")!.regions.filter((r) => r.status === "live").map((r) => r.name);
-    throw new BillingError(`for now, TrailBook is only available to businesses based in ${live.join(", ").replace(/, ([^,]*)$/, " or $1")}`);
+  const country = a.country === undefined || a.country === null || a.country === "" ? "US" : String(a.country).toUpperCase();
+  if (country !== "US" && country !== "CA") throw new BillingError("the billing address should be in the United States or Canada");
+  let state: string, zip: string;
+  if (country === "CA") {
+    if (!opts.canada) throw new BillingError("billing for businesses in Canada isn't open yet; your trial carries on in the meantime");
+    state = text(a.state, "the province or territory", 2).toUpperCase();
+    if (!CANADIAN_PROVINCES.has(state)) throw new BillingError("the province or territory is two letters, like BC or ON");
+    const pc = text(a.zip, "the postal code", 10).toUpperCase().replace(/\s+/g, "");
+    if (!/^[A-Z]\d[A-Z]\d[A-Z]\d$/.test(pc)) throw new BillingError("the postal code looks like V6B 1A1");
+    zip = `${pc.slice(0, 3)} ${pc.slice(3)}`;
+    if (!isLive("CA", state)) throw new BillingError(`for now, TrailBook is only available to Canadian businesses based in ${liveNames("CA")}`);
+  } else {
+    state = text(a.state, "the state", 2).toUpperCase();
+    zip = text(a.zip, "the ZIP code", 10);
+    if (!/^[A-Z]{2}$/.test(state)) throw new BillingError("the state is two letters, like CA");
+    if (CANADIAN_PROVINCES.has(state)) throw new BillingError(`${state} is a Canadian province or territory; choose Canada as the country`);
+    if (!/^\d{5}(-\d{4})?$/.test(zip)) throw new BillingError("the ZIP code looks like 90012");
+    // TrailBook is sold to businesses in the states it has launched in.
+    if (!isLive("US", state)) throw new BillingError(`for now, TrailBook is only available to businesses based in ${liveNames("US")}`);
+  }
+  const currency: BillingCurrency = country === "CA" ? "CAD" : "USD";
+  if (currency !== sub.currency) {
+    // Once a business has paid, it stays in the currency it paid in.
+    const charged = (await tx.query("SELECT 1 FROM billing_charges WHERE org_id = $1 AND status <> 'waived' LIMIT 1", [orgId])).rows[0];
+    if (sub.activated_at || charged) {
+      throw new BillingError(`this subscription is billed in ${sub.currency === "CAD" ? "Canadian" : "US"} dollars; to move it to ${currency === "CAD" ? "Canada" : "the United States"}, email us and we'll switch it at your next renewal`, 409);
+    }
+    await tx.query("UPDATE subscriptions SET currency = $2, prices = $3 WHERE org_id = $1", [orgId, currency, JSON.stringify(currentPrices(currency))]);
   }
   await tx.query(
-    `UPDATE subscriptions SET billing_name = $2, billing_email = $3, address_line1 = $4, address_city = $5, address_state = $6, address_zip = $7, updated_at = now()
+    `UPDATE subscriptions SET billing_name = $2, billing_email = $3, address_line1 = $4, address_city = $5, address_state = $6, address_zip = $7,
+       address_country = $8, updated_at = now()
       WHERE org_id = $1`,
-    [orgId, name, email, line1, city, state, zip],
+    [orgId, name, email, line1, city, state, zip, country],
   );
 }
 
@@ -245,9 +288,9 @@ export async function choosePlan(tx: Tx, orgId: string, today: string, plan: unk
     if (diff <= 0) return {};
     const lines: ChargeLine[] = [{ description: `Upgrade to ${PLAN_NAMES.books_payroll} for ${left} of ${total} days`, quantity: 1, unitMinor: diff, periodStart: today, periodEnd: sub.period_end }];
     const { rows } = await tx.query(
-      `INSERT INTO billing_charges (org_id, kind, period_start, period_end, plan, interval, lines, subtotal_minor)
-       VALUES ($1, 'upgrade', $2, $3, 'books_payroll', $4, $5, $6) ON CONFLICT (org_id, kind, period_start) DO NOTHING RETURNING id`,
-      [orgId, today, sub.period_end, sub.interval, JSON.stringify(lines), diff],
+      `INSERT INTO billing_charges (org_id, kind, period_start, period_end, plan, interval, lines, subtotal_minor, currency)
+       VALUES ($1, 'upgrade', $2, $3, 'books_payroll', $4, $5, $6, $7) ON CONFLICT (org_id, kind, period_start) DO NOTHING RETURNING id`,
+      [orgId, today, sub.period_end, sub.interval, JSON.stringify(lines), diff, sub.currency],
     );
     return { upgradeChargeId: rows[0]?.id };
   }
@@ -360,7 +403,7 @@ export async function billingSummary(tx: Tx, orgId: string, today: string, cfg: 
   if (await isFree(tx, orgId, cfg)) return { free: true as const };
   const sub = await ensureSubscription(tx, orgId, today);
   const charges = (await tx.query(
-    `SELECT id, kind, period_start::text, period_end::text, subtotal_minor, tax_minor, total_minor, invoice_number, status, failure, attempts, next_attempt_on::text, paid_at, created_at
+    `SELECT id, kind, currency, period_start::text, period_end::text, subtotal_minor, tax_minor, total_minor, invoice_number, status, failure, attempts, next_attempt_on::text, paid_at, created_at
        FROM billing_charges WHERE org_id = $1 ORDER BY created_at DESC LIMIT 36`,
     [orgId],
   )).rows;
@@ -371,8 +414,8 @@ export async function billingSummary(tx: Tx, orgId: string, today: string, cfg: 
     trialEndsOn: compActive(sub, today) && !sub.comp_until ? null : sub.trial_ends_on, periodStart: sub.period_start, periodEnd: sub.period_end, cancelAtPeriodEnd: sub.cancel_at_period_end,
     comped: compActive(sub, today), compUntil: compActive(sub, today) ? sub.comp_until : null, compReason: compActive(sub, today) ? sub.comp_reason : null,
     founding: sub.founding, priceLockedUntil: sub.price_locked_until, foundingSeatsLeft: foundingLeft, partnerDiscountPct: sub.partner_discount_pct,
-    prices: sub.prices,
-    billing: { name: sub.billing_name, email: sub.billing_email, address: sub.address_line1 ? { line1: sub.address_line1, city: sub.address_city, state: sub.address_state, zip: sub.address_zip } : null },
+    prices: sub.prices, currency: sub.currency, canadaOpen: Boolean(cfg.canada),
+    billing: { name: sub.billing_name, email: sub.billing_email, address: sub.address_line1 ? { line1: sub.address_line1, city: sub.address_city, state: sub.address_state, zip: sub.address_zip, country: sub.address_country } : null },
     card: sub.card_last4 ? { brand: sub.card_brand, last4: sub.card_last4, exp: sub.card_exp } : null,
     access: accessFor(sub, today),
     next: sub.status === "canceled" || sub.cancel_at_period_end || (compActive(sub, today) && !sub.comp_until) ? null : await estimateRenewal(tx, sub, today),
@@ -386,9 +429,9 @@ export async function billingSummary(tx: Tx, orgId: string, today: string, cfg: 
 
 async function createCharge(tx: Tx, sub: Sub, kind: "renewal" | "people", start: string, end: string, lines: ChargeLine[], plan: Plan, interval: Interval) {
   await tx.query(
-    `INSERT INTO billing_charges (org_id, kind, period_start, period_end, plan, interval, lines, subtotal_minor)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (org_id, kind, period_start) DO NOTHING`,
-    [sub.org_id, kind, start, end, plan, interval, JSON.stringify(lines), subtotal(lines)],
+    `INSERT INTO billing_charges (org_id, kind, period_start, period_end, plan, interval, lines, subtotal_minor, currency)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (org_id, kind, period_start) DO NOTHING`,
+    [sub.org_id, kind, start, end, plan, interval, JSON.stringify(lines), subtotal(lines), sub.currency],
   );
 }
 
@@ -469,6 +512,49 @@ async function sellerContact(tx: Tx, cfg: BillingConfig, sub: Sub): Promise<stri
 
 const money = (minor: number | bigint) => (Number(minor) / 100).toFixed(2);
 
+/** Marks a charge paid and moves the subscription on: a renewal starts its period, a people charge moves the billed-through date. */
+async function markPaid(pool: pg.Pool, sub: Sub, c: any, chargeId: string, processorCharge: string, today: string): Promise<void> {
+  await withSystem(pool, async (tx) => {
+    await tx.query("UPDATE billing_charges SET status = 'paid', processor_charge = $2, failure = NULL, next_attempt_on = NULL, paid_at = now(), updated_at = now() WHERE id = $1", [chargeId, processorCharge]);
+    const stillUnpaid = (await tx.query("SELECT 1 FROM billing_charges WHERE org_id = $1 AND status IN ('failed', 'held', 'pending', 'processing')", [sub.org_id])).rows[0];
+    if (c.kind === "renewal") {
+      const founding = !sub.founding && !(await tx.query("SELECT activated_at FROM subscriptions WHERE org_id = $1", [sub.org_id])).rows[0].activated_at
+        && (await tx.query("SELECT count(*)::int AS n FROM subscriptions WHERE founding")).rows[0].n < FOUNDING_SEATS;
+      await tx.query(
+        `UPDATE subscriptions SET status = $2, plan = $3, interval = $4, next_plan = NULL, next_interval = NULL,
+           period_start = $5, period_end = $6, past_due_since = CASE WHEN $2 = 'active' THEN NULL ELSE past_due_since END,
+           people_billed_through = CASE WHEN $3 = 'books_payroll' THEN $7::date ELSE people_billed_through END,
+           activated_at = coalesce(activated_at, now()),
+           founding = founding OR $8, price_locked_until = CASE WHEN $8 THEN $9::date ELSE price_locked_until END, updated_at = now()
+         WHERE org_id = $1`,
+        [sub.org_id, stillUnpaid ? "past_due" : "active", c.plan, c.interval, c.period_start, c.period_end, addDays(c.period_start, -1), founding, addMonths(today, FOUNDING_LOCK_MONTHS)],
+      );
+    } else {
+      if (c.kind === "people") await tx.query("UPDATE subscriptions SET people_billed_through = $2 WHERE org_id = $1", [sub.org_id, c.period_end]);
+      if (!stillUnpaid) await tx.query("UPDATE subscriptions SET status = 'active', past_due_since = NULL, updated_at = now() WHERE org_id = $1 AND status = 'past_due'", [sub.org_id]);
+    }
+  });
+}
+
+/** Tells the owners a card was declined. */
+async function declined(pool: pg.Pool, cfg: BillingConfig, sub: Sub, c: any, chargeId: string, today: string, result: { id?: string; message: string }, label: string, amount: string) {
+  const attempts = c.attempts + 1;
+  await withSystem(pool, async (tx) => {
+    await tx.query(
+      "UPDATE billing_charges SET status = 'failed', failure = $2, processor_charge = $3, next_attempt_on = $4, updated_at = now() WHERE id = $1",
+      [chargeId, result.message, result.id ?? null, attempts % MAX_ATTEMPTS ? addDays(today, RETRY_DAYS) : null],
+    );
+    await tx.query("UPDATE subscriptions SET status = 'past_due', past_due_since = coalesce(past_due_since, $2), updated_at = now() WHERE org_id = $1 AND status <> 'trialing'", [sub.org_id, today]);
+    // A first payment that fails leaves the trial ended; the books are read-only until a card works.
+  });
+  await notifyOwners(pool, cfg, sub.org_id, (name) => ({
+    subject: "Your TrailBook payment didn't go through",
+    text: `We couldn't charge the card ending ${sub.card_last4} for ${label} (${amount}) for ${name}: ${result.message}.\n\n`
+      + `Update the card under Billing${cfg.appUrl ? ` (${cfg.appUrl}/#/billing)` : ""}. ${attempts % MAX_ATTEMPTS ? `We'll try again in ${RETRY_DAYS} days.` : "We won't try again until the card is updated."} `
+      + `Your books stay fully usable for ${GRACE_DAYS} days after the first failed payment, and always readable and downloadable after that.\n`,
+  }));
+}
+
 /** Invoices one charge in the seller's books, then charges the card for it. */
 async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string, today: string): Promise<"paid" | "failed" | "skipped"> {
   const seller = cfg.seller!;
@@ -490,6 +576,7 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
   });
   if (!claimed) return "skipped";
   const { c, sub } = claimed;
+  if (c.currency === "CAD") return chargeInCad(pool, cfg, c, sub, chargeId, today);
 
   let invoice: { id: string; number: string; taxMinor: bigint; totalMinor: bigint; dueMinor: bigint; contactId: string };
   try {
@@ -533,21 +620,7 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
       await pool.query("UPDATE billing_charges SET status = 'held', failure = $2, updated_at = now() WHERE id = $1", [chargeId, `no answer from the card processor: ${result.message}`]);
       return "failed";
     }
-    const attempts = c.attempts + 1;
-    await withSystem(pool, async (tx) => {
-      await tx.query(
-        "UPDATE billing_charges SET status = 'failed', failure = $2, processor_charge = $3, next_attempt_on = $4, updated_at = now() WHERE id = $1",
-        [chargeId, result.message, result.id ?? null, attempts % MAX_ATTEMPTS ? addDays(today, RETRY_DAYS) : null],
-      );
-      await tx.query("UPDATE subscriptions SET status = 'past_due', past_due_since = coalesce(past_due_since, $2), updated_at = now() WHERE org_id = $1 AND status <> 'trialing'", [sub.org_id, today]);
-      // A first payment that fails leaves the trial ended; the books are read-only until a card works.
-    });
-    await notifyOwners(pool, cfg, sub.org_id, (name) => ({
-      subject: "Your TrailBook payment didn't go through",
-      text: `We couldn't charge the card ending ${sub.card_last4} for ${invoice.number} ($${money(invoice.dueMinor)}) for ${name}: ${result.message}.\n\n`
-        + `Update the card under Billing${cfg.appUrl ? ` (${cfg.appUrl}/#/billing)` : ""}. ${attempts % MAX_ATTEMPTS ? `We'll try again in ${RETRY_DAYS} days.` : "We won't try again until the card is updated."} `
-        + `Your books stay fully usable for ${GRACE_DAYS} days after the first failed payment, and always readable and downloadable after that.\n`,
-    }));
+    await declined(pool, cfg, sub, c, chargeId, today, result, invoice.number, formatMoney(invoice.dueMinor));
     return "failed";
   }
 
@@ -557,26 +630,7 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
       bankAccount: seller.bankAccount, idempotencyKey: `billing:${chargeId}`, actor: SYSTEM,
     })
     : Promise.resolve(null));
-  await withSystem(pool, async (tx) => {
-    await tx.query("UPDATE billing_charges SET status = 'paid', processor_charge = $2, failure = NULL, next_attempt_on = NULL, paid_at = now(), updated_at = now() WHERE id = $1", [chargeId, result.id]);
-    const stillUnpaid = (await tx.query("SELECT 1 FROM billing_charges WHERE org_id = $1 AND status IN ('failed', 'held', 'pending', 'processing')", [sub.org_id])).rows[0];
-    if (c.kind === "renewal") {
-      const founding = !sub.founding && !(await tx.query("SELECT activated_at FROM subscriptions WHERE org_id = $1", [sub.org_id])).rows[0].activated_at
-        && (await tx.query("SELECT count(*)::int AS n FROM subscriptions WHERE founding")).rows[0].n < FOUNDING_SEATS;
-      await tx.query(
-        `UPDATE subscriptions SET status = $2, plan = $3, interval = $4, next_plan = NULL, next_interval = NULL,
-           period_start = $5, period_end = $6, past_due_since = CASE WHEN $2 = 'active' THEN NULL ELSE past_due_since END,
-           people_billed_through = CASE WHEN $3 = 'books_payroll' THEN $7::date ELSE people_billed_through END,
-           activated_at = coalesce(activated_at, now()),
-           founding = founding OR $8, price_locked_until = CASE WHEN $8 THEN $9::date ELSE price_locked_until END, updated_at = now()
-         WHERE org_id = $1`,
-        [sub.org_id, stillUnpaid ? "past_due" : "active", c.plan, c.interval, c.period_start, c.period_end, addDays(c.period_start, -1), founding, addMonths(today, FOUNDING_LOCK_MONTHS)],
-      );
-    } else {
-      if (c.kind === "people") await tx.query("UPDATE subscriptions SET people_billed_through = $2 WHERE org_id = $1", [sub.org_id, c.period_end]);
-      if (!stillUnpaid) await tx.query("UPDATE subscriptions SET status = 'active', past_due_since = NULL, updated_at = now() WHERE org_id = $1 AND status = 'past_due'", [sub.org_id]);
-    }
-  });
+  await markPaid(pool, sub, c, chargeId, result.id, today);
   if (invoice.dueMinor > 0n) {
     await recordFirstPayment(pool, cfg.adEvents, { orgId: sub.org_id, valueMinor: invoice.totalMinor - invoice.taxMinor, plan: c.plan, invoice: invoice.number });
   }
@@ -587,6 +641,119 @@ async function attemptCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string
       + `${invoice.taxMinor > 0n ? `California sales tax: $${money(invoice.taxMinor)}\n` : ""}Total: $${money(invoice.totalMinor)}\n\nYour invoices are under Billing.\n`,
   }));
   return "paid";
+}
+
+/**
+ * A charge in Canadian dollars: the card is charged first (no US sales tax
+ * applies to a Canadian billing address, so the total is known), then the
+ * seller's US-dollar books get the invoice for what the processor paid out.
+ */
+async function chargeInCad(pool: pg.Pool, cfg: BillingConfig, c: any, sub: Sub, chargeId: string, today: string): Promise<"paid" | "failed"> {
+  const amount = BigInt(c.subtotal_minor);
+  const label = `your TrailBook subscription, ${c.period_start} to ${c.period_end}`;
+  const result = amount <= 0n
+    ? { ok: true as const, id: "nothing-due" }
+    : await cfg.gateway!.charge({
+      customerId: sub.processor_customer!, paymentMethodId: sub.processor_card!, amountMinor: amount, currency: "CAD",
+      description: `TrailBook subscription ${c.period_start} to ${c.period_end}`, idempotencyKey: `${chargeId}:${c.attempts + 1}`,
+      metadata: { org_id: sub.org_id, charge_id: chargeId },
+    }).catch((err) => ({ ok: false as const, message: err instanceof Error ? err.message : String(err), unknown: true }));
+  if (!result.ok) {
+    if ("unknown" in result) {
+      await pool.query("UPDATE billing_charges SET status = 'held', failure = $2, updated_at = now() WHERE id = $1", [chargeId, `no answer from the card processor: ${result.message}`]);
+      return "failed";
+    }
+    await declined(pool, cfg, sub, c, chargeId, today, result, label, formatMoney(amount, "CAD"));
+    return "failed";
+  }
+  await pool.query("UPDATE billing_charges SET tax_minor = 0, total_minor = subtotal_minor WHERE id = $1", [chargeId]);
+  await markPaid(pool, sub, c, chargeId, result.id, today);
+  await notifyOwners(pool, cfg, sub.org_id, (name) => ({
+    subject: `TrailBook receipt, ${c.period_start} to ${c.period_end}`,
+    text: `Thanks. We charged ${formatMoney(amount, "CAD")} to the card ending ${sub.card_last4} for ${name}'s TrailBook subscription, ${c.period_start} to ${c.period_end}.\n\n`
+      + `${(c.lines as ChargeLine[]).map((l) => `${l.description}: ${l.quantity} x ${formatMoney(l.unitMinor, "CAD")}`).join("\n")}\n`
+      + `Total: ${formatMoney(amount, "CAD")} (Canadian dollars)\n\nYour payments are under Billing.\n`,
+  }));
+  await bookCadCharge(pool, cfg, chargeId, today);
+  return "paid";
+}
+
+/** Splits `total` across `parts` in proportion, to the cent, so the pieces add up exactly. */
+export function splitInProportion(parts: bigint[], total: bigint): bigint[] {
+  const whole = parts.reduce((s, p) => s + p, 0n);
+  if (whole === 0n) return parts.map(() => 0n);
+  const out = parts.map((p) => (p * total * 2n + whole) / (whole * 2n));
+  out[out.length - 1] = total - out.slice(0, -1).reduce((s, p) => s + p, 0n);
+  return out;
+}
+
+/**
+ * Records a paid Canadian-dollar charge in the seller's US-dollar books: an
+ * invoice for the converted amount, each line showing its Canadian price,
+ * marked paid into the card account. Safe to repeat; a failure is kept on
+ * the charge and tried again on the next run.
+ */
+export async function bookCadCharge(pool: pg.Pool, cfg: BillingConfig, chargeId: string, today: string): Promise<boolean> {
+  const seller = cfg.seller!;
+  const c = (await pool.query("SELECT * FROM billing_charges WHERE id = $1", [chargeId])).rows[0];
+  if (!c || c.status !== "paid" || c.currency !== "CAD" || c.invoice_id) return false;
+  const sub = (await pool.query("SELECT * FROM subscriptions WHERE org_id = $1", [c.org_id])).rows[0] as Sub;
+  try {
+    const cad = BigInt(c.subtotal_minor);
+    let settled: bigint, rate: string;
+    if (cad === 0n) {
+      settled = 0n; rate = "1";
+    } else {
+      const s = await cfg.gateway!.settlement(c.processor_charge);
+      if (s.currency !== "USD") throw new Error(`the card processor paid out in ${s.currency}, but the seller's books are in US dollars`);
+      settled = s.amountMinor; rate = s.rate;
+    }
+    const lines = c.lines as ChargeLine[];
+    const usd = splitInProportion(lines.map((l) => BigInt(l.quantity * l.unitMinor)), settled);
+    const paidDate = c.paid_at ? new Date(c.paid_at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }) : today;
+    const invoice = await withTenant(pool, seller.orgId, async (tx) => {
+      const contactId = await sellerContact(tx, cfg, sub);
+      const doc = await issueInvoice(tx, {
+        orgId: seller.orgId, entityId: seller.entityId, contactId, issueDate: paidDate, dueDate: paidDate,
+        memo: `TrailBook subscription, ${c.period_start} to ${c.period_end}. Charged ${formatMoney(cad, "CAD")} by card; `
+          + `the card processor paid out ${formatMoney(settled)} (rate ${rate}).`,
+        lines: lines.map((l, i) => ({
+          description: `${l.description}: ${l.quantity} x ${formatMoney(l.unitMinor, "CAD")} = ${formatMoney(l.quantity * l.unitMinor, "CAD")}`,
+          quantity: "1", unitPrice: money(usd[i]!), taxCategory: SOFTWARE, servicePeriodStart: l.periodStart, servicePeriodEnd: l.periodEnd,
+        })),
+        idempotencyKey: `billing:${c.id}`, lookup: cfg.taxRates, actor: SYSTEM,
+      });
+      if (doc.taxMinor !== 0n) throw new Error(`the seller's invoice worked out ${formatMoney(doc.taxMinor)} of sales tax for a Canadian address; check the customer's address`);
+      if (doc.dueMinor > 0n) {
+        await recordPayment(tx, {
+          orgId: seller.orgId, entityId: seller.entityId, documentId: doc.id, date: paidDate, amount: doc.dueMinor,
+          bankAccount: seller.bankAccount, idempotencyKey: `billing:${chargeId}`, actor: SYSTEM,
+        });
+      }
+      return { id: doc.id, number: doc.number, contactId };
+    });
+    await pool.query(
+      "UPDATE billing_charges SET invoice_id = $2, invoice_number = $3, settled_minor = $4, fx_rate = $5, book_failure = NULL, updated_at = now() WHERE id = $1",
+      [chargeId, invoice.id, invoice.number, settled, rate],
+    );
+    await pool.query("UPDATE subscriptions SET seller_contact_id = $2 WHERE org_id = $1", [sub.org_id, invoice.contactId]);
+    if (settled > 0n) await recordFirstPayment(pool, cfg.adEvents, { orgId: sub.org_id, valueMinor: settled, plan: c.plan, invoice: invoice.number });
+    return true;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await pool.query("UPDATE billing_charges SET book_failure = $2, updated_at = now() WHERE id = $1", [chargeId, message.slice(0, 500)]);
+    console.error(`billing: charge ${chargeId} was paid in CAD but isn't in the seller's books yet: ${message}`);
+    return false;
+  }
+}
+
+/** Paid Canadian-dollar charges the seller's books don't have yet. They are tried again on each run. */
+export async function unbookedCharges(pool: pg.Pool): Promise<{ id: string; orgId: string; failure: string }[]> {
+  const { rows } = await pool.query(
+    `SELECT id, org_id, coalesce(book_failure, 'not booked yet') AS failure FROM billing_charges
+      WHERE status = 'paid' AND currency = 'CAD' AND invoice_id IS NULL AND paid_at < now() - interval '1 hour' ORDER BY created_at`,
+  );
+  return rows.map((r) => ({ id: r.id, orgId: r.org_id, failure: r.failure }));
 }
 
 export interface BillingRunResult { charged: number; failed: number; created: number }
@@ -615,6 +782,10 @@ export async function runBilling(pool: pg.Pool, cfg: BillingConfig, today: strin
       if (r === "paid") result.charged++;
       else if (r === "failed") result.failed++;
     }
+    const unbooked = (await pool.query(
+      "SELECT id FROM billing_charges WHERE org_id = $1 AND status = 'paid' AND currency = 'CAD' AND invoice_id IS NULL ORDER BY created_at", [orgId],
+    )).rows;
+    for (const u of unbooked) await bookCadCharge(pool, cfg, u.id, today);
   }
   return result;
 }

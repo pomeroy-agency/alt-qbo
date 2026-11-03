@@ -25,6 +25,9 @@ const gateway: PaymentGateway = {
     charges.push(input.amountMinor);
     return { ok: true, id: `pi_r${charges.length}` };
   },
+  async settlement() {
+    throw new Error("not used");
+  },
 };
 
 let seller: { orgId: string; entityId: string };

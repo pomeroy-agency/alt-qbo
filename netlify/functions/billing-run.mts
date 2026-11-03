@@ -4,7 +4,7 @@ import pg from "pg";
 import { billingFromEnv } from "../../src/app/billing-config.js";
 import { cdtfaRateLookup } from "../../src/app/cdtfa.js";
 import { mailerFromEnv } from "../../src/app/mail.js";
-import { heldCharges, runBilling } from "../../src/billing/billing.js";
+import { heldCharges, runBilling, unbookedCharges } from "../../src/billing/billing.js";
 import { accrueReferralFees, owedSummary } from "../../src/billing/referrals.js";
 import { hubFromEnv, pushChanged } from "../../src/app/hub.js";
 import { pacificToday } from "../../src/payroll/business-days.js";
@@ -51,6 +51,17 @@ export default async () => {
           subject: `Billing: ${held.length} charge${held.length === 1 ? "" : "s"} need a look`,
           text: `These charges stopped and won't retry on their own:\n\n${held.map((h) => `${h.id} (organisation ${h.orgId}): ${h.failure}`).join("\n")}\n\n`
             + `Check the card processor's dashboard before charging any of them again.\n`,
+        });
+      }
+      // Canadian-dollar charges that were paid but couldn't be put in the seller's books. These retry each morning.
+      const unbooked = await unbookedCharges(pool);
+      if (unbooked.length && cfg.mailer && process.env.OPS_EMAIL) {
+        await cfg.mailer({
+          to: process.env.OPS_EMAIL,
+          subject: `Billing: ${unbooked.length} Canadian payment${unbooked.length === 1 ? "" : "s"} not in the books yet`,
+          text: `These Canadian-dollar charges were paid, but the seller's books don't have them yet. TrailBook tries again every morning:\n\n`
+            + `${unbooked.map((h) => `${h.id} (organisation ${h.orgId}): ${h.failure}`).join("\n")}\n\n`
+            + `If the reason is a permission error, give the Stripe key read access to Charges and Balance.\n`,
         });
       }
     } else {
