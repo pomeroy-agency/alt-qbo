@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "../core/audit.js";
 import { usCalifornia2026 } from "./us-ca-2026.js";
 import { usFederal2026 } from "./us-federal-2026.js";
+import { usFederal2027 } from "./us-federal-2027.js";
 import { NO_INCOME_TAX_STATES_2026 } from "./us-states-2026.js";
 import { usArizona2026 } from "./us-az-2026.js";
 import { usNewYork2026 } from "./us-ny-2026.js";
@@ -61,7 +62,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usCalifornia2026, ...NO_INCOME_TAX_STATES_2026, usArizona2026, usOregon2026, usNewYork2026,
+const REGISTRY: readonly RulePack[] = deepFreeze([usFederal2026, usFederal2027, usCalifornia2026, ...NO_INCOME_TAX_STATES_2026, usArizona2026, usOregon2026, usNewYork2026,
   usIllinois2026, usColorado2026, usNorthCarolina2026, usGeorgia2026, usUtah2026, usIdaho2026,
   usMichigan2026, usVirginia2026, usMassachusetts2026, usNewJersey2026, usPennsylvania2026, usOhio2026,
   usIndiana2026, usMaryland2026, usMissouri2026, usWisconsin2026, usMinnesota2026, usSouthCarolina2026,

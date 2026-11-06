@@ -6,6 +6,20 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 
 **Sign-off, 2026-10-29.** Greg approved every new state pack (Texas, Florida, Nevada, Tennessee, South Dakota, Wyoming, New Hampshire, Alaska, Washington, Arizona, Oregon and New York) as it stands, ⚠️ items included. Those packs are now `released`, so saved pay runs can use them. The known gaps listed in each section remain open, and the daily rule watch keeps checking them.
 
+## us-federal 2027.1 (`src/rules/us-federal-2027.ts`), draft, added by the rule watch 2026-11-06
+
+| Figure | 2027 value | Basis |
+|---|---|---|
+| Brackets, MFJ | 10% to $25,600; 12% to $104,050; 22% to $218,250; 24% to $416,650; 32% to $529,100; 35% to $793,650; 37% above | Rev. Proc. 2026-35, Table 1 ✅ |
+| Brackets, head of household | 10% to $18,250; 12% to $69,650; 22% to $109,100; 24% to $208,300; 32% to $264,550; 35% to $661,350; 37% above | Rev. Proc. 2026-35, Table 2 ✅ |
+| Brackets, single (also used for MFS, as in 2026) | 10% to $12,800; 12% to $52,025; 22% to $109,125; 24% to $208,325; 32% to $264,550; 35% to $661,375; 37% above | Rev. Proc. 2026-35, Table 3 ✅ |
+| Standard deduction | $33,200 MFJ; $24,925 HOH; $16,600 single and MFS | Rev. Proc. 2026-35, section 3.15 ✅ |
+| Social Security wage base | $192,300 | SSA, Oct 14, 2026 ✅ |
+| Worksheet 1A line 1g, deposit thresholds | carried over from 2026 | ⚠️ check against the 2027 Pub 15-T and Pub 15 (December) |
+| FICA, Additional Medicare, FUTA, supplemental rate | unchanged (statutory) | ✅ |
+
+The pack stays `draft` until the 2027 Pub 15-T is out and its annual percentage tables are checked against this pack, and until 2027 state packs exist. Until then nothing calculates on it: a 2027 pay date still finds no state pack, and live runs need released packs.
+
 ## us-federal 2026.1 (`src/rules/us-federal-2026.ts`), released 2026-10-27
 
 | Figure | Value | Source | Check |
@@ -61,7 +75,8 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | Exempt salary floor | $72,384 | follows from the minimum wage |
 | UI and ETT wage base, ETT rate | $7,000; 0.1% | final (EDD) |
 | SDI rate | 1.4% forecast | final rate due in December |
-| Federal brackets, Pub 15-T, EDD Method B | not yet published | expected Oct to Dec 2026 |
+| Federal brackets and standard deductions | MFJ $33,200, HOH $24,925, single and MFS $16,600; brackets in `us-federal-2027.ts` | final (Rev. Proc. 2026-35, Nov 5, 2026); draft pack us-federal 2027.1 |
+| Pub 15-T, EDD Method B | not yet published | expected December 2026 |
 
 ### Other states: announced for 2027 (rule watch 2026-10-29 and later; each 2027 state pack needs these)
 

@@ -5,6 +5,7 @@ import { accountBalance, trialBalance } from "../src/core/reports.js";
 import { verifyAuditChain } from "../src/core/audit.js";
 import { allRulePacks, JurisdictionError, resolveRules, rulePackHash } from "../src/rules/index.js";
 import { usFederal2026 } from "../src/rules/us-federal-2026.js";
+import { usFederal2027 } from "../src/rules/us-federal-2027.js";
 import { usCalifornia2026 } from "../src/rules/us-ca-2026.js";
 import { federalSchedule } from "../src/payroll/federal.js";
 import { splitWorkweek } from "../src/payroll/hours.js";
@@ -47,11 +48,24 @@ describe("rule packs", () => {
     // Greg signed off the 2026 packs on 2026-10-27.
     expect(resolveRules(CA, "2026-06-15", { requireReleased: true }).federal.status).toBe("released");
     // Packs added since then stay drafts until Greg signs them off.
-    const drafts: string[] = [];
+    const drafts = ["us-federal@2027.1"];
     for (const p of allRulePacks()) {
       expect(p.sources.length).toBeGreaterThan(0);
-      expect(p.status).toBe(drafts.includes(p.id) ? "draft" : "released");
+      expect(p.status).toBe(drafts.includes(`${p.id}@${p.version}`) ? "draft" : "released");
     }
+  });
+
+  it("holds the 2027 federal figures from Rev. Proc. 2026-35 as a draft", () => {
+    expect(usFederal2027).toMatchObject({ status: "draft", effectiveFrom: "2027-01-01", effectiveTo: "2027-12-31" });
+    const fit = usFederal2027.payroll.incomeTax;
+    expect(fit.standardDeduction).toEqual({ single_or_mfs: "16600", mfj: "33200", hoh: "24925" });
+    // Rev. Proc. 2026-35 section 3.01, Tables 1 to 3 (bracket starts).
+    expect(fit.brackets.mfj.map((b) => b.over)).toEqual(["0", "25600", "104050", "218250", "416650", "529100", "793650"]);
+    expect(fit.brackets.hoh.map((b) => b.over)).toEqual(["0", "18250", "69650", "109100", "208300", "264550", "661350"]);
+    expect(fit.brackets.single_or_mfs.map((b) => b.over)).toEqual(["0", "12800", "52025", "109125", "208325", "264550", "661375"]);
+    expect(usFederal2027.payroll.socialSecurity.wageBase).toBe("192300");
+    // A draft never reaches a live pay run, and 2027 still has no state packs.
+    expect(() => resolveRules(CA, "2027-01-15")).toThrow(JurisdictionError);
   });
 
   it("derives the Pub 15-T 2026 MFJ schedules exactly as published", () => {
