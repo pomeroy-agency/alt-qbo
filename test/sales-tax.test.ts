@@ -6,7 +6,7 @@ import { LedgerError } from "../src/core/errors.js";
 import { createContact, voidDocument } from "../src/core/documents.js";
 import { setSalesTaxSettings } from "../src/core/sales-tax-return.js";
 import { NO_PERMIT_WARNING, createItem, permitNotStartedWarning, decideSalesTax, explainTax, issueInvoice, salesTaxReport, setBusinessAddress, updateItem, type RateLookup } from "../src/core/sales-tax.js";
-import { accountant, bookkeeper, owner, pool, setupCaliforniaBusiness } from "./helpers.js";
+import { accountant, bookkeeper, owner, passSecondFactor, pool, setupCaliforniaBusiness } from "./helpers.js";
 
 async function expectLedgerError(p: Promise<unknown>, code: string) {
   await expect(p).rejects.toSatisfy((e: unknown) => e instanceof LedgerError && e.code === code);
@@ -289,7 +289,7 @@ describe("sales tax API", () => {
 
   it("keeps products, customer addresses, previews the tax, and issues the invoice", async () => {
     const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `tax${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Tax Co", inviteCode: "c" } });
-    const cookie = su.cookie!;
+    const cookie = await passSecondFactor(su.cookie!);
     const orgId = (await call("/api/me", { cookie })).data.orgs[0].id;
     const ent = await call(`/api/orgs/${orgId}/entities`, { cookie, body: { legalName: "Tax Studio LLC", entityType: "llc_single", region: "CA", firstFiscalYear: 2026 } });
     const base = `/api/orgs/${orgId}/entities/${ent.data.id}`;

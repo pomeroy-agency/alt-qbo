@@ -8,6 +8,17 @@ export interface MailMessage {
   to: string;
   subject: string;
   text: string;
+  /** An HTML version beside the text (invoices to customers). */
+  html?: string;
+  /** Shown as the sender's name, at TrailBook's own verified address ("Sunset Design Studio LLC"). */
+  fromName?: string;
+  /** Where replies go: the business, for emails to its customers. */
+  replyTo?: string;
+}
+
+/** The address part of a From line: "TrailBook <a@b.com>" or "a@b.com". */
+export function fromAddress(from: string): string {
+  return /<([^>]+)>/.exec(from)?.[1]?.trim() ?? from.trim();
 }
 
 export type Mailer = (message: MailMessage) => Promise<void>;
@@ -41,6 +52,11 @@ export function mailerFromEnv(env: Record<string, string | undefined> = process.
     return undefined;
   }
   return async (m) => {
-    await transport.sendMail({ from, to: m.to, subject: m.subject, text: m.text });
+    // The business's name goes on TrailBook's own address; quotes and angle brackets are dropped so the name can't add a second address.
+    const sender = m.fromName ? { name: `${m.fromName.replace(/["<>\r\n]/g, "").slice(0, 80)} via TrailBook`, address: fromAddress(from!) } : from;
+    await transport.sendMail({
+      from: sender, to: m.to, subject: m.subject, text: m.text,
+      ...(m.html ? { html: m.html } : {}), ...(m.replyTo ? { replyTo: m.replyTo } : {}),
+    });
   };
 }

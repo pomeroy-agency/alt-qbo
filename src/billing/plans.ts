@@ -7,9 +7,13 @@
 
 export type Plan = "books" | "books_payroll";
 export type Interval = "month" | "year";
+/** Businesses with a Canadian billing address pay in Canadian dollars; everyone else in US dollars. */
+export type BillingCurrency = "USD" | "CAD";
 
 export interface PriceList {
   version: string;
+  /** Lists from before Canadian billing have no currency: they are US dollars. */
+  currency?: BillingCurrency;
   /** Minor units (cents) per plan and interval. */
   plan: Record<Plan, Record<Interval, number>>;
   /** Each business after the first. */
@@ -20,10 +24,33 @@ export interface PriceList {
 
 export const CURRENT_PRICES: PriceList = {
   version: "2026-10",
+  currency: "USD",
   plan: { books: { month: 1500, year: 15000 }, books_payroll: { month: 3500, year: 35000 } },
   extraBusiness: { books: { month: 1000, year: 10000 }, books_payroll: { month: 2500, year: 25000 } },
   perPersonMonth: 400,
 };
+
+// The fixed Canadian-dollar list Greg approved on 2026-10-29 (about 1.42 CAD
+// per USD, rounded), the same figures pomeroyagency.com shows Canadian
+// visitors (web/currency.js). A change here needs the same change there.
+export const CURRENT_PRICES_CAD: PriceList = {
+  version: "2026-10-cad",
+  currency: "CAD",
+  plan: { books: { month: 2100, year: 21000 }, books_payroll: { month: 4900, year: 49000 } },
+  extraBusiness: { books: { month: 1400, year: 14000 }, books_payroll: { month: 3500, year: 35000 } },
+  perPersonMonth: 600,
+};
+
+export function currentPrices(currency: BillingCurrency): PriceList {
+  return currency === "CAD" ? CURRENT_PRICES_CAD : CURRENT_PRICES;
+}
+
+/** An amount for an email or invoice line: $15.00, or C$21.00 in Canadian dollars. */
+export function formatMoney(minor: number | bigint, currency: BillingCurrency | string = "USD"): string {
+  const n = Number(minor);
+  const abs = (Math.abs(n) / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${n < 0 ? "-" : ""}${currency === "CAD" ? "C$" : "$"}${abs}`;
+}
 
 export const PLAN_NAMES: Record<Plan, string> = { books: "Books", books_payroll: "Books + Payroll" };
 

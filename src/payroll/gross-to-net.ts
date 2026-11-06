@@ -71,8 +71,35 @@ export interface EmployeePayInput {
   deductions?: Deduction[];
   ytd?: Partial<YearToDate>;
   sickLeave?: SickLeaveInput;
+  /** Canada: statutory holiday pay for holidays in the period, worked out from earlier pay (src/payroll/employment-standards.ts). */
+  holidayPay?: { date: string; name: string; amount: string; basis?: string }[];
+  /** Canada: hours worked on a statutory holiday, paid at the region's premium on top of the holiday pay. */
+  holidayHoursWorked?: string;
+  holidayWorkedMultiplier?: string;
+  /** Things the reviewer should check about the holiday pay (short history...). */
+  holidayNotes?: string[];
+  /** Canada: vacation pay, paid with each paycheck or accrued and paid when the employee takes time off. */
+  vacation?: VacationInput;
   /** A city or county minimum wage above the state's where they work, if any. */
   localMinimumWage?: { place: string; rate: string; sizeNote?: string };
+}
+
+export type VacationMethod = "accrue" | "each_pay";
+
+export interface VacationInput {
+  method: VacationMethod;
+  /** The vacation pay rate, as a fraction (0.04). */
+  rate: string;
+  /** "4%" or "3/52", for the stub. */
+  label?: string;
+  /** Vacation pay owed before this paycheck, in dollars (accrual). */
+  balance?: string;
+  /** Vacation pay taken from the balance with this paycheck, in dollars (accrual). */
+  payout?: string;
+  /** Pay the whole balance with this paycheck (the last one). */
+  payOutAll?: boolean;
+  excludesOvertime?: boolean;
+  excludesHolidayPay?: boolean;
 }
 
 export type SickLeavePolicy = "accrual" | "front_load";
@@ -110,7 +137,7 @@ export interface TaxLine {
 export interface Paycheck {
   employeeId: string;
   name: string;
-  earnings: { code: string; hours?: string; rate?: string; amountMinor: bigint }[];
+  earnings: { code: string; hours?: string; rate?: string; amountMinor: bigint; note?: string }[];
   grossMinor: bigint;
   reimbursementMinor: bigint;
   deductions: { kind: DeductionKind; description: string; amountMinor: bigint }[];
@@ -119,6 +146,8 @@ export interface Paycheck {
   employerTaxMinor: bigint;
   netPayMinor: bigint;
   sickLeave?: { accruedHours: string; usedHours: string; grantedHours?: string; balanceHours: string };
+  /** Canada: vacation pay earned, paid and still owed. */
+  vacation?: { method: VacationMethod; rate: string; label?: string; vacationableMinor: bigint; accruedMinor: bigint; paidMinor: bigint; balanceMinor: bigint };
   /** Problems a reviewer must clear before approval (minimum wage, exempt test, negative net). */
   blockers: string[];
   warnings: string[];
@@ -152,7 +181,7 @@ export function calculatePaycheck(
   // Earnings
   const earnings: Paycheck["earnings"] = [];
   const rate = money(input.hourlyRate);
-  const addHours = (code: string, hours: string | undefined, multiplier: number) => {
+  const addHours = (code: string, hours: string | undefined, multiplier: number | string) => {
     if (!hours || new D(hours).isZero()) return;
     const r = rate.mul(multiplier);
     earnings.push({ code, hours, rate: r.toString(), amountMinor: toMinor(r.mul(hours)) });
@@ -170,6 +199,12 @@ export function calculatePaycheck(
     addHours("DOUBLE_TIME", input.doubleTimeHours, 2);
     // Sick leave taken is paid at the hourly rate; it isn't hours worked for overtime or accrual.
     addHours("SICK", input.sickLeave?.usedHours, 1);
+    addHours("HOLIDAY_WORKED", input.holidayHoursWorked, input.holidayWorkedMultiplier ?? "1.5");
+  }
+  warnings.push(...(input.holidayNotes ?? []));
+  for (const h of input.holidayPay ?? []) {
+    const amountMinor = toMinor(h.amount);
+    if (amountMinor > 0n) earnings.push({ code: "HOLIDAY", amountMinor, note: `${h.name} ${h.date}${h.basis ? `: ${h.basis}` : ""}` });
   }
   if (input.salaryPerPeriod) {
     earnings.push({ code: "SALARY", amountMinor: toMinor(input.salaryPerPeriod) });
@@ -203,6 +238,38 @@ export function calculatePaycheck(
   }
   if (input.salaryPerPeriod && !input.overtimeExempt && (input.bonus || input.commission)) {
     warnings.push("this employee is salaried and not exempt; enter any overtime they worked as an hourly employee so it's paid");
+  }
+  // Vacation pay on the wages earned this period: paid now, or added to the balance owed.
+  let vacation: Paycheck["vacation"];
+  if (input.vacation) {
+    const v = input.vacation;
+    const overtime = new Set(["OVERTIME", "DOUBLE_TIME", "OVERTIME_ON_BONUS"]);
+    let vacationableMinor = 0n;
+    for (const e of earnings) {
+      if (e.code === "BONUS" && input.bonusDiscretionary) continue;
+      if (v.excludesOvertime && overtime.has(e.code)) continue;
+      if (v.excludesHolidayPay && e.code === "HOLIDAY") continue;
+      // Hours worked on a holiday count at straight time when overtime premiums don't.
+      if (v.excludesOvertime && e.code === "HOLIDAY_WORKED") {
+        vacationableMinor += toMinor(rate.mul(e.hours ?? 0));
+        continue;
+      }
+      vacationableMinor += e.amountMinor;
+    }
+    const earned = toMinor(toMajor(vacationableMinor).mul(v.rate));
+    if (v.method === "each_pay") {
+      if (earned > 0n) earnings.push({ code: "VACATION", amountMinor: earned, ...(v.label ? { note: v.label } : {}) });
+      vacation = { method: v.method, rate: v.rate, label: v.label, vacationableMinor, accruedMinor: earned, paidMinor: earned, balanceMinor: 0n };
+    } else {
+      const available = toMinor(v.balance ?? "0") + earned;
+      let paid = v.payOutAll ? available : toMinor(v.payout ?? "0");
+      if (paid < 0n) paid = 0n;
+      if (paid > available) {
+        blockers.push(`${toMajor(paid).toFixed(2)} of vacation pay taken, but only ${toMajor(available).toFixed(2)} is owed`);
+      }
+      if (paid > 0n) earnings.push({ code: "VACATION", amountMinor: paid, note: "from the vacation balance" });
+      vacation = { method: v.method, rate: v.rate, label: v.label, vacationableMinor, accruedMinor: earned, paidMinor: paid, balanceMinor: available - paid > 0n ? available - paid : 0n };
+    }
   }
   const grossMinor = earnings.reduce((s, e) => s + e.amountMinor, 0n);
   if (input.bonus || input.commission) {
@@ -348,6 +415,7 @@ export function calculatePaycheck(
     employerTaxMinor,
     netPayMinor,
     sickLeave,
+    ...(vacation ? { vacation } : {}),
     blockers,
     warnings,
   };

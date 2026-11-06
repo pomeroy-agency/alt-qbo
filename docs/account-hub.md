@@ -84,6 +84,60 @@ Refused (409) while the organisation has a charge that isn't settled, so a comp 
 
 Not done here: a $0 invoice for a comp. A free subscription has no sales price, so none is issued; revisit if that changes.
 
+## Hub → TrailBook: `POST /api/hub/entitlements-changed`
+
+Sent when what an organisation holds at the hub changes. Signed as above.
+
+```json
+{ "type": "entitlements.changed", "trailbook_org_id": "uuid", "org_id": "<hub organisation id>", "ent_version": 7 }
+```
+
+TrailBook records the hub's organisation id and `ent_version` (a whole number from 1). A notice older than the last one it kept is ignored, so arriving out of order is harmless. The answer is `{ "ok": true, "org": <status> }`: TrailBook's own view, for the hub to compare. TrailBook's memberships, roles and billing still decide access on every request; nothing in TrailBook reads the hub's entitlements yet. 404 for an unknown organisation, 400 for a missing or bad `ent_version`.
+
+## Hub → TrailBook: `POST /api/hub/signout`
+
+The back-channel sign-out. Signed as above.
+
+```json
+{ "trailbook_user_id": "uuid" }
+```
+
+or, before a person's accounts are linked, `{ "email": "person@example.com" }` (any case). Every TrailBook session that person has ends at once. The answer is `{ "ok": true, "sessions_ended": 2 }`; 0 when there's no such TrailBook person. 400 when neither is sent.
+
+## TrailBook sign-in rules
+
+- A session ends after **12 hours without use**, and **7 days after sign-in** at most.
+- Anyone who has two-factor on enters their code at **every new sign-in**, by password or emailed link. An organisation can require two-factor for everyone (Security page).
+- **Payroll, bank details and tax filings need a session that passed the second factor**, whatever the organisation's setting: saving employees, payroll and direct deposit settings, creating and approving pay runs, recording tax deposit payments, sales tax settings, and downloading the direct deposit file, prepared payroll forms and the sales tax return. Reading payroll pages and previews stays open. Someone without two-factor is asked to turn it on (403, `code: "second_factor_required"`); turning it on counts for the session they're in. The example business is left out.
+- A hub sign-in starts a session that hasn't passed TrailBook's second factor; anyone with two-factor on enters their code before the session starts.
+
+## Signing in with a Pomeroy Account (phase 6)
+
+TrailBook is a `kind: "jwt"` app in the hub's `HUB_CLIENTS`:
+
+```json
+{ "id": "<ACCOUNT_HUB_CLIENT_ID>", "name": "TrailBook", "kind": "jwt", "product": "trailbook",
+  "secret_sha256": "<sha256 of ACCOUNT_HUB_CLIENT_SECRET>",
+  "redirect_uris": ["https://app.pomeroyagency.com/api/auth/hub/callback"],
+  "home_url": "https://app.pomeroyagency.com",
+  "signout_url": "https://app.pomeroyagency.com/api/hub/signout" }
+```
+
+TrailBook needs `ACCOUNT_HUB_CLIENT_ID` and `ACCOUNT_HUB_CLIENT_SECRET` on top of `ACCOUNT_HUB_URL`. Without them the button doesn't show.
+
+1. **Start:** "Sign in with Pomeroy Account" opens `GET /api/auth/hub/start`. TrailBook keeps a one-time state (hashed) and a PKCE verifier for 10 minutes, puts the state in an HttpOnly cookie on `/api/auth/hub`, and sends the person to the hub's `/authorize` with S256.
+2. **Back from the hub:** `GET /api/auth/hub/callback?code=…&state=…`. The state must match the cookie and works once. If this browser has no state cookie at all (the hub finished in another browser, such as a hub email link opened in a phone's mail app), TrailBook restarts the sign-in once from this browser (a 2-minute `tb_hub_retry` cookie stops a loop); the hub is signed in there now, so it comes straight back. TrailBook posts the code, the verifier and its client id and secret to the hub's `/token`, then checks the ES256 token: the key from `/.well-known/jwks.json` (by `kid`, cached 10 minutes, fetched again for a new `kid`), `iss` is `ACCOUNT_HUB_URL`, `aud` is TrailBook's client id, and `exp` and `nbf` hold, allowing a minute either way.
+3. **Who it is:** the token's `sub` is matched to the TrailBook person connected to it.
+   - **Connected:** TrailBook's own session starts (its own HttpOnly cookie). Someone with two-factor on enters their code first.
+   - **Not connected, and a TrailBook login has the token's email:** TrailBook emails that address a one-time link (`#/hub-link/<token>`, 30 minutes) that connects the two and signs in. Reaching the inbox is the proof; an email match alone never connects anything.
+   - **No TrailBook login with that email:** the person signs in with their TrailBook email and password and connects from **Your account**, which runs the same flow while signed in and connects to that login.
+   - One Pomeroy Account connects to one TrailBook login, and the other way round.
+4. Every outcome lands on an app page, `#/hub/<what happened>`: `check-email`, `connected`, `no-account`, `taken`, `cancelled`, `expired`, `unavailable`, `bad_token`, `refused`, `unreachable`, or `code/<ticket>` for the second factor.
+
+The back-channel sign-out matches the hub's `user_id` to the connected login first, then `trailbook_user_id`, then the email.
+
+TrailBook's own password, emailed sign-in links and reset keep working until the cutover date.
+
 ## Linking a MilePost workspace to a TrailBook organisation
 
 The `company_id` MilePost stores from the OAuth callback and token response is a TrailBook **business** (entity) id, not the organisation id. One TrailBook organisation can hold several businesses. `GET /api/v1/company` now also returns `org_id`, the organisation that holds that business and pays for TrailBook. That is the id to seed the hub's `app_links.trailbook_org_id` with, and it matches `trailbook_org_id` in the status push.
@@ -91,3 +145,5 @@ The `company_id` MilePost stores from the OAuth callback and token response is a
 ## For whoever builds the hub
 
 The hub is built from the pa-crm repository, where the lowercase product name is a Netlify secret value and fails the build. Nothing in this contract needs it: every field and plan key above starts with `trailbook` or is generic. Keep the hub's endpoint path (`/api/trailbook/status`) and table names (`trailbook_status`) as they are.
+
+Database connections say `sslmode=verify-full` outright (`strictSsl` in `src/db/pool.ts`). pg already treats `require` as `verify-full`, so the checks are the same; it only stops pg's warning landing in the error log on every hub call.

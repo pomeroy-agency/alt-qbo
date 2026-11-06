@@ -32,6 +32,9 @@ def build(src: pathlib.Path) -> str:
     out = (out.replace("%%TITLE%%", meta["TITLE"]).replace("%%DESC%%", meta["DESC"])
               .replace("%%PA_PAGE%%", meta["PA_PAGE"]).replace("%%APP%%", APP))
     assert "%%" not in out, src.name
+    # Greg, 2026-10-31: the USD/CAD picker lives in the footer only. A header picker
+    # crowded the Pomeroy Agency name and the menu button on phones.
+    assert "pa-cur-head" not in out and "pa-cur-top" not in out, src.name
     return out
 
 (ROOT / "dist").mkdir(exist_ok=True)

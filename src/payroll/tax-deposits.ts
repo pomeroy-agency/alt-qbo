@@ -5,6 +5,7 @@ import { LedgerError, translateDbError } from "../core/errors.js";
 import { postJournal, type Actor, type LineInput, type Role } from "../core/ledger.js";
 import { addDays } from "./business-days.js";
 import { statePackFor, type Place } from "../rules/index.js";
+import { REMITTER_TYPES, type RemitterType } from "./canada-remittances.js";
 import { depositAccounts, depositLabel, depositSchedule, type Deposit, type FederalSchedule, type RunTaxes } from "./deposits.js";
 
 // Payroll tax deposits for a business: what's due from its posted pay runs,
@@ -59,6 +60,23 @@ export async function setFederalDepositSchedule(tx: Tx, input: { orgId: string; 
   });
 }
 
+/** Canada: how often the business remits to the CRA and Revenu Québec. */
+export async function remitterTypes(tx: Tx, entityId: string): Promise<{ cra: RemitterType; rq: RemitterType }> {
+  const r = (await tx.query("SELECT cra_remitter_type, rq_remitter_type FROM entities WHERE id = $1", [entityId])).rows[0];
+  return { cra: r?.cra_remitter_type ?? "regular", rq: r?.rq_remitter_type ?? "regular" };
+}
+
+export async function setRemitterType(tx: Tx, input: { orgId: string; entityId: string; agency: "cra" | "rq"; type: string; actor: Actor }) {
+  if (!CAN_SET.includes(input.actor.role)) throw new LedgerError("FORBIDDEN", `role ${input.actor.role} cannot change payroll settings`);
+  if (!(input.type in REMITTER_TYPES)) invalid("pick a remitter type");
+  const before = await remitterTypes(tx, input.entityId);
+  await tx.query(`UPDATE entities SET ${input.agency === "cra" ? "cra_remitter_type" : "rq_remitter_type"} = $2 WHERE id = $1`, [input.entityId, input.type]);
+  await appendAudit(tx, {
+    orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "entity.remitter_type_set",
+    objectType: "entity", objectId: input.entityId, before: { [input.agency]: before[input.agency] }, after: { [input.agency]: input.type },
+  });
+}
+
 /** Every deposit for the year's posted runs, with what's been paid against each. */
 export async function taxDeposits(tx: Tx, entityId: string, year: number, today: string): Promise<DepositView[]> {
   const { rows } = await tx.query(
@@ -84,7 +102,8 @@ export async function taxDeposits(tx: Tx, entityId: string, year: number, today:
     }
     priorQuarterlyAverageMinor = (priorYearMinorByCode[incomeCode] ?? 0n) / 4n;
   }
-  const deposits = depositSchedule(runs, await federalDepositSchedule(tx, entityId), place, { priorQuarterlyAverageMinor, priorYearMinorByCode });
+  const canadaRemitters = place.country === "CA" ? await remitterTypes(tx, entityId) : undefined;
+  const deposits = depositSchedule(runs, await federalDepositSchedule(tx, entityId), place, { priorQuarterlyAverageMinor, priorYearMinorByCode, canadaRemitters });
   const { rows: paid } = await tx.query(
     `SELECT deposit_key, paid_date::text, amount_minor, by_tax, confirmation, entry_id, created_by
        FROM tax_deposit_payments WHERE entity_id = $1 AND deposit_key = ANY($2) ORDER BY created_at`,

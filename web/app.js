@@ -10,6 +10,9 @@ try {
   const q = new URLSearchParams(location.search);
   const found = Object.fromEntries(ATTRIBUTION_KEYS.filter((k) => q.get(k)).map((k) => [k, q.get(k).slice(0, 200)]));
   if (Object.keys(found).length) sessionStorage.setItem("tb-attribution", JSON.stringify(found));
+  // An accounting or HR firm's referral link (?ref=CODE) fills in its code on the sign-up form.
+  const ref = (q.get("ref") || new URLSearchParams(location.hash.split("?")[1] || "").get("ref") || "").replace(/[^A-Za-z0-9]/g, "").slice(0, 12);
+  if (ref) sessionStorage.setItem("tb-ref", ref.toUpperCase());
 } catch { /* storage blocked: nothing is kept */ }
 function attribution() {
   let kept = {};
@@ -138,7 +141,7 @@ const ENTITY_TABS = [
   ["bank", "Bank", "bankToReview", "to review"], ["contacts", "Customers and vendors"], ["items", "Products and services"], ["reports", "Reports"], ["payroll", "Payroll", "payrollToDo", "to approve or pay"],
 ];
 const ACCOUNTANT_TABS = [
-  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"], ["integrations", "Integrations"],
+  ["reconcile", "Reconcile"], ["sales-tax", "Sales tax"], ["journal", "Journal"], ["trial-balance", "Trial balance"], ["periods", "Close the books"], ["accounts", "Chart of accounts"], ["connections", "Connections"], ["integrations", "Integrations"], ["move", "Move from QuickBooks or Xero"],
 ];
 
 /** The everyday menu, plus a tab for each linked app (MilePost) while the link is live. */
@@ -147,7 +150,7 @@ function entityTabs() {
 }
 
 // Shorter names for the phone menu, where buttons sit three to a row.
-const SHORT = { contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
+const SHORT = { move: "Move books", contacts: "Contacts", items: "Products", "trial-balance": "Trial bal.", periods: "Close books", accounts: "Accounts" };
 
 // When the terms of service change, an owner or admin accepts the new version for the business.
 function termsBanner() {
@@ -177,13 +180,18 @@ function shell(active, content) {
   const tab = ([k, l, c, what]) => btn(`#/e/${e.id}/${k}`, k, SHORT[k] ?? l, count(c), what);
   const billing = ["owner", "admin"].includes(state.org?.role) ? [["billing", "#/billing", "Billing"]] : [];
   const newsletter = state.org?.newsletter ? [["newsletter", "#/newsletter", "Newsletter"]] : [];
-  const org = [["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...newsletter, ["account", "#/account", "Your account"]];
+  const many = (state.me?.orgs?.length ?? 0) > 1;
+  // Referrals: firms already in the program, and anyone who looks after more than one organisation.
+  const referrals = ["owner", "admin"].includes(state.org?.role) && (state.org?.referrals || many || ["accounting_firm", "hr_firm"].includes(state.org?.org?.kind))
+    ? [["referrals", "#/referrals", "Referrals"]] : [];
+  const referralFees = state.org?.referralFees ? [["referral-fees", "#/referral-fees", "Referral fees"]] : [];
+  const org = [...(many ? [["clients", "#/clients", "All clients"]] : []), ["home", "#/", "Businesses"], ["team", "#/team", "Team"], ["audit", "#/audit", "Audit log"], ...billing, ...referrals, ...referralFees, ...newsletter, ["account", "#/account", "Your account"]];
   const main = e ? entityTabs().map(tab) : org.map(([k, h, l]) => btn(h, k, l));
   const more = [
-    ...(e ? [btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
-    ...(e ? org.slice(1).map(([k, h, l]) => btn(h, k, l)) : []),
+    ...(e ? [...(many ? [btn("#/clients", "clients", "All clients")] : []), btn("#/", "home", "Businesses"), ...ACCOUNTANT_TABS.map(tab)] : []),
+    ...(e ? org.filter(([k]) => k !== "home" && k !== "clients").map(([k, h, l]) => btn(h, k, l)) : []),
   ];
-  const moreOn = e && (["home", "team", "audit", "billing", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
+  const moreOn = e && (["clients", "home", "team", "audit", "billing", "referrals", "referral-fees", "newsletter", "account"].includes(active) || ACCOUNTANT_TABS.some(([k]) => k === active));
   const mobile = `
       <nav class="mobile">
         <div class="tiles">${main.join("")}${more.length ? `<button type="button" class="more${moreOn ? " on" : ""}" data-action="nav-more" aria-expanded="false">More</button>` : ""}</div>
@@ -192,12 +200,15 @@ function shell(active, content) {
   return `${topbar()}
     <div class="wrap shell">
       <nav class="side">
+        ${many ? `<a href="#/clients" class="${active === "clients" ? "on" : ""}">All clients</a>` : ""}
         <a href="#/" class="${active === "home" ? "on" : ""}">Businesses</a>
         ${nav}
         <div class="label">Organisation</div>
         <a href="#/team" class="${active === "team" ? "on" : ""}">Team</a>
         <a href="#/audit" class="${active === "audit" ? "on" : ""}">Audit log</a>
         ${billing.length ? `<a href="#/billing" class="${active === "billing" ? "on" : ""}">Billing</a>` : ""}
+        ${referrals.length ? `<a href="#/referrals" class="${active === "referrals" ? "on" : ""}">Referrals</a>` : ""}
+        ${referralFees.length ? `<a href="#/referral-fees" class="${active === "referral-fees" ? "on" : ""}">Referral fees</a>` : ""}
         ${newsletter.length ? `<a href="#/newsletter" class="${active === "newsletter" ? "on" : ""}">Newsletter</a>` : ""}
         <a href="#/account" class="${active === "account" ? "on" : ""}">Your account</a>
       </nav>
@@ -209,8 +220,13 @@ function shell(active, content) {
 // ------------------------------------------------------------------ auth
 
 let emailEnabled = null;
+let hubEnabled = false;
 async function emailOn() {
-  if (emailEnabled === null) emailEnabled = await api("/api/auth/options").then((o) => o.email).catch(() => false);
+  if (emailEnabled === null) {
+    const o = await api("/api/auth/options").catch(() => ({}));
+    emailEnabled = Boolean(o.email);
+    hubEnabled = Boolean(o.hub);
+  }
   return emailEnabled;
 }
 
@@ -249,6 +265,7 @@ async function authView(mode, error = "", notice = "") {
           ${signup ? `
             <label>Business or firm name<input name="orgName" required></label>
             <label><span>Invite code <span class="hint">(optional, only if someone gave you one)</span></span><input name="inviteCode" autocomplete="off"></label>
+            <label><span>Referral code <span class="hint">(optional, from your accountant or HR firm)</span></span><input name="referralCode" autocomplete="off" maxlength="14" value="${esc((() => { try { return sessionStorage.getItem("tb-ref") || ""; } catch { return ""; } })())}"></label>
             <div class="consent">
               <label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a> for my business, and I've read the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
               <label class="check multi muted"><input type="checkbox" name="adOptOut"><span>Don't share my sign-up with Google or Meta for ad measurement.</span></label>
@@ -257,6 +274,7 @@ async function authView(mode, error = "", notice = "") {
           <button type="submit">${signup ? "Create account" : "Sign in"}</button>
         </form>
         ${!signup && email ? `<p style="margin-top:12px"><a href="#/magic">Email me a sign-in link instead</a> · <a href="#/forgot">Forgot your password?</a></p>` : ""}
+        ${!signup && hubEnabled ? `<p style="margin-top:12px"><a class="btn secondary" href="/api/auth/hub/start">Sign in with Pomeroy Account</a></p>` : ""}
         <p style="margin-top:14px">${signup ? `Already have an account? <a href="#/login">Sign in</a>` : `New here? <a href="#/signup">Create an account</a>`}</p>`);
 }
 
@@ -274,6 +292,42 @@ function mfaView(ticket, then = "home", inviteToken = "", error = "") {
     </form>
     <p style="margin-top:14px"><a href="#/login">Start over</a></p>`);
   app.querySelector("input[name=code]")?.focus();
+}
+
+const HUB_MESSAGES = {
+  "check-email": ["good", "Your Pomeroy Account isn't connected to TrailBook yet. We've emailed a one-time link to your TrailBook address: open it to connect them and sign in. It works for 30 minutes."],
+  connected: ["good", "Your Pomeroy Account is connected. Next time, \"Sign in with Pomeroy Account\" opens your books."],
+  "no-account": ["bad", "No TrailBook login uses that Pomeroy Account's email. Sign in with your TrailBook email and password, then connect your Pomeroy Account under Your account, or create a TrailBook account."],
+  taken: ["bad", "That Pomeroy Account is already connected to a different TrailBook login."],
+  cancelled: ["bad", "Signing in with Pomeroy Account was cancelled."],
+  expired: ["bad", "That sign-in took too long or was already used. Try again."],
+  unavailable: ["bad", "Signing in with Pomeroy Account isn't available right now. Sign in with your TrailBook email and password."],
+};
+
+/** Where "Sign in with Pomeroy Account" ends up. */
+async function hubView(what, ticket) {
+  if (what === "code" && ticket) return mfaView(ticket);
+  const [tone, text] = HUB_MESSAGES[what] ?? ["bad", "Pomeroy Account couldn't sign you in. Try again, or sign in with your TrailBook email and password."];
+  if (what === "connected") {
+    state.me = null;
+    location.hash = "#/account";
+    toast(text);
+    return;
+  }
+  return tone === "good" ? authView("login", "", text) : authView("login", text);
+}
+
+/** The emailed link that connects a Pomeroy Account to this TrailBook login, then signs in. */
+async function hubLinkView(token) {
+  try {
+    const r = await api(`/api/auth/hub-link/${token}`, { body: {} });
+    state.me = null; state.org = null;
+    if (r.mfaRequired) return mfaView(r.ticket);
+    location.hash = "#/";
+    toast("Your Pomeroy Account is connected");
+  } catch (err) {
+    return authView("login", err.message);
+  }
 }
 
 /** Pages opened from an emailed link. */
@@ -339,6 +393,67 @@ async function homeView() {
         <label>&nbsp;<button type="submit">Create business</button></label>
       </form>
     </div>` : ""}`);
+}
+
+// ------------------------------------------------------------ firm console
+
+const clientFilter = { q: "", attention: false };
+
+/** Every client's books on one page, for accounting and HR firms: what each needs, and a link straight to it. */
+async function clientsView() {
+  state.entity = null;
+  const { clients, today: asOf } = await api("/api/clients");
+  const rows = clients.flatMap((o) => (o.entities.length ? o.entities : [null]).map((e) => ({ o, e })));
+  const q = clientFilter.q.toLowerCase();
+  const shown = rows.filter(({ o, e }) => (!q || o.name.toLowerCase().includes(q) || (e?.name ?? "").toLowerCase().includes(q)) && (!clientFilter.attention || o.locked || (e && e.tasks > 0)));
+  const needing = rows.filter(({ e }) => e && e.tasks > 0).length;
+  const go = (o, e, page, label, n, what) => (n ? `<button class="link" style="white-space:nowrap" data-action="open-client" data-org="${o.id}" data-go="#/e/${e.id}/${page}" title="${esc(what)}">${label} ${n}</button>` : "");
+  const ago = (iso) => {
+    if (!iso) return `<span class="muted">No activity</span>`;
+    const days = Math.floor((Date.parse(asOf) - Date.parse(iso.slice(0, 10))) / 86400000);
+    return days <= 0 ? "Today" : days === 1 ? "Yesterday" : `${days} days ago`;
+  };
+  const lastMonthEnd = monthEnd(Number(asOf.slice(0, 4)), Number(asOf.slice(5, 7)) - 1);
+  const row = ({ o, e }) => {
+    const client = `<strong>${esc(o.name)}</strong><div class="hash">${esc(ROLE_LABEL[o.role] ?? o.role)}${o.example ? " · example books" : ""}</div>`;
+    if (o.locked) return `<tr><td>${client}</td><td colspan="5" class="muted">${esc(o.locked)}</td></tr>`;
+    if (!e) return `<tr><td>${client}</td><td colspan="4" class="muted">No business set up yet.</td><td><button class="link" data-action="open-client" data-org="${o.id}" data-go="#/">Open</button></td></tr>`;
+    const todo = [
+      go(o, e, "bank", "Bank lines", e.bankToReview, "imported bank lines to record"),
+      go(o, e, "reconcile", "Reconcile", e.unreconciled, "bank accounts not reconciled in 45 days"),
+      go(o, e, "invoices", "Overdue invoices", e.overdueInvoices, "invoices past due"),
+      go(o, e, "payroll", "Pay runs", e.payRunsToApprove, "pay runs waiting for approval"),
+      go(o, e, "payroll", "Tax deposits", e.taxDepositsDue, "payroll tax deposits overdue or due within a week"),
+      go(o, e, "periods", "Months to close", e.monthsToClose, "months still open more than a month after they ended"),
+    ].filter(Boolean);
+    const closed = e.closedThrough
+      ? `${e.closedThrough >= lastMonthEnd ? "" : `<span style="color:var(--warn-ink)">`}${longDate(e.closedThrough)}${e.closedThrough >= lastMonthEnd ? "" : "</span>"}`
+      : `<span class="muted">Nothing closed</span>`;
+    return `<tr><td>${client}</td>
+      <td>${esc(e.name)}<div class="hash">${esc(placeName(e.country, e.region))}</div></td>
+      <td>${todo.join("<br>") || `<span class="muted">All caught up</span>`}
+        ${e.nextDeposit ? `<div class="hash">${e.nextDeposit.overdue ? "Overdue" : "Due"} ${esc(e.nextDeposit.dueDate)}: ${esc(e.nextDeposit.what)}</div>` : ""}</td>
+      <td>${closed}</td><td>${ago(e.lastActivity)}</td>
+      <td><button class="link" data-action="open-client" data-org="${o.id}" data-go="#/e/${e.id}/overview">Open</button></td></tr>`;
+  };
+  app.innerHTML = shell("clients", `
+    <div class="head"><div><h1>All clients</h1><p class="muted">Every organisation you can open, and what each business's books need. Click a task to go straight to it.</p></div></div>
+    <div class="row" style="gap:24px;margin-bottom:12px">
+      <div><div class="muted">Clients</div><div class="stat">${clients.filter((o) => !o.example).length}</div></div>
+      <div><div class="muted">Businesses needing work</div><div class="stat">${needing}</div></div>
+    </div>
+    <div class="panel">
+      <form data-form="client-filter" class="row" style="margin-bottom:12px">
+        <label style="flex:1">Find a client<input name="q" value="${esc(clientFilter.q)}" placeholder="Name"></label>
+        <label class="check"><input type="checkbox" name="attention" data-autosubmit ${clientFilter.attention ? "checked" : ""}> Only those needing work</label>
+        <button type="submit" class="secondary">Filter</button>
+      </form>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Client</th><th>Business</th><th>To do</th><th>Books closed through</th><th>Last change</th><th></th></tr></thead>
+        <tbody>${shown.map(row).join("") || `<tr><td colspan="6" class="muted">No clients match.</td></tr>`}</tbody>
+      </table></div>
+      <p class="hash" style="margin-top:8px">To add a client, ask them to invite your firm's email under Team in their TrailBook, usually as an Accountant. The client stays the customer of record and keeps control of who has access.</p>
+    </div>`);
 }
 
 const countryOf = (code) => (state.org?.countries ?? []).find((c) => c.code === code);
@@ -832,6 +947,10 @@ const DEFAULT_KIND = "professional_service";
 const DEFAULT_PURCHASE_KIND = "prewritten_software";
 const useTaxOn = () => Boolean(document.querySelector("form[data-form=document][data-kind=bill] [name=useTax]")?.checked);
 const pct = (rate) => `${(Number(rate) * 100).toFixed(3).replace(/\.?0+$/, "")}%`;
+/** A Canadian business: GST/HST, PST and QST instead of US sales and use tax. */
+const inCanada = () => state.entity?.entity?.country === "CA";
+/** The GST/HST rate where the business is, for the bill helper; the server works out invoices itself. */
+const homeGstRate = () => ({ ON: 0.13, NB: 0.15, NL: 0.15, NS: 0.14, PE: 0.15 })[state.entity?.entity?.region] ?? 0.05;
 
 function kindOptions(selected) {
   return taxCategories().map((c) => `<option value="${c.id}" title="${esc(c.help)}" ${c.id === selected ? "selected" : ""}>${esc(c.label)}</option>`).join("");
@@ -893,7 +1012,7 @@ function readDocLines() {
 }
 
 /** What the server said about this invoice's sales tax, for the figures shown while typing. */
-const docTax = { rate: null, explanation: "", error: "", taxable: null, taxShare: null, timer: null, seq: 0 };
+const docTax = { rate: null, explanation: "", error: "", taxable: null, taxShare: null, lineRates: null, taxLabel: "", timer: null, seq: 0 };
 
 /** Asks the server how this invoice will be taxed. Called when the customer, date or kinds of sale change. */
 function scheduleTaxPreview() {
@@ -912,15 +1031,19 @@ async function runTaxPreview() {
   const seq = ++docTax.seq;
   const show = (rate, explanation, error = "", r = {}) => {
     if (seq !== docTax.seq) return;
-    Object.assign(docTax, { rate, explanation, error, taxable: r.taxable ?? null, taxShare: r.taxShare ?? null });
+    Object.assign(docTax, {
+      rate, explanation, error, taxable: r.taxable ?? null, taxShare: r.taxShare ?? null, lineRates: r.lineRates ?? null,
+      taxLabel: r.canada?.taxes?.length ? r.canada.taxes.map((t) => t.label).join(" + ") : "",
+    });
     const note = document.getElementById("doc-tax-note");
     note.className = error || r.warnings?.length ? "alert warn" : "hash";
     note.textContent = [error || explanation, ...(r.warnings ?? [])].filter(Boolean).join(" ");
     const manual = form.querySelector("[data-manual]");
-    if (manual) manual.hidden = !error;
+    // Canadian taxes come from the registrations and the customer's province; there's no rate to set by hand.
+    if (manual) manual.hidden = !error || inCanada();
     updateDocTotals();
   };
-  if (!anyTaxable) return show("0", "No sales tax: nothing on this invoice is taxable in California.");
+  if (!anyTaxable) return show("0", inCanada() ? "No GST/HST: nothing on this invoice is taxable." : "No sales tax: nothing on this invoice is taxable in California.");
   if (!d.contactId || d.contactId === "__new") return show(null, "Sales tax will be worked out from the new customer's address when you issue the invoice.");
   const manualTax = d.manualRate && d.manualReason ? { ratePercent: d.manualRate, reason: d.manualReason } : undefined;
   try {
@@ -942,7 +1065,7 @@ async function runUseTaxPreview() {
   const seq = ++docTax.seq;
   const show = (rate, explanation, error = "", r = {}) => {
     if (seq !== docTax.seq) return;
-    Object.assign(docTax, { rate, explanation, error, taxable: r.taxable ?? null, taxShare: null });
+    Object.assign(docTax, { rate, explanation, error, taxable: r.taxable ?? null, taxShare: null, lineRates: null, taxLabel: "" });
     const note = document.getElementById("doc-tax-note");
     note.className = error ? "alert warn" : "hash";
     note.textContent = on ? error || explanation : "";
@@ -986,7 +1109,8 @@ function updateDocTotals() {
     if (p === null || !(q > 0)) { bad = true; tr.querySelector("[data-amount]").textContent = ""; return; }
     const amt = BigInt(Math.round(q * Number(p)));
     sub += amt;
-    if (cat && (!bill || useTax) && lineTaxable(i, cat.value)) tax += BigInt(Math.round(Math.round(Number(amt) * Number(docTax.taxShare?.[i] ?? 1)) * rate));
+    const lineRate = docTax.lineRates?.[i] !== undefined ? Number(docTax.lineRates[i]) : rate;
+    if (cat && (!bill || useTax) && lineTaxable(i, cat.value)) tax += BigInt(Math.round(Math.round(Number(amt) * Number(docTax.taxShare?.[i] ?? 1)) * lineRate));
     tr.querySelector("[data-amount]").textContent = usd(amt);
   });
   document.getElementById("doc-sub").textContent = usd(sub);
@@ -996,14 +1120,19 @@ function updateDocTotals() {
     if (ut) ut.textContent = useTax && docTax.rate === null ? "—" : usd(useTax ? tax : 0n);
     const ul = document.getElementById("doc-use-tax-label");
     if (ul) ul.textContent = useTax && docTax.rate && Number(docTax.rate) > 0 ? `Use tax you owe the state, ${pct(docTax.rate)} (not paid to the vendor)` : "Use tax you owe the state (not paid to the vendor)";
-    document.getElementById("doc-total").textContent = usd(sub);
+    // Canadian bills: the GST/HST and QST the vendor charged are part of what's owed, and come back as credits.
+    const credit = (n) => cents(form.querySelector(`[name=${n}]`)?.value.trim() || "0");
+    const credits = inCanada() ? [credit("caGst"), credit("caQst")] : [];
+    if (credits.some((c) => c === null)) bad = true;
+    const extra = credits.reduce((t, c) => t + BigInt(c ?? 0), 0n);
+    document.getElementById("doc-total").textContent = usd(sub + extra);
     document.getElementById("doc-save").disabled = bad || sub <= 0n;
     return;
   }
   const t = document.getElementById("doc-tax");
   if (t) t.textContent = docTax.rate === null && tax === 0n && form.dataset.kind === "invoice" && !document.getElementById("doc-tax-note").textContent.startsWith("No sales tax") ? "—" : usd(tax);
   const tl = document.getElementById("doc-tax-label");
-  if (tl) tl.textContent = docTax.rate && Number(docTax.rate) > 0 ? `Sales tax ${pct(docTax.rate)}` : "Sales tax";
+  if (tl) tl.textContent = docTax.taxLabel ? docTax.taxLabel : inCanada() ? "GST/HST and other taxes" : docTax.rate && Number(docTax.rate) > 0 ? `Sales tax ${pct(docTax.rate)}` : "Sales tax";
   document.getElementById("doc-total").textContent = usd(sub + tax);
   document.getElementById("doc-save").disabled = bad || sub + tax <= 0n;
 }
@@ -1018,13 +1147,119 @@ function fillFromItem(tr, itemId) {
   tr.querySelector("[name=unitPrice]").value = (Number(item.unitPriceMinor) / 100).toFixed(2);
 }
 
+const REPEAT = [["", "Doesn't repeat"], ["weekly", "Every week"], ["monthly", "Every month"], ["quarterly", "Every quarter"], ["yearly", "Every year"]];
+const REPEAT_LABEL = { weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly", yearly: "Yearly" };
+const EST_PILL = { open: "pill", accepted: "pill grey", declined: "pill grey", expired: "pill warn" };
+const EST_LABEL = { open: "Open", accepted: "Accepted", declined: "Declined", expired: "Expired" };
+const daysFrom = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+
+/** Quotes that haven't posted to the books. Accepting one issues the invoice, taxed on the invoice date. */
+function estimatesPanel(id, estimates, canWrite, emailEnabled) {
+  if (!estimates.length) return "";
+  return `<div class="panel">
+    <h2>Estimates</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>No.</th><th>Customer</th><th>Date</th><th>Good until</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
+      <tbody>${estimates.map((x) => `<tr>
+        <td class="mono">${esc(x.number)}</td>
+        <td>${esc(x.contactName)}${x.memo ? `<div class="hash">${esc(x.memo)}</div>` : ""}${x.emails.length ? `<div class="hash">Emailed ${esc(when(x.emails.at(-1).sentAt))}</div>` : ""}</td>
+        <td>${x.issueDate}</td><td>${x.expiryDate}</td><td class="num">${usd(x.totalMinor)}</td>
+        <td><span class="${EST_PILL[x.status]}">${EST_LABEL[x.status]}</span>${x.invoiceId ? `<div class="hash"><a href="#/e/${id}/invoices/${x.invoiceId}">${esc(x.invoiceNumber)}</a></div>` : ""}</td>
+        <td><div class="row">${canWrite && (x.status === "open" || x.status === "expired") ? `
+          ${emailEnabled ? `<button class="link" data-action="estimate-email" data-id="${x.id}">${x.emails.length ? "Email again" : "Email"}</button>` : ""}
+          <button class="link" data-action="doc-toggle" data-form="est-accept" data-id="${x.id}">Turn into invoice</button>
+          <button class="link" data-action="estimate-decline" data-id="${x.id}">Declined</button>` : ""}</div></td>
+      </tr>
+      <tr hidden data-est-accept="${x.id}"><td colspan="7">
+        <form data-form="est-accept" data-id="${x.id}" class="row">
+          <label>Invoice date<input type="date" name="issueDate" value="${bookDate() < x.issueDate ? x.issueDate : bookDate()}" min="${x.issueDate}" required></label>
+          <label>Due<input type="date" name="dueDate" value="${plusDays(bookDate() < x.issueDate ? x.issueDate : bookDate(), 30)}" required></label>
+          <button type="submit">Issue the invoice</button>
+          <span class="hash">Sales tax is worked out again for the invoice date.</span>
+        </form></td></tr>`).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/** Invoices or bills that TrailBook issues on a schedule, each morning they fall due. */
+function recurringPanel(kind, templates, canWrite) {
+  if (!templates.length) return "";
+  const total = (t) => t.lines.reduce((s, l) => s + Math.round(Number(l.quantity || 0) * Number(l.unitPrice || 0) * 100), 0);
+  return `<div class="panel">
+    <h2>Recurring ${kind === "invoice" ? "invoices" : "bills"}</h2>
+    <p class="hash">TrailBook ${kind === "invoice" ? "issues" : "records"} each one early in the morning (Pacific) on its date${kind === "invoice" ? ", with sales tax worked out for that date" : ""}.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>${kind === "invoice" ? "Customer" : "Vendor"}</th><th>How often</th><th>Next</th><th class="num">Before tax</th><th>So far</th><th></th></tr></thead>
+      <tbody>${templates.map((t) => `<tr>
+        <td>${esc(t.contactName)}${t.memo ? `<div class="hash">${esc(t.memo)}</div>` : ""}${t.email ? `<div class="hash">Emailed to the customer</div>` : ""}</td>
+        <td>${REPEAT_LABEL[t.frequency]}${t.endDate ? `<div class="hash">until ${t.endDate}</div>` : ""}</td>
+        <td>${t.active ? t.nextDate : `<span class="pill grey">Stopped</span>`}</td>
+        <td class="num">${usd(BigInt(total(t)))}</td>
+        <td>${t.issuedCount}${t.lastDocumentId ? ` · last <a href="#/e/${state.entity.entity.id}/${DOC[kind].path}/${t.lastDocumentId}">${esc(t.lastDocumentNumber)}</a>` : ""}
+          ${t.lastError && t.active ? `<div class="alert bad" style="margin-top:4px">Couldn't ${kind === "invoice" ? "issue" : "record"}: ${esc(t.lastError)}. Trying again tomorrow.</div>` : ""}</td>
+        <td>${canWrite && t.active ? `<button class="link" data-action="recurring-stop" data-id="${t.id}">Stop</button>` : ""}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/** Automatic reminders to customers, and where their replies go. */
+const PAY_STATUS = { paid: "Recorded", processing: "Bank payment clearing", expired: "Not completed", needs_review: "Needs a look" };
+const PAY_METHOD = { card: "Card", us_bank_account: "Bank (ACH)" };
+
+/** Card and bank payments through the business's own Stripe account. Hidden until it's switched on. */
+function onlinePaymentsPanel(o) {
+  if (!o.enabled) return "";
+  const canConnect = ["owner", "admin"].includes(state.org.role);
+  if (!o.connection) {
+    return `<div class="panel"><h2>Take card and bank payments</h2>
+      <p class="muted">Connect your own Stripe account and every invoice link gets a Pay button. Customers pay on Stripe's page and the money goes straight to your Stripe balance; TrailBook adds no fee and never holds it. Stripe charges its own processing fee, which TrailBook records for you.${o.livemode === false ? " (Test mode.)" : ""}</p>
+      ${!o.available ? `<p class="hash">${esc(o.reason)}</p>` : canConnect ? `<button data-action="stripe-connect">Connect Stripe</button>` : `<p class="hash">An owner or admin can connect Stripe.</p>`}</div>`;
+  }
+  const c = o.connection;
+  return `<div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div><h2 style="margin:0">Card and bank payments</h2>
+        <div class="muted">Stripe${c.name ? `: ${esc(c.name)}` : ""} <span class="mono">${esc(c.accountId)}</span>${c.livemode ? "" : " · test mode"}. Payments land in <strong>${esc(c.bankAccount)} Stripe balance</strong>; when Stripe pays out, categorize the deposit as a transfer from ${esc(c.bankAccount)}.</div></div>
+      ${canConnect ? `<button class="link" data-action="stripe-disconnect">Disconnect</button>` : ""}
+    </div>
+    ${o.recent.length ? `<div class="table-wrap" style="margin-top:12px"><table>
+      <thead><tr><th>Invoice</th><th>Started</th><th>Method</th><th class="num">Amount</th><th class="num">Stripe fee</th><th>Status</th></tr></thead>
+      <tbody>${o.recent.map((r) => `<tr><td>${esc(r.number)}</td><td>${esc(new Date(r.createdAt).toLocaleDateString())}</td><td>${esc(PAY_METHOD[r.paymentMethod] ?? r.paymentMethod ?? "")}</td>
+        <td class="num">${usd(r.amountMinor)}</td><td class="num">${r.feeMinor ? usd(r.feeMinor) : ""}</td>
+        <td>${esc(PAY_STATUS[r.status] ?? r.status)}${r.note ? `<div class="hash">${esc(r.note)}</div>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div>` : `<p class="hash" style="margin-top:12px">No online payments yet.</p>`}
+  </div>`;
+}
+
+function remindersPanel(m, canSet) {
+  return `<div class="panel">
+    <h2>Emails to customers</h2>
+    ${m.emailEnabled ? "" : `<div class="alert warn">Email isn't set up on this site yet, so invoices can't be emailed.</div>`}
+    <form data-form="invoice-emails" class="row">
+      <label class="check"><input type="checkbox" name="reminders" ${m.reminders ? "checked" : ""} ${canSet ? "" : "disabled"}> Send customers automatic reminders: 3 days before the due date, then 1, 7, 14 and 30 days after, while money is still due</label>
+      <label style="min-width:260px">Replies go to<input name="replyTo" type="email" value="${esc(m.replyTo ?? "")}" placeholder="${esc(m.defaultReplyTo ?? "the owner's email")}" ${canSet ? "" : "disabled"}></label>
+      ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+    </form>
+    <p class="hash" style="margin-top:8px">Emails come from your business's name at TrailBook's address, with a link the customer can open to view or print the invoice. Customers pay you the way they already do; record the payment here when it arrives.</p>
+  </div>`;
+}
+
 async function docsView(id, kind) {
   await loadEntity(id);
   const d = DOC[kind];
-  const [{ documents }, ag, { contacts }, { items }] = await Promise.all([
+  const invoice = kind === "invoice";
+  const [{ documents }, ag, { contacts }, { items }, { estimates }, { templates }, mail] = await Promise.all([
     api(entPath(`/${d.path}`)), api(entPath(`/${d.path}/aging`)), api(entPath("/contacts")),
-    kind === "invoice" ? api(entPath("/items")) : { items: [] },
+    invoice ? api(entPath("/items")) : { items: [] },
+    invoice ? api(entPath("/estimates")) : { estimates: [] },
+    api(entPath("/recurring")),
+    invoice ? api(entPath("/invoice-emails")) : null,
   ]);
+  // Online payments are optional; a failure here shouldn't stop the page.
+  const online = invoice ? await api(entPath("/online-payments")).catch(() => null) : null;
+  const recurring = templates.filter((t) => t.kind === kind);
+  const canSetEmails = ["owner", "admin", "accountant"].includes(state.org.role);
   state.items = items;
   state.docContacts = contacts;
   Object.assign(docTax, { rate: null, explanation: "", error: "", taxable: null, taxShare: null });
@@ -1053,20 +1288,32 @@ async function docsView(id, kind) {
           <div data-new-contact class="row" ${who.length ? "hidden" : ""}>
             <label>New ${d.who.toLowerCase()} name<input name="newContact" placeholder="${kind === "invoice" ? "Acme Corp" : "Pixel Freelance"}"></label>
             ${kind === "invoice" ? `<label>Street<input name="newLine1" placeholder="123 Main St"></label><label>City<input name="newCity" style="width:140px"></label>
-              <label>State<input name="newState" value="CA" maxlength="2" style="width:56px"></label><label>ZIP<input name="newZip" inputmode="numeric" style="width:90px"></label>` : ""}
+              <label>${inCanada() ? "Province" : "State"}<input name="newState" value="${inCanada() ? esc(state.entity.entity.region) : "CA"}" maxlength="2" style="width:56px"></label><label>${inCanada() ? "Postal code" : "ZIP"}<input name="newZip" ${inCanada() ? "" : 'inputmode="numeric"'} style="width:90px"></label>` : ""}
           </div>
           <label>Date<input type="date" name="issueDate" value="${issue}" min="${booksStart()}" required></label>
           <label>Due<input type="date" name="dueDate" value="${plusDays(issue, 30)}" required></label>
           ${kind === "invoice" ? "" : `<label>Vendor's invoice no.<input name="reference" style="width:150px"></label>`}
           <label style="flex:1;min-width:200px">Memo<input name="memo"></label>
         </div>
-        ${kind === "bill" ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" name="useTax" ${useTaxDefault ? "checked" : ""}> The vendor didn't charge California sales tax: add the use tax I owe</label>` : ""}
+        ${kind === "bill" && inCanada() ? `<div class="row" style="margin-bottom:12px;align-items:flex-end">
+          <label>GST/HST the vendor charged<input name="caGst" class="mono" inputmode="decimal" placeholder="0.00" style="width:110px"></label>
+          <button type="button" class="link" data-action="ca-calc" data-tax="gst">Work out at ${pct(homeGstRate())}</button>
+          ${state.entity.entity.region === "QC" ? `<label>QST the vendor charged<input name="caQst" class="mono" inputmode="decimal" placeholder="0.00" style="width:110px"></label>
+          <button type="button" class="link" data-action="ca-calc" data-tax="qst">Work out at 9.975%</button>` : ""}
+          <span class="hash" style="flex:1;min-width:220px">Copy these from the vendor's invoice. They're claimed back as input tax credits${state.entity.entity.region === "QC" ? " and refunds" : ""} on your return, not added to the expense. PST you paid stays in the expense.</span>
+        </div>`
+        : kind === "bill" ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" name="useTax" ${useTaxDefault ? "checked" : ""}> The vendor didn't charge California sales tax: add the use tax I owe</label>` : ""}
+        <div class="row" style="margin-bottom:12px">
+          <label>Repeat<select name="repeat">${REPEAT.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></label>
+          <label>Repeat until (optional)<input type="date" name="repeatEnd"></label>
+          ${invoice ? `<label class="check"${mail?.emailEnabled ? "" : ' title="Email isn\'t set up on this site yet"'}><input type="checkbox" name="emailIt" ${mail?.emailEnabled ? "" : "disabled"}> Email it to the customer (each time, if it repeats)</label>` : ""}
+        </div>
         <div class="table-wrap"><table>
           <thead><tr>${kind === "invoice" ? `<th style="width:17%">Product or service</th><th>Description</th><th style="width:25%">Kind of sale</th>` : `<th style="width:28%">Account</th><th>Description</th>`}<th>Qty</th><th class="num" style="width:12%">Price</th><th class="num">Amount</th><th></th></tr></thead>
           <tbody id="doc-lines">${docLineRow(kind, {}, useTaxDefault)}</tbody>
           <tfoot>
             <tr><td><button type="button" class="link" data-action="add-doc-line" data-kind="${kind}">+ Add line</button></td><td colspan="${kind === "invoice" ? 4 : 3}" class="num muted">Subtotal</td><td class="num" id="doc-sub">$0.00</td><td></td></tr>
-            ${kind === "invoice" ? `<tr><td colspan="5" class="num muted" id="doc-tax-label">Sales tax</td><td class="num" id="doc-tax">$0.00</td><td></td></tr>` : ""}
+            ${kind === "invoice" ? `<tr><td colspan="5" class="num muted" id="doc-tax-label">${inCanada() ? "GST/HST and other taxes" : "Sales tax"}</td><td class="num" id="doc-tax">$0.00</td><td></td></tr>` : ""}
             <tr><td colspan="${kind === "invoice" ? 5 : 4}" class="num">Total</td><td class="num" id="doc-total">$0.00</td><td></td></tr>
             ${kind === "bill" ? `<tr data-use-tax ${useTaxDefault ? "" : "hidden"}><td colspan="4" class="num muted" id="doc-use-tax-label">Use tax you owe the state (not paid to the vendor)</td><td class="num" id="doc-use-tax">$0.00</td><td></td></tr>` : ""}
           </tfoot>
@@ -1076,9 +1323,14 @@ async function docsView(id, kind) {
           <label>Set the rate by hand (%)<input name="manualRate" inputmode="decimal" placeholder="9.5" style="width:90px"></label>
           <label style="flex:1">Why<input name="manualReason" placeholder="e.g. CDTFA lookup down; rate from the CDTFA website"></label>
         </div>` : ""}
-        <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button></div>
+        <div class="row" style="margin-top:12px"><button type="submit" id="doc-save" disabled>${kind === "invoice" ? "Issue invoice" : "Record bill"}</button>
+          ${invoice ? `<button type="submit" class="secondary" data-as="estimate">Save as estimate instead</button><span class="hash">An estimate doesn't post to the books; the due date becomes its "good until" date.</span>` : ""}</div>
       </form>
     </div>` : ""}
+    ${invoice ? estimatesPanel(id, estimates, canWrite, Boolean(mail?.emailEnabled)) : ""}
+    ${recurringPanel(kind, recurring, canWrite)}
+    ${invoice && mail ? remindersPanel(mail, canSetEmails) : ""}
+    ${online ? onlinePaymentsPanel(online) : ""}
     <div class="panel">
       <h2>All ${d.title.toLowerCase()}</h2>
       <div class="table-wrap"><table>
@@ -1128,8 +1380,17 @@ async function docPageView(id, kind, docId) {
   app.innerHTML = shell(d.path, `
     <div class="head no-print">
       <div><a href="#/e/${id}/${d.path}">← All ${d.title.toLowerCase()}</a></div>
-      <div class="row"><button class="secondary" data-action="print">Print or save as PDF</button></div>
+      <div class="row">
+        ${invoice && x.status !== "void" && state.org.role !== "read_only" && state.org.role !== "approver" ? `<button data-action="doc-toggle" data-form="doc-email" data-id="${x.id}">${x.emails?.some((m) => m.kind === "invoice") ? "Email again" : "Email to customer"}</button>` : ""}
+        <button class="secondary" data-action="print">Print or save as PDF</button>
+      </div>
     </div>
+    ${invoice ? `<table class="no-print" style="margin-bottom:12px"><tbody><tr hidden data-doc-email="${x.id}"><td>
+      <form data-form="doc-email" data-id="${x.id}" class="row">
+        <label style="min-width:260px">Send to<input type="email" name="to" value="${esc(who?.email ?? "")}" placeholder="customer@example.com" required></label>
+        <button type="submit">Send</button>
+        <span class="hash">The email has a link to view or print this invoice.</span>
+      </form></td></tr></tbody></table>` : ""}
     <article class="panel doc">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
         <div>
@@ -1147,11 +1408,12 @@ async function docPageView(id, kind, docId) {
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
-        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.taxable ? ` <span class="hash">taxable${l.taxableMinor !== null && l.taxableMinor !== undefined ? ` on ${usd(l.taxableMinor)}` : ""}</span>` : ""}${l.useTaxable ? ` <span class="hash">use tax ${usd(l.useTaxMinor)}</span>` : ""}${l.servicePeriodStart ? `<div class="hash">Access ${longDate(l.servicePeriodStart)}${l.servicePeriodEnd ? ` to ${longDate(l.servicePeriodEnd)}` : ""}</div>` : ""}</td>
+        <tbody>${x.lines.map((l) => `<tr><td>${esc(l.description || l.accountName)}${l.caTax ? (l.caTax.supply === "taxable" ? "" : ` <span class="hash">${l.caTax.supply === "zero_rated" ? "zero-rated" : "exempt"}</span>`) : l.taxable ? ` <span class="hash">taxable${l.taxableMinor !== null && l.taxableMinor !== undefined ? ` on ${usd(l.taxableMinor)}` : ""}</span>` : ""}${l.useTaxable ? ` <span class="hash">use tax ${usd(l.useTaxMinor)}</span>` : ""}${l.servicePeriodStart ? `<div class="hash">Access ${longDate(l.servicePeriodStart)}${l.servicePeriodEnd ? ` to ${longDate(l.servicePeriodEnd)}` : ""}</div>` : ""}</td>
           <td class="num">${esc(l.quantity)}</td><td class="num">${usd(l.unitPriceMinor)}</td><td class="num">${usd(l.amountMinor)}</td></tr>`).join("")}</tbody>
         <tfoot>
           <tr><td colspan="3" class="num muted">Subtotal</td><td class="num">${usd(x.subtotalMinor)}</td></tr>
-          ${invoice && BigInt(x.taxMinor) ? `<tr><td colspan="3" class="num muted">Sales tax ${pct(x.taxRate)}</td><td class="num">${usd(x.taxMinor)}</td></tr>` : ""}
+          ${invoice && x.caTax ? x.caTax.taxes.filter((t) => BigInt(t.amountMinor)).map((t) => `<tr><td colspan="3" class="num muted">${esc(t.label)}</td><td class="num">${usd(t.amountMinor)}</td></tr>`).join("")
+            : invoice && BigInt(x.taxMinor) ? `<tr><td colspan="3" class="num muted">Sales tax ${pct(x.taxRate)}</td><td class="num">${usd(x.taxMinor)}</td></tr>` : ""}
           <tr><td colspan="3" class="num">Total</td><td class="num">${usd(x.totalMinor)}</td></tr>
           ${!invoice && BigInt(x.useTaxMinor) ? `<tr><td colspan="3" class="num muted">Use tax you owe the state, ${pct(x.useTaxRate)} (not paid to the vendor)</td><td class="num">${usd(x.useTaxMinor)}</td></tr>` : ""}
           ${BigInt(x.paidMinor) ? `<tr><td colspan="3" class="num muted">Paid</td><td class="num">${usd(-BigInt(x.paidMinor))}</td></tr><tr><td colspan="3" class="num">Balance due</td><td class="num">${usd(due)}</td></tr>` : ""}
@@ -1169,7 +1431,11 @@ async function docPageView(id, kind, docId) {
       ${invoice ? `<p style="margin-top:8px">${esc(taxExplanation(x))}</p>` : x.useTaxSource !== "none" ? `<p style="margin-top:8px">${esc(useTaxExplanation(x))}</p>` : ""}
       <p class="hash" style="margin-top:8px">Created by ${esc(x.createdBy.replace("user:", ""))}</p>
       ${x.payments.length ? `<h3>Payments</h3>${x.payments.map((p) => `<div class="hash">${p.date} · ${usd(p.amountMinor)} · account ${p.bankAccountCode} · by ${esc(p.createdBy.replace("user:", ""))}</div>`).join("")}` : ""}
+      <h3>Receipts and files</h3><div data-files-box="${x.id}" data-type="document" class="muted">Loading…</div>
+      ${x.emails?.length ? `<h3>Emails</h3>${x.emails.map((m) => `<div class="hash">${esc(when(m.sentAt))} · ${m.kind === "reminder" ? `Reminder (${esc(m.stage)})` : "Invoice"} to ${esc(m.sentTo)} · by ${esc(m.sentBy.replace("user:", "").replace("system:", "TrailBook "))}</div>`).join("")}` : ""}
     </div>`);
+  const files = document.querySelector(`[data-files-box="${x.id}"]`);
+  if (files) fillFiles(files).catch((err) => { files.textContent = err.message; });
 }
 
 /** Why a bill has the use tax it has, from what was frozen on it. Mirrors explainUseTax on the server. */
@@ -1193,6 +1459,8 @@ function taxExplanation(x) {
     direct_pay: `No sales tax on software: ${x.taxNote ?? "the buyer pays California use tax directly"}.`,
     manual: `Sales tax ${pct(x.taxRate)}, set by hand: ${x.taxNote}.`,
     user_entered: `Sales tax ${pct(x.taxRate)}, entered by hand before the rate was worked out automatically.`,
+    canada: x.caTax?.taxes.length ? `${x.taxNote}.` : `No tax charged${x.taxNote ? `: ${x.taxNote}` : ""}.`,
+    none: x.taxNote ? `No sales tax: ${x.taxNote}.` : "No sales tax.",
   }[x.taxSource] ?? "No sales tax.";
 }
 
@@ -1286,15 +1554,67 @@ async function itemsView(id) {
 
 const bankUi = { account: null, status: "new" };
 
+const FEED_STATUS = { active: "Connected", needs_login: "The bank needs you to sign in again", error: "Last update failed" };
+
+/** The selected account's automatic feed, or a way to connect one. */
+function feedPanel(f) {
+  if (!f.enabled) return "";
+  const feed = f.feeds.find((x) => x.bankAccount === bankUi.account);
+  const canConnect = ["owner", "admin", "accountant"].includes(state.org.role);
+  const canWrite = !["read_only", "approver"].includes(state.org.role);
+  if (!feed) {
+    return `<div class="panel"><h2>Connect this account to the bank</h2>
+      <p class="muted">New transactions then arrive every morning, ready to review. TrailBook only reads transactions; it can't move money. The connection runs through Plaid${f.env === "sandbox" ? " (test mode)" : ""}.</p>
+      ${canConnect ? `<button data-action="feed-connect">Connect ${esc(bankUi.account)}</button>` : `<p class="hash">An owner, admin or accountant can connect it.</p>`}</div>`;
+  }
+  return `<div class="panel"><div class="row" style="justify-content:space-between">
+      <div><strong>${esc(feed.institution ?? "Bank")}</strong> ${feed.accountName ? `· ${esc(feed.accountName)}` : ""} ${feed.accountMask ? `<span class="mono">···${esc(feed.accountMask)}</span>` : ""}
+        <div class="${feed.status === "active" ? "muted" : ""}" ${feed.status === "active" ? "" : `style="color:var(--bad-ink)"`}>${FEED_STATUS[feed.status]}${feed.lastSyncedAt ? ` · updated ${esc(new Date(feed.lastSyncedAt).toLocaleString())}` : ""}${feed.lastError && feed.status !== "active" ? `: ${esc(feed.lastError)}` : ""}</div></div>
+      <div class="row">
+        ${feed.status === "needs_login" && canConnect ? `<button data-action="feed-relink" data-id="${feed.id}">Sign in again</button>` : ""}
+        ${canWrite && feed.status !== "needs_login" ? `<button class="secondary" data-action="feed-sync" data-id="${feed.id}">Update now</button>` : ""}
+        ${canConnect ? `<button class="link" data-action="feed-remove" data-id="${feed.id}">Disconnect</button>` : ""}
+      </div></div></div>`;
+}
+
+/** Loads Plaid Link only when someone connects a bank. */
+let plaidScript = null;
+function loadPlaid() {
+  plaidScript ||= new Promise((resolve, reject) => {
+    const s = Object.assign(document.createElement("script"), { src: "https://cdn.plaid.com/link/v2/stable/link-initialize.js", onload: resolve, onerror: () => reject(new Error("couldn't load the bank connection window")) });
+    document.head.append(s);
+  });
+  return plaidScript;
+}
+
+async function openPlaid(feedId) {
+  const [{ linkToken }] = await Promise.all([api(entPath("/bank-feeds/link-token"), { body: feedId ? { feedId } : {} }), loadPlaid()]);
+  await new Promise((resolve, reject) => {
+    window.Plaid.create({
+      token: linkToken,
+      onSuccess: (publicToken, meta) => resolve(feedId
+        ? api(entPath(`/bank-feeds/${feedId}/reconnected`), { body: {} })
+        : api(entPath("/bank-feeds"), { body: { bankAccount: bankUi.account, publicToken, providerAccountId: meta.accounts?.[0]?.id, institution: meta.institution?.name } })),
+      onExit: (err) => (err ? reject(new Error(err.display_message || err.error_message || "the bank connection was cancelled")) : resolve(null)),
+    }).open();
+  }).then((r) => {
+    if (r) toast(feedId ? "Reconnected" : `Connected. ${r.sync?.added ?? 0} recent transaction${r.sync?.added === 1 ? "" : "s"} brought in`);
+  });
+  await bankView(state.entity.entity.id);
+}
+
 async function bankView(id) {
   await loadEntity(id);
   const banks = state.entity.accounts.filter((a) => a.is_active && a.subtype === "bank");
   if (!banks.some((a) => a.code === bankUi.account)) bankUi.account = banks[0]?.code ?? null;
   const q = `?account=${encodeURIComponent(bankUi.account ?? "")}&status=${bankUi.status}`;
-  const [{ lines }, inv, bills] = await Promise.all([
+  const [{ lines }, inv, bills, { rules }, { counts: files }, feeds] = await Promise.all([
     api(entPath(`/bank-lines${q}`)),
     bankUi.status === "new" ? api(entPath("/invoices")) : { documents: [] },
     bankUi.status === "new" ? api(entPath("/bills")) : { documents: [] },
+    api(entPath("/bank-rules")),
+    api(entPath("/attachments?type=bank_line")),
+    api(entPath("/bank-feeds")).catch(() => ({ enabled: false, feeds: [] })),
   ]);
   const open = (docs) => docs.filter((d) => d.status !== "void" && d.dueMinor !== "0");
   const openInv = open(inv.documents), openBills = open(bills.documents);
@@ -1313,7 +1633,7 @@ async function bankView(id) {
   };
   const tab = (k, l) => `<button class="${bankUi.status === k ? "" : "secondary"}" data-action="bank-status" data-status="${k}">${l}</button>`;
   app.innerHTML = shell("bank", `
-    <div class="head"><div><h1>Bank</h1><p class="muted">Import statements as CSV, then record each line: match it to an invoice or bill, give it a category, or exclude it. Live bank connections come later.</p></div></div>
+    <div class="head"><div><h1>Bank</h1><p class="muted">Import statements (OFX, QFX, QBO or CSV) or connect the bank, then record each line: match it to an invoice or bill, give it a category, or exclude it.</p></div></div>
     ${banks.length ? "" : `<div class="alert warn">This business has no active bank account in its chart of accounts.</div>`}
     <div class="panel">
       <div class="row" style="justify-content:space-between">
@@ -1321,11 +1641,12 @@ async function bankView(id) {
         <div class="row">${tab("new", "To review")}${tab("posted", "Recorded")}${tab("excluded", "Excluded")}</div>
       </div>
     </div>
+    ${banks.length ? feedPanel(feeds) : ""}
     ${canWrite && banks.length ? `<div class="panel">
       <h2>Import a statement</h2>
-      <p class="muted">Download a CSV from your bank. It needs a date, a description, and either an Amount column or separate withdrawal and deposit columns. Lines already imported are skipped.</p>
+      <p class="muted">Download your bank's activity as an OFX, QFX (Quicken) or QBO (QuickBooks Web Connect) file, or as a CSV with a date, a description, and either an Amount column or separate withdrawal and deposit columns. Lines already imported are skipped, so overlapping downloads are fine.</p>
       <form data-form="bank-import" class="row">
-        <label>CSV file<input type="file" name="file" accept=".csv,text/csv"></label>
+        <label>Statement file<input type="file" name="file" accept=".csv,.ofx,.qfx,.qbo,text/csv,application/x-ofx"></label>
         <label style="flex:1;min-width:240px">or paste it here<textarea name="csv" rows="2" placeholder="Date,Description,Amount"></textarea></label>
         <button type="submit">Import</button>
       </form>
@@ -1338,15 +1659,92 @@ async function bankView(id) {
           const amount = `<td class="num" style="color:${amt > 0n ? "var(--good-ink)" : "inherit"}">${usd(l.amountMinor)}</td>`;
           if (l.status === "new") return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}
             <td>${canWrite ? choice(l) : ""}</td>
-            <td>${canWrite ? `<div class="row"><button data-action="bank-record" data-id="${l.id}">Record</button><button class="link" data-action="bank-exclude" data-id="${l.id}">Exclude</button></div>` : ""}</td></tr>`;
+            <td>${canWrite ? `<div class="row"><button data-action="bank-record" data-id="${l.id}">Record</button><button class="link" data-action="bank-exclude" data-id="${l.id}">Exclude</button><button class="link" data-action="rule-from-line" data-id="${l.id}" data-text="${esc(ruleWords(l.description))}" data-dir="${amt > 0n ? "in" : "out"}">Make a rule</button>${fileButton("bank_line", l.id, files[l.id])}</div>` : ""}</td></tr>
+            ${fileRow("bank_line", l.id, 5)}`;
           if (l.status === "posted") return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}
             <td>${l.documentNumber ? `Payment · ${esc(l.documentNumber)}` : `${esc(l.categoryAccount)} · ${esc(state.entity.accounts.find((a) => a.code === l.categoryAccount)?.name ?? "")}`}<div class="hash">by ${esc((l.decidedBy ?? "").replace("user:", ""))}</div></td>
-            <td>${canWrite && !l.documentNumber ? `<form data-form="bank-undo" data-id="${l.id}" class="row"><input name="reason" placeholder="Reason" required style="width:140px"><button class="secondary" type="submit">Undo</button></form>` : ""}</td></tr>`;
+            <td><div class="row">${canWrite && !l.documentNumber ? `<form data-form="bank-undo" data-id="${l.id}" class="row"><input name="reason" placeholder="Reason" required style="width:140px"><button class="secondary" type="submit">Undo</button></form>` : ""}${fileButton("bank_line", l.id, files[l.id])}</div></td></tr>
+            ${fileRow("bank_line", l.id, 5)}`;
           return `<tr><td>${l.date}</td><td>${esc(l.description)}</td>${amount}<td></td>
             <td>${canWrite ? `<button class="secondary" data-action="bank-restore" data-id="${l.id}">Restore</button>` : ""}</td></tr>`;
         }).join("") || `<tr><td colspan="5" class="muted">${bankUi.status === "new" ? "Nothing to review. Import a statement to get started." : "Nothing here."}</td></tr>`}</tbody>
       </table></div>
-    </div>`);
+    </div>
+    ${rulesPanel(rules, cats, banks, canWrite)}`);
+}
+
+/** The first word or two of a bank description, as a starting point for a rule. */
+function ruleWords(d) {
+  const words = d.replace(/[^A-Za-z0-9&' ]+/g, " ").trim().split(/\s+/).filter((w) => !/^\d+$/.test(w));
+  return words.slice(0, words[0]?.length > 4 ? 1 : 2).join(" ");
+}
+
+function rulesPanel(rules, cats, banks, canWrite) {
+  const dir = { any: "In or out", in: "Money in", out: "Money out" };
+  const range = (r) => (r.minMinor !== null || r.maxMinor !== null ? `${r.minMinor !== null ? usd(r.minMinor) : "any"} to ${r.maxMinor !== null ? usd(r.maxMinor) : "any"}` : "Any amount");
+  return `<div class="panel" id="bank-rules">
+    <h2>Bank rules</h2>
+    <p class="muted">A rule sends lines whose description contains certain words to a category. It can suggest the category for you to confirm, or record matching lines as soon as they're imported. The oldest matching rule wins; invoices and bills with the same amount are suggested first.</p>
+    ${rules.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Description contains</th><th>Direction</th><th>Amount</th><th>Category</th><th>What it does</th><th class="num">Used</th><th></th></tr></thead>
+      <tbody>${rules.map((r) => `<tr class="${r.active ? "" : "muted"}">
+        <td><strong>${esc(r.matchText)}</strong>${r.bankAccount ? `<div class="hash">only account ${esc(r.bankAccount)}</div>` : ""}</td>
+        <td>${dir[r.direction]}</td><td>${range(r)}</td><td>${esc(r.account)} · ${esc(r.accountName)}</td>
+        <td>${r.active ? (r.autoRecord ? "Records on import" : "Suggests") : "Off"}</td><td class="num">${r.appliedCount}</td>
+        <td>${canWrite && r.active ? `<button class="link" data-action="rule-off" data-id="${r.id}">Turn off</button>` : ""}</td></tr>`).join("")}</tbody>
+    </table></div>` : ""}
+    ${canWrite ? `<form data-form="bank-rule" class="row" style="margin-top:12px">
+      <label>Description contains<input name="matchText" required minlength="2" maxlength="100" placeholder="GUSTO"></label>
+      <label>Direction<select name="direction"><option value="any">In or out</option><option value="in">Money in</option><option value="out">Money out</option></select></label>
+      <label>Category<select name="account" required><option value="">Choose…</option>${cats.filter((a) => a.subtype !== "bank").map((a) => `<option value="${a.code}">${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>
+      <label>From $<input name="min" inputmode="decimal" style="width:90px" placeholder="any"></label>
+      <label>To $<input name="max" inputmode="decimal" style="width:90px" placeholder="any"></label>
+      ${banks.length > 1 ? `<label>Bank account<select name="bankAccount"><option value="">Any</option>${banks.map((a) => `<option value="${a.code}">${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>` : ""}
+      <label class="check"><input type="checkbox" name="autoRecord"> Record matching lines on import</label>
+      <button type="submit">Add rule</button>
+    </form>` : ""}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- files
+
+const FILE_ACCEPT = "application/pdf,image/jpeg,image/png,image/webp,image/heic,image/gif,.heic";
+
+/** A paperclip button that shows (and adds) the files on a record. */
+function fileButton(type, id, n = 0) {
+  return `<button class="link" data-action="files-toggle" data-type="${type}" data-id="${id}">${n ? `Files (${n})` : "Attach"}</button>`;
+}
+
+/** The hidden row a fileButton opens, filled when it opens. */
+function fileRow(type, id, cols) {
+  return `<tr hidden data-files="${id}"><td colspan="${cols}"><div data-files-box="${id}" data-type="${type}" class="muted">Loading…</div></td></tr>`;
+}
+
+async function fillFiles(box) {
+  const type = box.dataset.type, id = box.dataset.filesBox;
+  const r = await api(entPath(`/attachments?type=${type}&id=${id}`));
+  const canWrite = state.org.role !== "read_only" && state.org.role !== "approver";
+  box.classList.remove("muted");
+  box.innerHTML = `${r.attachments.map((a) => `<div class="row" style="gap:12px">
+      <a href="${entPath(`/attachments/${a.id}`)}" target="_blank" rel="noopener">${esc(a.fileName)}</a>
+      <span class="hash">${Math.max(1, Math.round(a.sizeBytes / 1024))} KB · ${esc(when(a.uploadedAt))} · ${esc(a.uploadedBy.replace("user:", ""))}</span>
+      ${canWrite ? `<button class="link" data-action="file-remove" data-id="${a.id}" data-box="${id}">Remove</button>` : ""}
+    </div>`).join("") || `<div class="muted">No files yet.</div>`}
+    ${canWrite ? (r.enabled ? `<label class="row" style="margin-top:8px">Add a receipt or PDF (up to 4 MB)<input type="file" accept="${FILE_ACCEPT}" data-upload="${type}" data-id="${id}"></label>`
+      : `<div class="hash">File storage isn't set up on this site yet.</div>`) : ""}`;
+}
+
+async function uploadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 4 * 1024 * 1024) throw new Error("Files can be up to 4 MB. A phone photo saved as JPEG is usually well under.");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  input.disabled = true;
+  await api(entPath("/attachments"), { body: { objectType: input.dataset.upload, objectId: input.dataset.id, fileName: file.name, data: btoa(bin) } });
+  toast(`${file.name} attached`);
+  await fillFiles(document.querySelector(`[data-files-box="${input.dataset.id}"]`));
 }
 
 // ------------------------------------------------------------ overview
@@ -1449,8 +1847,8 @@ function backupPanel(bk) {
 
 // ------------------------------------------------------------- reports
 
-const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"]];
-const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all" };
+const REPORTS = [["pl", "Profit and loss"], ["bs", "Balance sheet"], ["cf", "Cash flows"], ["gl", "General ledger"], ["ar", "Receivables aging"], ["ap", "Payables aging"], ["st", "Sales tax"], ["yf", "Contractor forms"]];
+const rep = { tab: "pl", preset: "this-year", asPreset: "today", from: "", to: "", asOf: "", account: "all", year: "" };
 
 const RANGE_PRESETS = [["this-month", "This month"], ["last-month", "Last month"], ["this-quarter", "This quarter"], ["last-quarter", "Last quarter"], ["this-year", "This year to date"], ["last-year", "Last year"], ["custom", "Custom dates"]];
 const ASOF_PRESETS = [["today", "Today"], ["end-last-month", "End of last month"], ["end-last-quarter", "End of last quarter"], ["end-last-year", "End of last year"], ["custom", "Custom date"]];
@@ -1491,8 +1889,13 @@ function reportDefaults() {
   if (rep.account !== "all" && !state.entity.accounts.some((a) => a.code === rep.account)) rep.account = "all";
 }
 
+/** Until March, the forms people are working on are last year's. */
+const formsYear = () => { const [y, m] = today().split("-").map(Number); return String(m <= 3 ? y - 1 : y); };
+
 function reportQuery() {
+  if (rep.tab === "yf") return ["/contractor-forms/prepared", `year=${rep.year || formsYear()}`, `contractor-forms-${rep.year || formsYear()}`];
   if (rep.tab === "pl") return ["/reports/profit-and-loss", `from=${rep.from}&to=${rep.to}`, `profit-and-loss-${rep.from}-to-${rep.to}`];
+  if (rep.tab === "cf") return ["/reports/cash-flow", `from=${rep.from}&to=${rep.to}`, `cash-flow-${rep.from}-to-${rep.to}`];
   if (rep.tab === "bs") return ["/reports/balance-sheet", `asOf=${rep.asOf}`, `balance-sheet-${rep.asOf}`];
   if (rep.tab === "st") return ["/reports/sales-tax", `from=${rep.from}&to=${rep.to}`, `sales-tax-${rep.from}-to-${rep.to}`];
   if (rep.tab === "gl") return ["/reports/general-ledger", `account=${encodeURIComponent(rep.account)}&from=${rep.from}&to=${rep.to}`, `general-ledger-${rep.account}-${rep.from}-to-${rep.to}`];
@@ -1513,13 +1916,55 @@ const sectionRows = (s) => `
   <tr><td></td><td><strong>Total ${esc(s.label.toLowerCase())}</strong></td><td class="num"><strong>${usd(s.totalMinor)}</strong></td></tr>`;
 const totalRow = (label, minor) => `<tr><td></td><td><strong>${label}</strong></td><td class="num"><strong>${usd(minor)}</strong></td></tr>`;
 
+const RECIPIENT_TYPES = [["individual", "Individual or sole proprietor"], ["llc", "LLC (not taxed as a corporation)"], ["partnership", "Partnership"], ["attorney", "Attorney or law firm"], ["corporation", "Corporation"], ["other", "Other"]];
+
+/** Contractors paid in a year: who gets a 1099-NEC (US) or T4A (Canada), and the 1096 or T4A Summary totals. */
+async function contractorFormsBody(year) {
+  const s = await api(entPath(`/contractor-forms?year=${year}`));
+  const us = s.form === "1099_nec";
+  const formName = us ? "1099-NEC" : "T4A";
+  const canSet = ["owner", "admin", "accountant"].includes(state.org.role);
+  const kinds = us ? [["ssn", "SSN"], ["ein", "EIN"]] : [["sin", "SIN"], ["bn", "Business number"]];
+  const editRow = (v) => `<tr hidden data-contractor-edit="${v.contactId}"><td colspan="5">
+    <form data-form="contractor-tax" data-id="${v.contactId}" class="row">
+      <label class="check"><input type="checkbox" name="gets" ${v.form ? "checked" : ""}> Gets a ${formName}</label>
+      ${us ? `<label>They are<select name="recipientType">${RECIPIENT_TYPES.map(([k, l]) => `<option value="${k}" ${v.recipientType === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}
+      <label>Number<select name="tinKind">${kinds.map(([k, l]) => `<option value="${k}" ${v.tinKind === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>${us ? "From their W-9" : "Their number"}<input name="tin" autocomplete="off" placeholder="${v.tinLast4 ? `On file, ends ${esc(v.tinLast4)}` : ""}" style="width:170px"></label>
+      <label style="flex:1">Legal name (if different)<input name="legalName" value="${esc(v.legalName ?? "")}"></label>
+      <button type="submit">Save</button>
+    </form>
+    <p class="hash">Leave the number blank to keep the one on file. It's stored encrypted; only the last four digits show here.</p></td></tr>`;
+  return `<p class="muted">${us
+      ? `Form 1099-NEC is for each unincorporated contractor you paid ${usd(s.thresholdMinor)} or more by cash, check or bank transfer in ${year}. Card and payment app payments are reported by the card company on a 1099-K instead.`
+      : `A T4A slip (box 048, fees for services) is for each contractor you paid more than ${usd(s.thresholdMinor)} in ${year}.`}
+      TrailBook prepares the figures from your bill payments; you or your accountant file them (${us ? "IRS IRIS or FIRE, or on paper with Form 1096" : "CRA Internet file transfer or My Business Account, with the T4A Summary"}) and send each contractor their copy by <strong>${longDate(s.dueDate)}</strong>.</p>
+    ${s.warnings.map((w) => `<div class="alert">${esc(w)}</div>`).join("")}
+    <div class="row" style="gap:24px;margin:12px 0">
+      <div><div class="muted">${formName} forms</div><div class="stat">${s.summary.forms}</div></div>
+      <div><div class="muted">${us ? "1096 total (box 5)" : "T4A Summary total (box 048)"}</div><div class="stat">${usd(s.summary.totalMinor)}</div></div>
+      <div><div class="muted">Payer ${us ? "EIN" : "business number"}</div><div class="stat mono">${esc(s.payer.tin ?? "Not set")}</div></div>
+    </div>
+    <table><thead><tr><th>Vendor</th><th>${us ? "SSN or EIN" : "SIN or BN"}</th><th class="num">Paid in ${year}</th><th>${formName}</th><th></th></tr></thead>
+    <tbody>${s.vendors.map((v) => `<tr><td>${esc(v.name)}${v.legalName ? `<div class="hash">${esc(v.legalName)}</div>` : ""}</td>
+        <td class="mono" style="white-space:nowrap">${v.tinLast4 ? `${esc(v.tinKind.toUpperCase())} ···${esc(v.tinLast4)}` : ""}</td>
+        <td class="num">${usd(v.paidMinor)}</td>
+        <td>${v.reportable ? `<strong>Due</strong>` : `<span class="muted">No</span>`}${v.notes.map((n) => `<div class="muted" style="font-size:13px">${esc(n)}</div>`).join("")}</td>
+        <td>${canSet ? `<button class="link" data-action="doc-toggle" data-form="contractor-edit" data-id="${v.contactId}">${v.form ? "Edit" : "Set up"}</button>` : ""}</td></tr>
+      ${canSet ? editRow(v) : ""}`).join("") || `<tr><td colspan="5" class="muted">No bill payments to vendors in ${year}.</td></tr>`}</tbody></table>
+    <p class="hash" style="margin-top:8px">Download CSV has masked numbers, for checking. ${canSet ? "Download for filing has the full numbers for your filing software; each download is logged." : ""}</p>`;
+}
+
 async function reportsView(id) {
   await loadEntity(id);
   reportDefaults();
   const [path, q] = reportQuery();
-  const range = ["pl", "gl", "st"].includes(rep.tab);
+  const range = ["pl", "cf", "gl", "st"].includes(rep.tab);
   let body;
-  if (rep.tab === "pl") {
+  if (rep.tab === "yf") {
+    rep.year ||= formsYear();
+    body = await contractorFormsBody(rep.year);
+  } else if (rep.tab === "pl") {
     const pl = await api(entPath(`${path}?${q}`));
     const [rev, cor, opx, oi, oe] = pl.sections;
     body = `<table><tbody>${sectionRows(rev)}${sectionRows(cor)}${totalRow("Gross profit", pl.grossProfitMinor)}${sectionRows(opx)}
@@ -1537,6 +1982,25 @@ async function reportsView(id) {
       <tr><td></td><td>Current year earnings</td><td class="num">${usd(bs.currentYearEarningsMinor)}</td></tr>
       ${totalRow("Total equity", bs.totalEquityMinor)}</tbody>
       <tfoot><tr><td></td><td>Liabilities and equity</td><td class="num">${usd(BigInt(bs.totalLiabilitiesMinor) + BigInt(bs.totalEquityMinor))}</td></tr></tfoot></table>`;
+  } else if (rep.tab === "cf") {
+    const cf = await api(entPath(`${path}?${q}`));
+    const rows = (xs, prefix = "") => xs.map((r) => `<tr><td class="mono">${r.code}</td><td>${prefix}${esc(r.name)}</td><td class="num">${usd(r.amountMinor)}</td></tr>`).join("");
+    const none = (xs) => (xs.length ? "" : `<tr><td></td><td class="muted">None</td><td></td></tr>`);
+    body = `${cf.tiesOut ? "" : `<div class="alert bad">The net change doesn't match the change in cash. Check the trial balance.</div>`}
+      <p class="muted">Indirect method: net income, adjusted for the change in each balance sheet account. Growth in an asset used cash; growth in a liability or equity brought it in.</p>
+      <table><tbody>
+        <tr><th colspan="3">Operating activities</th></tr>
+        <tr><td></td><td>Net income</td><td class="num">${usd(cf.netIncomeMinor)}</td></tr>
+        ${rows(cf.operating, "Change in ")}
+        ${totalRow("Net cash from operating activities", cf.operatingMinor)}
+        <tr><th colspan="3">Investing activities</th></tr>${rows(cf.investing)}${none(cf.investing)}
+        ${totalRow("Net cash from investing activities", cf.investingMinor)}
+        <tr><th colspan="3">Financing activities</th></tr>${rows(cf.financing)}${none(cf.financing)}
+        ${totalRow("Net cash from financing activities", cf.financingMinor)}
+        ${cf.unclassified.length ? `<tr><th colspan="3">Not classified</th></tr>${rows(cf.unclassified)}${totalRow("Total not classified", cf.unclassifiedMinor)}` : ""}
+        ${totalRow("Net change in cash", cf.netChangeMinor)}
+        <tr><td></td><td>Cash at ${longDate(cf.from)}</td><td class="num">${usd(cf.cashStartMinor)}</td></tr>
+      </tbody><tfoot><tr><td></td><td>Cash at ${longDate(cf.to)}</td><td class="num">${usd(cf.cashEndMinor)}</td></tr></tfoot></table>`;
   } else if (rep.tab === "st") {
     const r = await api(entPath(`${path}?${q}`));
     const line = (label, minor, note = "") => `<tr><td>${label}${note ? `<div class="hash">${note}</div>` : ""}</td><td class="num">${usd(minor)}</td></tr>`;
@@ -1586,16 +2050,103 @@ async function reportsView(id) {
     <div class="panel">
       <form data-form="report" class="row" style="margin-bottom:12px">
         ${rep.tab === "gl" ? `<label>Account<select name="account" data-autosubmit><option value="all">All accounts</option>${state.entity.accounts.map((a) => `<option value="${a.code}" ${a.code === rep.account ? "selected" : ""}>${a.code} · ${esc(a.name)}</option>`).join("")}</select></label>` : ""}
-        ${range
+        ${rep.tab === "yf"
+          ? `<label>Payments in<select name="year" data-autosubmit>${[0, 1, 2].map((n) => String(Number(formsYear()) + 1 - n)).map((y) => `<option ${y === rep.year ? "selected" : ""}>${y}</option>`).join("")}</select></label>`
+          : range
           ? `<label>Dates<select name="preset" data-autosubmit>${RANGE_PRESETS.map(([k, l]) => `<option value="${k}" ${rep.preset === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
              <label>From<input type="date" name="from" value="${rep.from}" required data-custom="preset"></label><label>To<input type="date" name="to" value="${rep.to}" required data-custom="preset"></label>`
           : `<label>As of<select name="asPreset" data-autosubmit>${ASOF_PRESETS.map(([k, l]) => `<option value="${k}" ${rep.asPreset === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
              <label>Date<input type="date" name="asOf" value="${rep.asOf}" required data-custom="asPreset"></label>`}
         <button type="submit" class="secondary">Update</button>
         <button type="button" data-action="report-csv">Download CSV</button>
+        ${rep.tab === "yf" && ["owner", "admin", "accountant"].includes(state.org.role) ? `<button type="button" class="secondary" data-action="report-csv" data-full="1" title="With full taxpayer numbers, for filing. Logged in the audit trail">Download for filing</button>` : ""}
       </form>
       <div class="table-wrap">${body}</div>
     </div>`);
+}
+
+// ------------------------------------------------- moving from QuickBooks or Xero
+
+const move = { startDate: "", results: {}, files: {} };
+
+const MOVE_STEPS = [
+  ["chart", "1. Chart of accounts",
+    "QuickBooks: Reports, search for Account List, then Export to CSV. Xero: Accounting, Chart of accounts, Export.",
+    "Each account is matched to one here by name, or added with the right kind and tax line. Receivables, payables and retained earnings map to TrailBook's own."],
+  ["contacts", "2. Customers and vendors",
+    "QuickBooks: Reports, Customer Contact List and Vendor Contact List, Export to CSV (one file each). Xero: Contacts, All contacts, Export.",
+    "Names already here are left alone. Addresses come in when they have a street, city, two-letter state and ZIP or postal code."],
+  ["invoices", "3. Open invoices",
+    "QuickBooks: Reports, Open Invoices, as of the day before TrailBook starts, Export to CSV. Xero: Business, Invoices, Awaiting payment, Export.",
+    "Each one becomes an invoice dated the day TrailBook starts, for what's still owed, so you can record its payment here. Credit notes and unapplied payments are listed for you to enter by hand."],
+  ["bills", "4. Unpaid bills",
+    "QuickBooks: Reports, Unpaid Bills, Export to CSV. Xero: Business, Bills to pay, Awaiting payment, Export.",
+    "The same for what you still owe vendors."],
+  ["opening", "5. Trial balance",
+    "QuickBooks: Reports, Trial Balance, as of the day before TrailBook starts, Export to CSV. Xero: Accounting, Reports, Trial Balance, same date, Export to CSV.",
+    "Posted as one opening entry. Receivables and payables come from the invoices and bills above, so do this step last; any difference from the old totals is shown and goes to opening balance equity."],
+];
+
+function moveResult(step, r) {
+  if (!r) return "";
+  const x = r.result;
+  const head = r.preview ? `<div class="alert">Preview only: nothing was saved. Check it, then choose Import.</div>` : `<div class="alert good">Imported.</div>`;
+  const list = (items, fn) => (items?.length ? `<ul>${items.slice(0, 50).map((i) => `<li>${fn(i)}</li>`).join("")}${items.length > 50 ? `<li class="muted">and ${items.length - 50} more</li>` : ""}</ul>` : "");
+  let body = "";
+  if (step === "chart") {
+    body = `<p>${x.created.length} new, ${x.matched.length} matched, ${x.skipped.length} skipped (read as ${x.source === "xero" ? "Xero" : "QuickBooks"}).</p>
+      ${list(x.created, (c) => `<span class="mono">${esc(c.code)}</span> ${esc(c.name)} <span class="muted">(${esc(c.kind)})</span>`)}
+      ${list(x.matched, (m) => `${esc(m.from)} → ${esc(m.to)}`)}
+      ${list(x.skipped, (k) => `${esc(k.name)}: <span class="muted">${esc(k.reason)}</span>`)}`;
+  } else if (step === "contacts") {
+    body = `<p>${x.created.length} added, ${x.skipped.length} already here.</p>${list(x.notes, (n) => `${esc(n.name)}: <span class="muted">${esc(n.note)}</span>`)}`;
+  } else if (step === "invoices" || step === "bills") {
+    const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+    body = `<p>${plural(x.created.length, step.slice(0, -1))} totalling <strong>${usd(x.totalMinor)}</strong>${x.newContacts.length ? `, with ${plural(x.newContacts.length, `new ${step === "invoices" ? "customer" : "vendor"}`)}` : ""}.</p>
+      ${list(x.created, (d) => `${esc(d.contact)} · ${esc(d.number)} · ${usd(d.openMinor)}`)}
+      ${list(x.skipped, (k) => `${esc(k.row)}: <span class="muted">${esc(k.reason)}</span>`)}`;
+  } else {
+    body = x.unmatched.length
+      ? `<div class="alert bad">${esc(x.warnings[0])}</div>${list(x.unmatched, (n) => esc(n))}`
+      : `${x.warnings.map((w) => `<div class="alert">${esc(w)}</div>`).join("")}
+        <p>Receivables: old ${usd(x.receivables.trialBalanceMinor)}, invoices brought in ${usd(x.receivables.documentsMinor)}. Payables: old ${usd(x.payables.trialBalanceMinor)}, bills brought in ${usd(x.payables.documentsMinor)}.</p>
+        <table><thead><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead>
+        <tbody>${x.lines.map((l) => `<tr><td class="mono">${esc(l.account)} ${esc(state.entity.accounts.find((a) => a.code === l.account)?.name ?? "")}</td><td class="num">${usd(l.debitMinor, { blankZero: true })}</td><td class="num">${usd(l.creditMinor, { blankZero: true })}</td></tr>`).join("")}</tbody></table>`;
+  }
+  return `<div style="margin-top:12px">${head}${body}</div>`;
+}
+
+async function moveView(id) {
+  await loadEntity(id);
+  if (move.entityId !== id) Object.assign(move, { entityId: id, startDate: "", results: {}, files: {} });
+  const st = await api(entPath("/migration"));
+  move.startDate ||= st.openingDate ?? st.booksStart ?? today();
+  const canImport = ["owner", "admin", "accountant"].includes(state.org.role);
+  const done = { chart: st.accountsMapped > 0, contacts: st.contacts > 0, invoices: st.openInvoices > 0, bills: st.openBills > 0, opening: Boolean(st.openingDate) };
+  app.innerHTML = shell("move", `
+    <div class="head"><div><h1>Move from QuickBooks or Xero</h1><p class="muted">Bring a business over from QuickBooks Online or Xero with five exports. Preview each one first; nothing is saved until you choose Import, and each step can be run again without doubling up.</p></div></div>
+    <div class="panel">
+      <form data-form="move-date" class="row">
+        <label>TrailBook books start on<input type="date" name="startDate" value="${esc(move.startDate)}" required data-autosubmit></label>
+        <p class="hash" style="flex:1">Export the open invoices, unpaid bills and trial balance as of the day before. Your books here start ${st.booksStart ? longDate(st.booksStart) : "with the first month set up"}.</p>
+      </form>
+      ${st.clearing.length ? `<div class="alert">${st.clearing.map((c) => `${esc(c.name)} has ${usd(c.netMinor < 0 ? -BigInt(c.netMinor) : c.netMinor)} left in it.`).join(" ")} ${st.openingDate ? "Invoices or bills came in after the trial balance; post a journal entry to move it to receivables or payables, or ask us." : "That's expected until the trial balance is in."}</div>` : ""}
+    </div>
+    ${MOVE_STEPS.map(([step, title, how, what]) => `
+      <div class="panel">
+        <h2>${title} ${done[step] ? `<span class="muted" style="font-size:14px;font-weight:400">· done</span>` : ""}</h2>
+        <p class="muted">${esc(what)}</p>
+        <p class="hash">${esc(how)}</p>
+        ${canImport ? `<form data-form="move" data-step="${step}" class="row">
+          <label>CSV file<input type="file" name="file" accept=".csv,text/csv" ${move.files[step] ? "" : "required"}></label>
+          ${move.files[step] ? `<span class="hash">Or keep ${esc(move.files[step].name)} from the preview</span>` : ""}
+          ${step === "contacts" ? `<label>From Xero, they are<select name="kind"><option value="both">Customers and vendors</option><option value="customer">Customers</option><option value="vendor">Vendors</option></select></label>` : ""}
+          ${step === "opening" ? `<label class="check" title="For a trial balance at the end of a year: last year's income and expenses go into retained earnings instead of this year's profit and loss"><input type="checkbox" name="rollIncome" checked> Trial balance is at a year end</label>` : ""}
+          <button type="submit" class="secondary" data-as="preview">Preview</button>
+          <button type="submit" data-as="import">Import</button>
+        </form>` : `<p class="muted">An owner, admin or accountant can run this step.</p>`}
+        ${moveResult(step, move.results[step])}
+      </div>`).join("")}`);
 }
 
 // ---------------------------------------------------------- reconciliation
@@ -1838,7 +2389,12 @@ function employeeForm(e = null) {
       <label>W-4 step 4(c) extra each paycheck ($)<input name="w4Step4c" value="${v(e?.w4.step4cExtraWithholding)}" inputmode="decimal" placeholder="0"></label>
       ${stateCertificateFields(e, v, sel)}`}
     </div>
-    ${canada ? `<p class="hash">Direct deposit files for Canadian banks aren't ready yet; pay by cheque or through your bank for now.</p>` : `<h3>Direct deposit <span class="muted">(leave blank for a paper check)</span></h3>
+    ${canada ? `<h3>Direct deposit <span class="muted">(leave blank for a cheque)</span></h3>
+    <div class="row">
+      <label>Institution number<input name="ddInstitution" value="${v(e?.directDeposit?.routing?.slice(1, 4))}" inputmode="numeric" maxlength="3" placeholder="3 digits" style="width:90px"></label>
+      <label>Transit number<input name="ddTransit" value="${v(e?.directDeposit?.routing?.slice(4, 9))}" inputmode="numeric" maxlength="5" placeholder="5 digits" style="width:100px"></label>
+      <label>Account number<input name="ddAccount" autocomplete="off" inputmode="numeric" placeholder="${e?.directDeposit ? `On file, ends ${e.directDeposit.accountLast4}` : "From their void cheque"}"></label>
+    </div>` : `<h3>Direct deposit <span class="muted">(leave blank for a paper check)</span></h3>
     <div class="row">
       <label>Routing number<input name="ddRouting" value="${v(e?.directDeposit?.routing)}" inputmode="numeric" maxlength="9" placeholder="9 digits" style="width:120px"></label>
       <label>Account number<input name="ddAccount" autocomplete="off" inputmode="numeric" placeholder="${e?.directDeposit ? `On file, ends ${e.directDeposit.accountLast4}` : "From their voided check"}"></label>
@@ -1852,6 +2408,12 @@ function employeeForm(e = null) {
       <label>After-tax deduction ($)<input name="postTax" value="${v(ded("post_tax"))}" inputmode="decimal" placeholder="0"></label>
       ${pay.state?.sickLeave === null ? "" : `<label>Sick leave balance (hours)<input name="sickBalanceHours" value="${v(e?.sickBalanceHours ?? "0")}" inputmode="decimal"></label>`}
     </div>
+    ${canada ? `<h3>Vacation pay <span class="muted">(hourly employees; a salary simply continues during vacation)</span></h3>
+    <div class="grid">
+      <label>How it's paid${sel("vacationMethod", [["accrue", "Saved up, paid when they take vacation"], ["each_pay", "Added to every pay"]], e?.vacationMethod ?? "accrue")}</label>
+      <label>Vacation pay owed now ($)<input name="vacationBalance" value="${v(e?.vacationBalance ?? "0")}" inputmode="decimal"></label>
+      <label>Your own rate, if higher than the law (%)<input name="vacationPercent" value="${v(e?.vacationPercent ?? "")}" inputmode="decimal" placeholder="The law's: 4% to start"></label>
+    </div>` : ""}
     <details ${o.wages ? "open" : ""}><summary>Paid earlier this year, before TrailBook</summary>
       <p class="hash">If you switched from another payroll service mid-year, enter this year's totals so far. ${canada
         ? `They keep ${pay.state?.code === "QC" ? "QPP, EI and QPIP" : "CPP and EI"} from going over their yearly maximums, and they go on the ${pay.state?.code === "QC" ? "T4 and RL-1" : "T4"}.`
@@ -1894,9 +2456,13 @@ function employeeBody(f) {
       deductions: [{ kind: "registered_retirement", amount: d.rrsp }, { kind: "post_tax", amount: d.postTax }],
       openingYtd: d.ytdWages ? { year: d.ytdYear, wages: d.ytdWages, federalIncomeTax: d.ytdFit, socialSecurityTax: d.ytdSs, medicareTax: d.ytdMed, caIncomeTax: d.ytdPit, caSdi: d.ytdSdi } : null,
       sickBalanceHours: d.sickBalanceHours || "0",
+      vacationMethod: d.vacationMethod, vacationBalance: money(d.vacationBalance) ?? "0", vacationPercent: money(d.vacationPercent) ?? null,
     };
     if (d.terminationDate !== undefined) body.terminationDate = d.terminationDate;
     if (d.sin?.trim()) body.sin = d.sin.trim();
+    const institution = d.ddInstitution.replace(/\s/g, "");
+    if (institution || d.ddTransit.trim()) body.directDeposit = { institution, transit: d.ddTransit.replace(/[\s-]/g, ""), ...(d.ddAccount.trim() ? { account: d.ddAccount.trim() } : {}) };
+    else if (f.dataset.id && f.querySelector("[name=ddAccount]").placeholder.startsWith("On file")) body.directDeposit = null;
     return body;
   }
   const body = {
@@ -1945,6 +2511,11 @@ function runLine(e) {
     <td>${hours("bonus")}<label class="check hash" title="Given at your sole discretion, not promised or tied to hours, sales or performance; it adds no overtime"><input type="checkbox" data-line="bonusDiscretionary"> discretionary</label></td>
     <td>${hours("commission")}</td><td>${hours("reimbursement")}</td>
   </tr>
+  ${pay.state?.country === "CA" && e.payType === "hourly" ? `<tr data-ca-line="${e.id}"><td></td><td colspan="8"><div class="row hash" style="align-items:center">
+    <label>Hours worked on a statutory holiday${hours("holidayHoursWorked")}</label>
+    <label class="check" title="Alberta pays holiday pay only when the holiday would have been a normal work day"><input type="checkbox" data-line="noHolidayPay"> holiday wasn't a usual work day</label>
+    ${e.vacationMethod !== "each_pay" ? `<label>Vacation pay from balance ($)${hours("vacationPay")}<span>${usd(Math.round(Number(e.vacationBalance ?? 0) * 100))} owed</span></label>` : `<span>Vacation pay is added to every pay</span>`}
+  </div></td></tr>` : ""}
   ${e.payType === "hourly" ? `<tr hidden data-daily="${e.id}"><td colspan="9">
     <p class="hash">Hours each day, two workweeks. ${pay.state?.overtime?.dailyAfter
       ? `${esc(pay.state.name)} overtime is worked out from these: over ${esc(pay.state.overtime.dailyAfter)} in a day, over ${esc(pay.state.overtime.weeklyAfter)} in a week${pay.state.overtime.seventhDayDoubleTimeAfter ? ", and the seventh day in a row" : ""}.`
@@ -1958,6 +2529,11 @@ function payRunBody() {
     if (!row.querySelector("[data-line=include]").checked) return [];
     const val = (k) => row.querySelector(`[data-line=${k}]`)?.value.trim() ?? "";
     const line = { employeeId: row.dataset.empLine, regularHours: val("regularHours"), overtimeHours: val("overtimeHours"), doubleTimeHours: val("doubleTimeHours"), bonus: val("bonus"), bonusDiscretionary: Boolean(row.querySelector("[data-line=bonusDiscretionary]")?.checked), commission: val("commission"), reimbursement: val("reimbursement"), sickHoursUsed: val("sickHoursUsed") };
+    const ca = document.querySelector(`tr[data-ca-line="${row.dataset.empLine}"]`);
+    if (ca) {
+      const caVal = (k) => ca.querySelector(`[data-line=${k}]`)?.value.trim() ?? "";
+      Object.assign(line, { holidayHoursWorked: caVal("holidayHoursWorked"), vacationPay: caVal("vacationPay"), noHolidayPay: Boolean(ca.querySelector("[data-line=noHolidayPay]")?.checked) });
+    }
     const daily = document.querySelector(`tr[data-daily="${row.dataset.empLine}"]`);
     if (daily && !daily.hidden) line.dailyHours = [...daily.querySelectorAll("[data-day]")].map((i) => i.value.trim() || "0");
     return [line];
@@ -1981,7 +2557,7 @@ function runTable(run) {
     ${issues.map(([k, m]) => `<div class="alert ${k}">${k === "bad" ? "Must fix before approval: " : ""}${esc(m)}</div>`).join("")}
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th class="num">Gross</th>${ee.map((c) => `<th class="num">${esc(taxLabel(c))}</th>`).join("")}<th class="num">Deductions</th><th class="num">Net pay</th></tr></thead>
-      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${e.code.toLowerCase().replace("_", " ")}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.sickLeave ? `<div class="hash">sick leave ${p.sickLeave.grantedHours ? `${hrs(p.sickLeave.grantedHours)}h granted for the year, ` : ""}+${hrs(p.sickLeave.accruedHours)}h earned, ${hrs(p.sickLeave.usedHours ?? 0)}h taken, balance ${hrs(p.sickLeave.balanceHours)}h</div>` : ""}</td>
+      <tbody>${run.paychecks.map((p) => `<tr><td>${esc(p.name)}${p.earnings.map((e) => `<div class="hash">${earningLabel(e.code).toLowerCase()}${e.hours ? ` ${e.hours}h @ $${Number(e.rate).toFixed(2)}` : ""}${e.note ? ` (${esc(e.note)})` : ""}: ${usd(e.amountMinor)}</div>`).join("")}${p.vacation ? `<div class="hash">${vacationText(p.vacation)}</div>` : ""}${p.sickLeave ? `<div class="hash">sick leave ${p.sickLeave.grantedHours ? `${hrs(p.sickLeave.grantedHours)}h granted for the year, ` : ""}+${hrs(p.sickLeave.accruedHours)}h earned, ${hrs(p.sickLeave.usedHours ?? 0)}h taken, balance ${hrs(p.sickLeave.balanceHours)}h</div>` : ""}</td>
         <td class="num">${usd(p.grossMinor)}</td>${ee.map((c) => `<td class="num">${amt(p, c)}</td>`).join("")}
         <td class="num">${usd(p.deductions.reduce((s, d) => s + BigInt(d.amountMinor), 0n))}</td><td class="num"><strong>${usd(p.netPayMinor)}</strong></td></tr>`).join("")}</tbody>
     </table></div>
@@ -2006,7 +2582,7 @@ async function payrollView(id) {
   pay.stateRates = stateRates ?? {};
   pay.state = st;
   pay.workCities = workCities ?? [];
-  const agencies = ["IRS", ...(st?.agencies ?? ["EDD"])];
+  const agencies = [...(st?.country === "CA" ? [] : ["IRS"]), ...(st?.agencies ?? ["EDD"])];
   const sick = st?.sickLeave;
   const canSetUpBank = ["owner", "admin", "accountant"].includes(state.org.role);
   const me = `user:${state.me.user.email}`;
@@ -2022,7 +2598,7 @@ async function payrollView(id) {
       ${pay.adding ? `<div class="emp">${employeeForm()}</div>` : ""}
       <div class="table-wrap"><table>
         <thead><tr><th>Name</th><th>Pay</th><th>Paid</th><th>Status</th><th></th></tr></thead>
-        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">${pay.state?.country === "CA" ? "SIN" : "SSN"} ends ${e.ssnLast4}</div>` : `<div class="hash">No ${pay.state?.country === "CA" ? "SIN" : "SSN"} on file yet</div>`}<div class="hash">${e.directDeposit ? `Direct deposit to ${e.directDeposit.accountType} ending ${esc(e.directDeposit.accountLast4)}` : "Paid by check"}</div></td>
+        <tbody>${employees.map((e) => `<tr class="${e.status === "active" ? "" : "muted"}"><td>${esc(e.name)}${e.ssnLast4 ? `<div class="hash">${pay.state?.country === "CA" ? "SIN" : "SSN"} ends ${e.ssnLast4}</div>` : `<div class="hash">No ${pay.state?.country === "CA" ? "SIN" : "SSN"} on file yet</div>`}<div class="hash">${e.directDeposit ? `Direct deposit to ${pay.state?.country === "CA" ? "account" : e.directDeposit.accountType} ending ${esc(e.directDeposit.accountLast4)}` : pay.state?.country === "CA" ? "Paid by cheque" : "Paid by check"}</div></td>
             <td>${payLabel(e)}${e.payType === "salary" && !e.overtimeExempt ? `<div class="hash">gets overtime</div>` : ""}${e.belowLocalMinimum ? `<div class="alert warn">Below the ${esc(e.belowLocalMinimum.place)} minimum wage of ${usd(Math.round(Number(e.belowLocalMinimum.rate) * 100))} an hour</div>` : ""}</td><td>${FREQ_LABEL[e.payFrequency]}</td>
             <td>${e.status === "active" ? `<span class="pill">Active</span>` : `<span class="pill grey">Left ${e.terminationDate}</span>`}</td>
             <td>${canWrite ? `<button class="link" data-action="doc-toggle" data-form="emp-edit" data-id="${e.id}">Edit</button>` : ""}</td></tr>
@@ -2043,8 +2619,8 @@ async function payrollView(id) {
         <span class="hash">${esc(st.name)} requires at least ${esc(sick.annualUseCapHours)} hours a year${sick.smallEmployer ? ` (${esc(sick.smallEmployer.annualUseCapHours)} for employers with fewer than ${sick.smallEmployer.under} employees)` : ""}. Salaried exempt employees accrue as if they work 40 hours a week. Front-loaded hours don't carry over.</span>
       </form>` : `<p class="hash" style="margin-top:12px">${esc(st?.name ?? "")} has no statewide paid sick leave law, so TrailBook doesn't track sick hours.</p>`}
     </div>
-    ${st.country === "CA" ? `<div class="panel"><h2>Remittances</h2>
-      <p class="muted">Each approved pay run books what you owe ${st.code === "QC" ? "the CRA (federal tax and EI) and Revenu Québec (Quebec tax, QPP, QPIP and the employer contributions)" : "the CRA (income tax, CPP and EI)"} and your workers' compensation board. Remittance due dates and reminders, and the T4${st.code === "QC" ? ", RL-1" : ""} and ROE, are coming in the next release; until then, remit through ${st.code === "QC" ? "My Business Account and Mon dossier" : "My Business Account"} or your bank.</p></div>`
+    ${st.country === "CA" ? `${remittancesPanel(deposits, st, canWrite, canSetUpBank)}
+    ${canadaDirectDepositPanel(directDeposit, canSetUpBank)}`
       : `${taxDepositsPanel(deposits, canWrite, canSetUpBank)}
     ${directDepositPanel(directDeposit, canSetUpBank)}`}
     ${canWrite && active.length ? `<div class="panel">
@@ -2081,14 +2657,41 @@ async function payrollView(id) {
     </div>`);
 }
 
+const REMITTER_OPTIONS = {
+  quarterly: ["Quarterly", "Quarterly"],
+  regular: ["Regular (monthly): new employers and most small ones", "Monthly: new employers and most small ones"],
+  threshold1: ["Accelerated threshold 1 (twice a month): $25,000 to $99,999.99 a month", "Twice a month: $25,000 to $99,999.99 a month"],
+  threshold2: ["Accelerated threshold 2 (up to four times a month): $100,000 or more a month", "Four times a month: $100,000 or more a month"],
+};
+const DENTAL_CODES = {
+  1: "1: Not eligible to access any dental care insurance or coverage",
+  2: "2: Payee only",
+  3: "3: Payee, spouse and dependent children",
+  4: "4: Payee and their spouse",
+  5: "5: Payee and their dependent children",
+};
+
+/** Canada: CRA (and in Quebec, Revenu Québec) remittances, the business's remitter types and the T4 dental code. */
+function remittancesPanel(t, st, canPay, canSet) {
+  const quebec = st.code === "QC";
+  const types = t.remitterTypes ?? { cra: "regular", rq: "regular" };
+  const select = (name, value, i) => `<select name="${name}" ${canSet ? "" : "disabled"}>${Object.entries(REMITTER_OPTIONS).map(([k, l]) => `<option value="${k}" ${value === k ? "selected" : ""}>${esc(l[i])}</option>`).join("")}</select>`;
+  const settings = `<form data-form="remitter-settings" class="row" style="margin-bottom:12px">
+      <label>CRA remitter type${select("craRemitterType", types.cra, 0)}</label>
+      ${quebec ? `<label>Revenu Québec remitting frequency${select("rqRemitterType", types.rq, 1)}</label>` : ""}
+      <label>T4 box 45 dental benefits code<select name="t4DentalCode" ${canSet ? "" : "disabled"}><option value="">Pick one</option>${Object.entries(DENTAL_CODES).map(([k, l]) => `<option value="${k}" ${String(t.t4DentalCode ?? "") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+      ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+      <span class="hash">New employers are regular (monthly) remitters. The ${quebec ? "CRA and Revenu Québec each tell you" : "CRA tells you"} if that changes, based on your average monthly withholding two years ago. Box 45 is the dental coverage you offered on the last day of the year.</span>
+    </form>`;
+  const intro = `What each approved pay run owes ${quebec ? "the CRA (federal tax and EI) and Revenu Québec (Quebec tax, QPP, QPIP, the health services fund, CNESST, and once a year the labour standards contribution)" : "the CRA (income tax, CPP and EI)"}, and when. Pay through ${quebec ? "My Business Account, Mon dossier" : "My Business Account"} or your bank, then record each payment here so your books show it. TrailBook emails a reminder a few days before each due date.${quebec ? "" : " Workers' compensation premiums, provincial health taxes (such as Ontario's or BC's employer health tax) and territorial payroll tax aren't scheduled here yet; pay them on the board's or government's own schedule."}`;
+  return depositsTable(t, canPay, "Remittances", intro, settings);
+}
+
 const DEPOSIT_STATUS = {
   overdue: ["pill bad", "Late"], due_soon: ["pill warn", "Due soon"], upcoming: ["pill grey", "Upcoming"], paid: ["pill", "Paid"],
 };
 
-function taxDepositsPanel(t, canPay, canSet) {
-  const open = t.deposits.filter((d) => d.status !== "paid");
-  const paid = t.deposits.filter((d) => d.status === "paid");
-  const row = (d) => `<tr>
+const depositRow = (t, canPay) => (d) => `<tr>
     <td style="white-space:nowrap">${esc(d.dueDate)}</td>
     <td><strong>${d.agency}</strong> · ${esc(d.what)}<div class="hash">${esc(d.period)}. ${esc(d.rule)}.</div>${d.note && d.status !== "paid" ? `<div class="hash">${esc(d.note)}</div>` : ""}</td>
     <td class="num">${usd(d.status === "paid" ? d.amountMinor : d.remainingMinor)}${BigInt(d.paidMinor) && d.status !== "paid" ? `<div class="hash">${usd(d.paidMinor)} paid</div>` : ""}</td>
@@ -2103,21 +2706,55 @@ function taxDepositsPanel(t, canPay, canSet) {
       <label>Confirmation number (optional)<input name="confirmation" maxlength="60" style="width:160px"></label>
       <button type="submit">Record payment</button>
     </form></td></tr>` : ""}`;
-  return `<div class="panel">
-    <h2>Tax deposits</h2>
-    <p class="muted">What each approved pay run owes the IRS and the state, and when. Pay through EFTPS (or IRS Direct Pay) and the state agency's online service, then record each payment here so your books show it. TrailBook emails a reminder a few days before each due date.</p>
-    <form data-form="deposit-schedule" class="row" style="margin-bottom:12px">
+
+function taxDepositsPanel(t, canPay, canSet) {
+  return depositsTable(t, canPay, "Tax deposits", "What each approved pay run owes the IRS and the state, and when. Pay through EFTPS (or IRS Direct Pay) and the state agency's online service, then record each payment here so your books show it. TrailBook emails a reminder a few days before each due date.",
+    `<form data-form="deposit-schedule" class="row" style="margin-bottom:12px">
       <label>Federal deposit schedule<select name="federalDepositSchedule" ${canSet ? "" : "disabled"}>
         <option value="monthly" ${t.federalSchedule === "monthly" ? "selected" : ""}>Monthly</option>
         <option value="semiweekly" ${t.federalSchedule === "semiweekly" ? "selected" : ""}>Semiweekly</option></select></label>
       ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
       <span class="hash">New employers are monthly. After that, you're semiweekly if your Form 941 taxes from July two years ago through last June were over $50,000. The IRS tells you which in its fall notice.</span>
-    </form>
+    </form>`);
+}
+
+function depositsTable(t, canPay, title, intro, settings) {
+  const open = t.deposits.filter((d) => d.status !== "paid");
+  const paid = t.deposits.filter((d) => d.status === "paid");
+  const row = depositRow(t, canPay);
+  return `<div class="panel">
+    <h2>${title}</h2>
+    <p class="muted">${esc(intro)}</p>
+    ${settings}
     <div class="table-wrap"><table>
       <thead><tr><th>Due</th><th>What</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
-      <tbody>${open.map(row).join("") || `<tr><td colspan="5" class="muted">Nothing to pay right now. Deposits show up here once a pay run is approved.</td></tr>`}</tbody>
+      <tbody>${open.map(row).join("") || `<tr><td colspan="5" class="muted">Nothing to pay right now. ${title === "Remittances" ? "Remittances" : "Deposits"} show up here once a pay run is approved.</td></tr>`}</tbody>
     </table></div>
     ${paid.length ? `<details style="margin-top:8px"><summary>Paid this year (${paid.length})</summary><div class="table-wrap"><table><tbody>${paid.map(row).join("")}</tbody></table></div></details>` : ""}
+  </div>`;
+}
+
+/** Canada: the business's details for CPA 005 payroll files. */
+function canadaDirectDepositPanel(dd, canEdit) {
+  const v = (x) => esc(x ?? "");
+  return `<div class="panel">
+    <div class="row" style="justify-content:space-between"><h2>Direct deposit</h2>${dd ? `<span class="pill">Set up</span>` : ""}</div>
+    <p class="muted">After a pay run is approved, download its CPA 005 payroll file and upload it to your bank's payroll or direct deposit service. Your bank moves the money; TrailBook never does.
+      Ask your bank to set up CPA 005 file uploads if it isn't turned on; they'll give you the originator ID and processing centre below.</p>
+    ${dd ? `<p>Originator ID ${esc(dd.originatorId)}, processing centre ${esc(dd.dataCentre)}, shown to employees as <strong>${esc(dd.shortName)}</strong>. Returned payments go to institution ${esc(dd.returnInstitution)}, transit ${esc(dd.returnTransit)}, account ending ${esc(dd.returnAccountLast4)}.${dd.lastFileNumber ? ` Last file number ${dd.lastFileNumber}.` : ""}</p>` : ""}
+    ${canEdit ? `<details ${dd ? "" : "open"}><summary>${dd ? "Change bank details" : "Add your bank details"}</summary>
+      <form data-form="ca-dd-settings">
+        <div class="grid">
+          <label>Originator ID (from your bank)<input name="originatorId" value="${v(dd?.originatorId)}" maxlength="10" required></label>
+          <label>Processing centre (destination data centre)<input name="dataCentre" value="${v(dd?.dataCentre)}" inputmode="numeric" maxlength="5" required placeholder="5 digits"></label>
+          <label>Name on employees' bank statements<input name="shortName" value="${v(dd?.shortName ?? (state.entity.entity.legalName ?? "").slice(0, 15))}" maxlength="15"></label>
+          <label>Business's full name<input name="longName" value="${v(dd?.longName ?? (state.entity.entity.legalName ?? "").slice(0, 30))}" maxlength="30"></label>
+          <label>Your business account's institution number<input name="returnInstitution" value="${v(dd?.returnInstitution)}" inputmode="numeric" maxlength="3" required placeholder="3 digits"></label>
+          <label>Transit number<input name="returnTransit" value="${v(dd?.returnTransit)}" inputmode="numeric" maxlength="5" required placeholder="5 digits"></label>
+          <label>Account number<input name="returnAccount" autocomplete="off" inputmode="numeric" ${dd ? "" : "required"} placeholder="${dd ? `On file, ends ${esc(dd.returnAccountLast4)}` : "Where returned payments go"}"></label>
+        </div>
+        <div class="row" style="margin-top:12px"><button type="submit" class="secondary">Save bank details</button></div>
+      </form></details>` : ""}
   </div>`;
 }
 
@@ -2159,12 +2796,23 @@ function payEmployeesPanel(r) {
   return `<div class="panel no-print">
     <h2>Pay your employees</h2>
     ${dd.warnings.map((w) => `<div class="alert warn">${esc(w)}</div>`).join("")}
-    ${dd.deposits.length ? `<p>Direct deposit, ${usd(dd.totalMinor)} in all:</p><ul>${dd.deposits.map((d) => `<li>${esc(d.name)}: ${usd(d.amountMinor)} to ${d.accountType} ending ${esc(d.accountLast4)}</li>`).join("")}</ul>` : ""}
-    ${dd.paperChecks.length ? `<p>Write a paper check for:</p><ul>${dd.paperChecks.map((c) => `<li>${esc(c.name)}: ${usd(c.amountMinor)}</li>`).join("")}</ul>` : ""}
+    ${dd.deposits.length ? `<p>Direct deposit, ${usd(dd.totalMinor)} in all:</p><ul>${dd.deposits.map((d) => `<li>${esc(d.name)}: ${usd(d.amountMinor)} to ${state.entity.entity.country === "CA" ? "account" : d.accountType} ending ${esc(d.accountLast4)}</li>`).join("")}</ul>` : ""}
+    ${dd.paperChecks.length ? `<p>${state.entity.entity.country === "CA" ? "Write a cheque for" : "Write a paper check for"}:</p><ul>${dd.paperChecks.map((c) => `<li>${esc(c.name)}: ${usd(c.amountMinor)}</li>`).join("")}</ul>` : ""}
     ${dd.ready && canDownload ? `<div class="row"><button data-action="dd-download" data-id="${r.id}">Download direct deposit file</button>
       <span class="muted">Upload it to your bank at least two business days before ${esc(r.result.payDate)} so the money lands on time.</span></div>`
       : dd.problem && dd.deposits.length ? `<p class="muted">To make the bank file, ${esc(dd.problem)}${dd.problem.startsWith("add") ? ` on the <a href="#/e/${state.entity.entity.id}/payroll">Payroll page</a>` : ""}.</p>` : ""}
   </div>`;
+}
+
+const EARNING_LABELS = { HOLIDAY: "Statutory holiday pay", HOLIDAY_WORKED: "Worked on a statutory holiday", VACATION: "Vacation pay", OVERTIME_ON_BONUS: "Overtime on bonus" };
+function earningLabel(code) {
+  return EARNING_LABELS[code] ?? code.charAt(0) + code.slice(1).toLowerCase().replaceAll("_", " ");
+}
+
+function vacationText(v) {
+  return v.method === "each_pay"
+    ? `Vacation pay at ${esc(v.label ?? "")} of ${usd(v.vacationableMinor)} is included in this pay.`
+    : `Vacation pay: ${usd(v.accruedMinor)} earned (${esc(v.label ?? "")}) and ${usd(v.paidMinor)} paid this period, ${usd(v.balanceMinor)} owed.`;
 }
 
 function stubCard(r, c, s) {
@@ -2178,10 +2826,10 @@ function stubCard(r, c, s) {
       <div><strong>${esc(r.employer.name)}</strong><div class="hash">${addr(r.employer.address) || "Add the business address on the Overview page"}</div></div>
       <div style="text-align:right"><strong>Pay stub</strong><div class="hash">Pay date ${r.result.payDate}<br>Period ${r.result.periodStart} to ${r.result.periodEnd}</div></div>
     </div>
-    <div class="row" style="margin:12px 0"><div><strong>${esc(c.name)}</strong><div class="hash">${s?.ssnLast4 ? `SSN xxx-xx-${s.ssnLast4}` : `Employee ID ${esc(c.employeeId.slice(0, 8))}`}${s?.address ? `<br>${addr(s.address)}` : ""}</div></div></div>
+    <div class="row" style="margin:12px 0"><div><strong>${esc(c.name)}</strong><div class="hash">${s?.ssnLast4 ? (state.entity.entity.country === "CA" ? `SIN xxx xx${s.ssnLast4.slice(0, 1)} ${s.ssnLast4.slice(1)}` : `SSN xxx-xx-${s.ssnLast4}`) : `Employee ID ${esc(c.employeeId.slice(0, 8))}`}${s?.address ? `<br>${addr(s.address)}` : ""}</div></div></div>
     <table>
       <thead><tr><th>Earnings</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">This period</th><th class="num">Year to date</th></tr></thead>
-      <tbody>${c.earnings.map((e) => `<tr><td>${e.code.charAt(0) + e.code.slice(1).toLowerCase().replace("_", " ")}</td><td class="num">${e.hours ?? ""}</td><td class="num">${e.rate ? `$${Number(e.rate).toFixed(2)}` : ""}</td><td class="num">${usd(e.amountMinor)}</td><td></td></tr>`).join("")}
+      <tbody>${c.earnings.map((e) => `<tr><td>${earningLabel(e.code)}${e.code === "HOLIDAY" && e.note ? `<div class="hash">${esc(e.note.split(":")[0])}</div>` : ""}</td><td class="num">${e.hours ?? ""}</td><td class="num">${e.rate ? `$${Number(e.rate).toFixed(2)}` : ""}</td><td class="num">${usd(e.amountMinor)}</td><td></td></tr>`).join("")}
         <tr><td><strong>Gross pay</strong></td><td class="num">${hours || ""}</td><td></td><td class="num"><strong>${usd(c.grossMinor)}</strong></td><td class="num">${usd(y.grossMinor)}</td></tr></tbody>
       <thead><tr><th colspan="3">Taxes withheld</th><th class="num"></th><th class="num"></th></tr></thead>
       <tbody>${eeTaxes.map((t) => `<tr><td colspan="3">${esc(taxLabel(t.code, r.taxLabels))}</td><td class="num">${usd(t.amountMinor)}</td><td class="num">${usd(y.byTax[t.code] ?? 0)}</td></tr>`).join("")}</tbody>
@@ -2189,6 +2837,7 @@ function stubCard(r, c, s) {
       <tbody>${BigInt(c.reimbursementMinor) ? `<tr><td colspan="3">Expense reimbursement (not taxed)</td><td class="num">${usd(c.reimbursementMinor)}</td><td></td></tr>` : ""}
         <tr><td colspan="3"><strong>Net pay</strong></td><td class="num"><strong>${usd(c.netPayMinor)}</strong></td><td class="num">${usd(y.netPayMinor)}</td></tr></tbody>
     </table>
+    ${c.vacation ? `<p class="hash">${vacationText(c.vacation)}</p>` : ""}
     ${c.sickLeave ? `<p class="hash">Paid sick leave: ${c.sickLeave.grantedHours ? `${hrs(c.sickLeave.grantedHours)} hours granted for the year, ` : ""}${hrs(c.sickLeave.accruedHours)} hours earned and ${hrs(c.sickLeave.usedHours ?? 0)} taken this period, ${hrs(c.sickLeave.balanceHours)} hours available.</p>` : ""}
   </div>`;
 }
@@ -2228,7 +2877,33 @@ function columnLabel(k) {
   if (k === "name") return "Employee";
   const m = k.match(/^([A-Z]{2,3}_[A-Z0-9_]+)(Taxable|Withheld)Minor$/);
   if (m) return `${m[1].replace(/_/g, " ")} ${m[2] === "Taxable" ? "taxable wages" : "withheld"}`;
-  return { wagesMinor: "Wages", withheldMinor: "Withheld" }[k] ?? k;
+  return { wagesMinor: "Wages", withheldMinor: "Withheld", payPeriod: "Pay period", periodEnding: "Period ending", hours: "Insurable hours", insurableEarningsMinor: "Insurable earnings" }[k] ?? k;
+}
+
+const SLIP_FORMS = ["w2", "t4", "rl1"];
+
+const T4_BOXES = [
+  ["10", "Province of employment", "box10", "text"], ["14", "Employment income", "box14"], ["16", "Employee's CPP contributions", "box16"],
+  ["16A", "Employee's second CPP contributions", "box16A"], ["17", "Employee's QPP contributions", "box17"], ["17A", "Employee's second QPP contributions", "box17A"],
+  ["18", "Employee's EI premiums", "box18"], ["20", "RPP contributions", "box20"], ["22", "Income tax deducted", "box22"],
+  ["24", "EI insurable earnings", "box24"], ["26", "CPP/QPP pensionable earnings", "box26"], ["28", "Exempt", "box28", "text"],
+  ["45", "Employer-offered dental benefits", "box45", "text"], ["55", "Employee's PPIP premiums", "box55"], ["56", "PPIP insurable earnings", "box56"],
+];
+const RL1_BOXES = [
+  ["A", "Employment income", "boxA"], ["B", "QPP contributions", "boxB"], ["B.A", "Additional QPP contributions", "boxBA"],
+  ["C", "Employment insurance premiums", "boxC"], ["D", "Contributions to a registered pension plan", "boxD"], ["E", "Quebec income tax withheld", "boxE"],
+  ["G", "Pensionable salary or wages (QPP)", "boxG"], ["H", "QPIP premiums", "boxH"], ["I", "Eligible salary or wages (QPIP)", "boxI"],
+];
+
+/** One T4 or RL-1 slip, laid out box by box. */
+function slipCard(f, w, head, slug) {
+  const boxes = slug === "t4" ? T4_BOXES : RL1_BOXES;
+  const cell = ([n, label, k, kind]) => `<td>${esc(n)} ${esc(label)}</td><td class="num">${kind === "text" ? esc(w[k] || "—") : usd(w[k] ?? 0)}</td>`;
+  const pairs = [];
+  for (let i = 0; i < boxes.length; i += 2) pairs.push(`<tr>${cell(boxes[i])}${boxes[i + 1] ? cell(boxes[i + 1]) : "<td></td><td></td>"}</tr>`);
+  return `<div class="panel stub">
+    <div class="row" style="justify-content:space-between"><div><strong>${slug === "t4" ? "T4" : "RL-1"} ${esc(f.period)}: ${esc(w.name)}</strong><div class="hash">SIN ${esc(w.sin ?? "missing")}${w.address ? `<br>${esc(w.address.line1)}, ${esc(w.address.city)} ${esc(w.address.state)} ${esc(w.address.zip)}` : ""}</div></div>${head}</div>
+    <table><tbody>${pairs.join("")}</tbody></table></div>`;
 }
 
 async function formView(id, slug, year, quarter, fullSsn = false) {
@@ -2236,7 +2911,8 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
   const f = await api(entPath(`/payroll-forms/prepared?form=${slug}&year=${year}${quarter ? `&quarter=${quarter}` : ""}${fullSsn ? "&ssn=full" : ""}`));
   const canSee = ["owner", "admin", "accountant"].includes(state.org.role);
   const emp = f.employer;
-  const head = `<div><strong>${esc(emp.name)}</strong>${emp.ein ? ` · EIN ${esc(emp.ein)}` : ""}${emp.address ? `<div class="hash">${esc(emp.address.line1)}, ${esc(emp.address.city)}, ${esc(emp.address.state)} ${esc(emp.address.zip)}</div>` : ""}</div>`;
+  const ca = state.entity.entity.country === "CA";
+  const head = `<div><strong>${esc(emp.name)}</strong>${emp.ein ? ` · ${ca ? "BN" : "EIN"} ${esc(emp.ein)}` : ""}${emp.address ? `<div class="hash">${esc(emp.address.line1)}, ${esc(emp.address.city)}, ${esc(emp.address.state)} ${esc(emp.address.zip)}</div>` : ""}</div>`;
   const rows = f.employees ?? [];
   const table = slug === "de9" ? `<h3>DE 9C wage detail</h3><div class="table-wrap"><table>
       <thead><tr><th>SSN</th><th>Employee</th><th class="num">Total subject wages</th><th class="num">PIT wages</th><th class="num">PIT withheld</th></tr></thead>
@@ -2253,7 +2929,8 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
         <tr><td></td><td></td><td>17 State income tax</td><td class="num">${usd(w.box17)}</td></tr>` : `<tr><td>15 to 17</td><td colspan="3" class="muted">No state income tax</td></tr>`}
         ${(w.local ?? []).map((l) => `<tr><td>18 Local wages</td><td class="num">${usd(l.wagesMinor)}</td><td>19 Local income tax / 20 ${esc(l.locality)}</td><td class="num">${usd(l.taxMinor)}</td></tr>`).join("")}
       </tbody></table></div>`).join("")
-    : rows.length ? `<h3>Wage detail</h3><div class="table-wrap"><table>
+    : slug === "t4" || slug === "rl1" ? rows.map((w) => slipCard(f, w, head, slug)).join("")
+    : rows.length ? `<h3>${slug.startsWith("roe-") ? "Insurable earnings by pay period (Block 15C detail)" : "Wage detail"}</h3><div class="table-wrap"><table>
       <thead><tr>${Object.keys(rows[0]).map((k) => `<th class="${k.endsWith("Minor") ? "num" : ""}">${esc(columnLabel(k))}</th>`).join("")}</tr></thead>
       <tbody>${rows.map((r) => `<tr>${Object.entries(r).map(([k, v]) => `<td class="${k.endsWith("Minor") ? "num" : ""}">${k.endsWith("Minor") ? usd(v) : esc(v ?? "missing")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
     : "";
@@ -2262,7 +2939,7 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
       <p class="muted">${esc(f.period)} · due ${esc(f.dueDate)}. ${esc(f.fileAt)}.</p></div>
       <div class="row"><button class="secondary" data-action="print">Print</button>
         ${rows.length ? `<button class="secondary" data-action="form-csv" data-slug="${slug}" data-year="${year}" data-quarter="${quarter ?? ""}">Download CSV</button>` : ""}
-        ${rows.length && canSee && !fullSsn ? `<button class="secondary" data-action="form-ssn" data-slug="${slug}" data-year="${year}" data-quarter="${quarter ?? ""}">Show full SSNs</button>` : ""}</div></div>
+        ${(rows.length || slug.startsWith("roe-")) && canSee && !fullSsn ? `<button class="secondary" data-action="form-ssn" data-slug="${slug}" data-year="${year}" data-quarter="${quarter ?? ""}">${ca ? (slug.startsWith("roe-") ? "Show full SIN" : "Show full SINs") : "Show full SSNs"}</button>` : ""}</div></div>
     ${f.warnings.map((w) => `<div class="alert warn no-print">${esc(w)}</div>`).join("")}
     <div class="panel">
       ${head}
@@ -2272,9 +2949,9 @@ async function formView(id, slug, year, quarter, fullSsn = false) {
       </table></div>
       ${f.liabilities?.length ? `<h3>Tax liability</h3><div class="table-wrap"><table><tbody>${f.liabilities.map((x) => `<tr><td>${esc(x.label)}</td><td class="num">${usd(x.amountMinor)}</td></tr>`).join("")}
         <tr><td><strong>Total</strong></td><td class="num"><strong>${usd(f.liabilities.reduce((s, x) => s + BigInt(x.amountMinor), 0n))}</strong></td></tr></tbody></table></div>` : ""}
-      ${slug !== "w2" ? table : ""}
+      ${!SLIP_FORMS.includes(slug) ? table : ""}
     </div>
-    ${slug === "w2" ? table : ""}`);
+    ${SLIP_FORMS.includes(slug) ? table : ""}`);
 }
 
 // ------------------------------------------------------------- sales tax
@@ -2284,6 +2961,7 @@ async function salesTaxView(id, yearParam) {
   const year = Number(yearParam) || Number(bookDate().slice(0, 4));
   const t = await api(entPath(`/sales-tax?year=${year}`));
   const canSet = ["owner", "admin", "accountant"].includes(state.org.role);
+  if (t.country === "CA") return canadaSalesTaxView(id, year, t, canSet);
   const freq = Object.entries(t.frequencies).map(([k, l]) => `<option value="${k}" ${k === t.filingFrequency ? "selected" : ""}>${esc(l)}</option>`).join("");
   app.innerHTML = shell("sales-tax", `
     <div class="head"><div><h1>Sales tax returns</h1>
@@ -2306,8 +2984,71 @@ async function salesTaxView(id, yearParam) {
     </div>`);
 }
 
+const CA_FREQ = [["monthly", "Monthly"], ["quarterly", "Quarterly"], ["annual", "Annual"]];
+const caFreqOptions = (sel) => `<option value="">Not set</option>${CA_FREQ.map(([v, l]) => `<option value="${v}" ${v === sel ? "selected" : ""}>${l}</option>`).join("")}`;
+const PST_NAMES = { BC: "BC PST", MB: "Manitoba RST", SK: "Saskatchewan PST" };
+
+/** A Canadian business's GST/HST, QST and PST registrations, and its return periods. */
+function canadaSalesTaxView(id, year, t, canSet) {
+  const s = t.settings;
+  const dis = canSet ? "" : "disabled";
+  const region = state.entity.entity.region;
+  app.innerHTML = shell("sales-tax", `
+    <div class="head"><div><h1>Sales tax returns</h1>
+      <p class="muted">Your GST/HST, QST and PST returns. TrailBook charges each tax on your invoices once you record the registration here, and fills in each return from the invoices you've issued and the tax you paid on bills. File and pay in CRA My Business Account, Revenu Québec My Account or your province's site, or hand the figures to your accountant. TrailBook doesn't file or pay anything.</p></div>
+      <div class="row"><a class="btn secondary" href="#/e/${id}/sales-tax/${year - 1}">${year - 1}</a>${year <= Number(bookDate().slice(0, 4)) ? `<a class="btn secondary" href="#/e/${id}/sales-tax/${year + 1}">${year + 1}</a>` : ""}</div></div>
+    <div class="panel">
+      <h2>Registrations</h2>
+      <form data-form="ca-sales-tax-settings">
+        <div class="row" style="margin-bottom:12px;align-items:flex-end">
+          <label class="check"><input type="checkbox" name="gstRegistered" ${s.gstRegistered ? "checked" : ""} ${dis}> Registered for GST/HST</label>
+          <label>GST/HST account<input name="gstAccount" class="mono" value="${esc(s.gstAccount ?? "")}" placeholder="123456789 RT 0001" style="width:180px" ${dis}></label>
+          <label>Filing period<select name="gstFrequency" ${dis}>${caFreqOptions(s.gstFrequency)}</select></label>
+        </div>
+        <div class="row" style="margin-bottom:12px">
+          <label>QST number<input name="qstAccount" class="mono" value="${esc(s.qstAccount ?? "")}" placeholder="1234567890 TQ 0001" style="width:180px" ${dis}></label>
+          <label>QST filing period<select name="qstFrequency" ${dis}>${caFreqOptions(s.qstFrequency)}</select></label>
+        </div>
+        <div class="row" style="margin-bottom:12px">
+          ${Object.entries(PST_NAMES).map(([p, n]) => `<label>${n} number<input name="pst_${p}" class="mono" value="${esc(s.pst?.[p]?.account ?? "")}" style="width:150px" ${dis}></label>
+            <label>Filing period<select name="pstFreq_${p}" ${dis}>${caFreqOptions(s.pst?.[p]?.frequency)}</select></label>`).join("")}
+        </div>
+        ${canSet ? `<button type="submit" class="secondary">Save</button>` : ""}
+        <p class="hash" style="margin-top:8px">Until you're registered for GST/HST, TrailBook charges no tax and warns once your sales pass the $30,000 small-supplier limit over four calendar quarters. Your filing period is on your CRA registration. ${region === "QC" ? "Revenu Québec runs both GST and QST for Quebec businesses. " : "Record a QST number only if you're registered with Revenu Québec. "}Record a PST number only for a province you're registered in; TrailBook warns on a sale that looks like it needs one you haven't recorded.</p>
+      </form>
+    </div>
+    ${t.registrations.map((r) => `<div class="panel">
+      <h2>${esc(r.name)} <span class="hash">${esc(r.account)} · ${esc(r.authority)} · ${esc(r.frequency)}</span></h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Period</th><th>Due</th><th></th></tr></thead>
+        <tbody>${r.periods.map((p) => `<tr><td>${esc(p.label)}</td><td>${esc(p.dueDate)}</td>
+          <td><a href="#/e/${id}/sales-tax/return/${encodeURIComponent(`${r.tax}:${p.key}`)}">Open</a></td></tr>`).join("")}</tbody>
+      </table></div>
+    </div>`).join("") || `<div class="panel"><p class="muted">Record a registration and its filing period to see your return periods and due dates.</p></div>`}`);
+}
+
+async function canadaSalesTaxReturnView(id, tax, period) {
+  const f = await api(entPath(`/sales-tax/return?tax=${encodeURIComponent(tax)}&period=${encodeURIComponent(period)}`));
+  app.innerHTML = shell("sales-tax", `
+    <div class="head no-print"><div><p><a href="#/e/${id}/sales-tax/${f.period.from.slice(0, 4)}">&larr; Sales tax returns</a></p><h1>${esc(f.title)}</h1>
+      <p class="muted">${esc(f.period.from)} to ${esc(f.period.to)} · due ${esc(f.period.dueDate)} · file with ${esc(f.authority)}.</p></div>
+      <div class="row"><button class="secondary" data-action="print">Print</button></div></div>
+    <div class="panel">
+      <div><strong>${esc(f.business)}</strong> · account ${esc(f.account)} · ${f.invoices} invoice${f.invoices === 1 ? "" : "s"}</div>
+      <div class="table-wrap" style="margin-top:12px"><table>
+        <thead><tr><th>Line</th><th>Description</th><th class="num">Amount</th></tr></thead>
+        <tbody>${f.lines.map((l) => `<tr><td style="white-space:nowrap">${esc(l.line)}</td><td>${esc(l.label)}${l.note ? `<div class="hash">${esc(l.note)}</div>` : ""}</td><td class="num">${usd(l.valueMinor)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      <p style="margin-top:12px"><strong>${BigInt(f.netMinor) >= 0n ? `You owe ${usd(f.netMinor)}` : `Refund of ${usd(-BigInt(f.netMinor))}`}</strong> for this period.</p>
+      ${f.notes.map((n) => `<p class="hash">${esc(n)}</p>`).join("")}
+    </div>`);
+}
+
 async function salesTaxReturnView(id, key) {
   await loadEntity(id);
+  // Canadian returns are keyed by the tax and its period, like "gst:2026-Q4".
+  const m = /^(gst|qst|pst_bc|pst_mb|pst_sk):(.+)$/.exec(key);
+  if (m) return canadaSalesTaxReturnView(id, m[1], m[2]);
   const f = await api(entPath(`/sales-tax/return?period=${encodeURIComponent(key)}`));
   const s = f.seller;
   app.innerHTML = shell("sales-tax", `
@@ -2466,6 +3207,7 @@ const bill = { interval: null };
 
 async function billingView() {
   const b = await api(orgPath("/billing"));
+  const ref = b.free ? null : await api(orgPath("/billing/referral")).catch(() => null);
   if (b.free) {
     app.innerHTML = shell("billing", `<div class="head"><div><h1>Billing</h1></div></div><div class="panel"><p>This organisation doesn't pay for TrailBook.</p></div>`);
     return;
@@ -2473,7 +3215,10 @@ async function billingView() {
   const owner = state.org.role === "owner";
   const interval = bill.interval ?? b.nextInterval ?? b.interval;
   const per = interval === "month" ? "a month" : "a year";
-  const price = (minor) => usd(minor).replace(/\.00$/, "");
+  const cad = b.currency === "CAD";
+  // Canadian-dollar subscriptions show C$, as on pomeroyagency.com.
+  const amt = (minor, ccy = b.currency) => (ccy === "CAD" ? usd(minor).replace("$", "C$") : usd(minor));
+  const price = (minor) => amt(minor).replace(/\.00$/, "");
   const status = {
     trialing: b.comped && !b.compUntil
       ? `<span class="pill">Complimentary</span> ${PLAN_LABEL[b.plan]} is included${b.compReason ? ` with ${esc(b.compReason)}` : ""}, with nothing charged, people paid included, for as long as that lasts.`
@@ -2499,9 +3244,10 @@ async function billingView() {
       <div class="muted small">Each extra business ${price(b.prices.extraBusiness[k][interval])} ${per}</div>
     </label>`;
   };
-  const next = b.next ? `<p>Next charge on ${longDate(b.next.periodStart)}: <strong>${usd(b.next.subtotalMinor)}</strong> plus California sales tax where it applies, for ${longDate(b.next.periodStart)} to ${longDate(b.next.periodEnd)}.</p>
-      <ul class="muted">${b.next.lines.map((l) => `<li>${esc(l.description)}${l.quantity > 1 ? ` × ${l.quantity}` : ""}: ${usd(l.quantity * l.unitMinor)}</li>`).join("")}</ul>` : "";
+  const next = b.next ? `<p>Next charge on ${longDate(b.next.periodStart)}: <strong>${amt(b.next.subtotalMinor)}</strong>${cad ? " in Canadian dollars" : " plus California sales tax where it applies"}, for ${longDate(b.next.periodStart)} to ${longDate(b.next.periodEnd)}.</p>
+      <ul class="muted">${b.next.lines.map((l) => `<li>${esc(l.description)}${l.quantity > 1 ? ` × ${l.quantity}` : ""}: ${amt(l.quantity * l.unitMinor)}</li>`).join("")}</ul>` : "";
   const addr = b.billing.address ?? {};
+  const country = addr.country ?? (cad ? "CA" : "US");
   app.innerHTML = shell("billing", `
     <div class="head"><div><h1>Billing</h1><p class="muted">One price per business, unlimited users, invoices and bills. Prices are before sales tax. <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a> · <a href="/promises.html" target="_blank" rel="noopener">Our promises</a></p></div></div>
     <div class="panel"><p>${status}</p>
@@ -2513,21 +3259,26 @@ async function billingView() {
       <div class="row" style="justify-content:space-between"><h2>Plan</h2>
         <div class="row seg"><button class="${interval === "month" ? "" : "secondary"}" data-action="bill-interval" data-v="month">Monthly</button><button class="${interval === "year" ? "" : "secondary"}" data-action="bill-interval" data-v="year">Yearly, 2 months free</button></div></div>
       <form data-form="bill-plan" data-interval="${interval}">
-        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: state and city overtime and minimum-wage checks, pay stubs, direct-deposit file, prepared 941, W-2 and state quarterly forms.")}</div>
+        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: state and city overtime and minimum-wage checks, pay stubs, direct-deposit file, prepared 941, W-2 and state quarterly forms, or T4, RL-1 and ROE in Canada.")}</div>
         <p class="muted">${b.businesses ? `You have ${b.businesses} business${b.businesses === 1 ? "" : "es"} here.` : "No businesses added yet; the plan price covers the first one."} ${b.status === "trialing" ? "Changes apply right away." : "Moving up to Books + Payroll applies now, charged for the days left; anything else applies at the next renewal."}</p>
         <button type="submit">Save plan</button>
       </form>
     </div>
     <div class="panel"><h2>Billing details</h2>
-      <p class="muted">The name and address on your invoices. California sales tax is worked out from this address.</p>
+      <p class="muted">The name and address on your invoices. ${b.canadaOpen
+        ? "A US address is billed in US dollars, with California sales tax worked out from it where it applies. A Canadian address is billed in Canadian dollars."
+        : "California sales tax is worked out from this address."}${b.status !== "trialing" || b.charges.length ? ` You pay in ${cad ? "Canadian" : "US"} dollars.` : ""}</p>
       <form data-form="bill-details">
         <div class="grid two">
           <label>Business name<input name="name" required value="${esc(b.billing.name ?? state.org.org.name)}"></label>
           <label>Billing email<input name="email" type="email" required value="${esc(b.billing.email ?? state.me.user.email)}"></label>
+          ${b.canadaOpen || country === "CA" ? `<label>Country<select name="country">
+            <option value="US" ${country === "US" ? "selected" : ""}>United States</option>
+            <option value="CA" ${country === "CA" ? "selected" : ""}>Canada</option></select></label><span></span>` : ""}
           <label>Street address<input name="line1" required value="${esc(addr.line1 ?? "")}"></label>
           <label>City<input name="city" required value="${esc(addr.city ?? "")}"></label>
-          <label>State<input name="state" required maxlength="2" value="${esc(addr.state ?? "CA")}"></label>
-          <label>ZIP code<input name="zip" required value="${esc(addr.zip ?? "")}"></label>
+          <label>${b.canadaOpen ? "State, province or territory" : "State"}<input name="state" required maxlength="2" placeholder="${b.canadaOpen ? "CA, BC, ON" : "CA"}" value="${esc(addr.state ?? (country === "CA" ? "" : "CA"))}"></label>
+          <label>${b.canadaOpen ? "ZIP or postal code" : "ZIP code"}<input name="zip" required value="${esc(addr.zip ?? "")}"></label>
         </div>
         <button type="submit" class="secondary">Save details</button>
       </form>
@@ -2539,10 +3290,11 @@ async function billingView() {
           <p class="muted">You type the card on our payment processor's secure page (Stripe). TrailBook never sees or stores the card number.</p>` : `<p class="muted">Save the billing details first.</p>`
         : `<p class="muted">Card payments aren't switched on yet. Your trial carries on in the meantime.</p>`}
     </div>
+    ${ref ? referralPanel(ref) : ""}
     ${b.charges.length ? `<div class="panel table-wrap"><h2>Payments</h2><table>
       <thead><tr><th>Date</th><th>For</th><th>Invoice</th><th class="num">Amount</th><th class="num">Tax</th><th class="num">Total</th><th>Status</th></tr></thead>
       <tbody>${b.charges.map((c) => `<tr><td>${new Date(c.created_at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" })}</td><td>${CHARGE_LABEL[c.kind]}, ${c.period_start} to ${c.period_end}</td><td class="mono">${esc(c.invoice_number ?? "")}</td>
-        <td class="num">${usd(c.subtotal_minor)}</td><td class="num">${c.tax_minor == null ? "" : usd(c.tax_minor)}</td><td class="num">${c.total_minor == null ? "" : usd(c.total_minor)}</td>
+        <td class="num">${amt(c.subtotal_minor, c.currency)}</td><td class="num">${c.tax_minor == null ? "" : amt(c.tax_minor, c.currency)}</td><td class="num">${c.total_minor == null ? "" : amt(c.total_minor, c.currency)}</td>
         <td>${CHARGE_STATUS[c.status]}${c.failure ? `<div class="hash">${esc(c.failure)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>` : ""}
     ${owner ? `<div class="panel"><h2>${b.status === "canceled" || b.cancelAtPeriodEnd ? "Restart" : "Cancel"}</h2>
       ${b.status === "canceled" || b.cancelAtPeriodEnd
@@ -2563,6 +3315,124 @@ async function cardReturnView(sessionId) {
     toast(err.message);
   }
   location.hash = "#/billing";
+}
+
+// ------------------------------------------------------------------ referrals
+
+const money = (minor, currency = "USD") => (currency === "CAD" ? "CA" : "") + usd(minor);
+const REWARD_LABEL = { client_discount: "20% off for the client", firm_fee: "20% referral fee to the firm" };
+
+/** On a client's Billing page: the firm that referred it, and what that means for the price. */
+function referralPanel(r) {
+  const firm = r.firm;
+  const what = firm && (firm.reward === "client_discount"
+    ? `You pay ${r.pct}% less on every charge for as long as you stay.`
+    : `The firm receives a referral fee from us of ${r.pct}% of what you pay, before tax, for your first ${r.months} months. Your price isn't raised for it.`);
+  return `<div class="panel"><h2>Referred by an accountant or HR firm</h2>
+    ${firm ? `<p><strong>${esc(firm.name)}</strong> referred you. ${what}</p>
+      <p class="muted">${esc(firm.name)} can see your business name, whether you subscribe, and any fee it earns from you. It can't open your books unless you invite it under Team.</p>
+      ${r.canChange ? `<button class="secondary" data-action="ref-remove">Remove this firm</button>` : `<p class="muted">To change this after your first payment, contact us.</p>`}`
+    : r.canChange ? `<p class="muted">If your accountant or HR firm gave you a referral code, enter it before your first payment. Depending on the firm, you get ${r.pct}% off for as long as you stay, or the firm gets a referral fee from us and your price stays the same.</p>
+      <form data-form="ref-link" class="row" style="align-items:flex-end"><label>Referral code<input name="code" required maxlength="14" autocomplete="off"></label><button type="submit" class="secondary">Add</button></form>`
+    : `<p class="muted">No firm referred this business.</p>`}
+    <p class="hash" style="margin-top:8px">Are you an accounting or HR firm? <a href="#/referrals">Get your own referral code</a>.</p>
+  </div>`;
+}
+
+/** A firm's Referrals page: join, its code and link, and what each client it brought has earned. */
+async function referralsView() {
+  state.entity = null;
+  const r = await api(orgPath("/referrals"));
+  const terms = `<a href="/referral-terms.html" target="_blank" rel="noopener">referral program terms</a>`;
+  const rewardPick = (cur) => `
+    <label class="check multi"><input type="radio" name="reward" value="client_discount" ${cur !== "firm_fee" ? "checked" : ""}><span><strong>20% off for your clients</strong>, for as long as they stay. A Books client pays $12 a month instead of $15.</span></label>
+    <label class="check multi"><input type="radio" name="reward" value="firm_fee" ${cur === "firm_fee" ? "checked" : ""}><span><strong>A 20% referral fee for your firm</strong>. Your client pays the standard price, and we pay your firm 20% of what they pay, before tax, for their first 12 months.</span></label>`;
+  const payout = (p = {}) => `
+    <div class="grid two">
+      <label>Email for payout notices<input name="payoutEmail" type="email" value="${esc(p.payoutEmail ?? state.me.user.email)}"></label>
+      <label><span>How you'd like to be paid <span class="hint">(no account numbers; we'll ask for details separately)</span></span><input name="payoutNote" maxlength="300" value="${esc(p.payoutNote ?? "")}" placeholder="ACH, Interac e-Transfer or cheque"></label>
+    </div>`;
+  if (!r.joined) {
+    app.innerHTML = shell("referrals", `
+      <div class="head"><div><h1>Referrals</h1><p class="muted">For accounting and HR firms. Bring your clients to TrailBook with your own code. Your firm's own logins stay free either way, and the client is always the customer of record.</p></div></div>
+      <div class="panel"><h2>Join the referral program</h2>
+        <form data-form="ref-partner">
+          <p>Choose what clients you bring get. You can change it later; a change applies to clients who join after it.</p>
+          ${rewardPick("client_discount")}
+          ${payout()}
+          <p class="muted">If you take the fee: we pay it monthly for the previous month, once it reaches $25 (smaller amounts carry over). A US firm sends us a Form W-9 before the first payment. Check your professional rules first: some accountants must tell clients about a referral fee, and some can't take one from certain clients. We show the fee to your client on their Billing page.</p>
+          <label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the ${terms} for ${esc(state.org.org.name)}.</span></label>
+          <button type="submit">Get our referral code</button>
+        </form>
+      </div>`);
+    return;
+  }
+  const link = `${r.appUrl ?? location.origin}/?ref=${r.code}#/signup`;
+  const owed = r.clients.reduce((m, c) => ({ ...m, [c.currency]: (m[c.currency] ?? 0n) + BigInt(c.owedMinor) }), {});
+  app.innerHTML = shell("referrals", `
+    <div class="head"><div><h1>Referrals</h1><p class="muted">Clients you bring with your code get ${r.reward === "firm_fee" ? "the standard price, and your firm earns 20% of what they pay for their first 12 months" : "20% off for as long as they stay"}. <a href="/referral-terms.html" target="_blank" rel="noopener">Program terms</a></p></div></div>
+    ${r.termsVersion !== r.currentTermsVersion ? `<div class="banner info">The referral program terms have been updated. Save your settings below to accept them.</div>` : ""}
+    <div class="panel"><h2>Your code</h2>
+      <p class="stat mono">${esc(r.code)}</p>
+      <p>Sign-up link: <span class="mono">${esc(link)}</span> <button class="link" data-action="copy" data-text="${esc(link)}">Copy</button></p>
+      <p class="muted">A client can also enter the code on their Billing page, any time before their first payment.</p>
+    </div>
+    <div class="panel table-wrap"><h2>Clients you referred</h2>
+      ${r.clients.length ? `<table><thead><tr><th>Client</th><th>Status</th><th>Reward</th><th>Fees until</th><th class="num">Owed to you</th><th class="num">Paid to you</th></tr></thead>
+        <tbody>${r.clients.map((c) => `<tr><td>${esc(c.name)}</td><td>${esc({ trialing: "Free trial", active: "Paying", past_due: "Payment overdue", canceled: "Ended" }[c.status] ?? c.status)}</td>
+          <td>${esc(REWARD_LABEL[c.reward])}</td><td>${c.feeUntil ? longDate(c.feeUntil) : c.reward === "firm_fee" ? `<span class="muted">From the first payment</span>` : ""}</td>
+          <td class="num">${c.reward === "firm_fee" ? money(c.owedMinor, c.currency) : ""}</td><td class="num">${c.reward === "firm_fee" ? money(c.paidMinor, c.currency) : ""}</td></tr>`).join("")}</tbody></table>
+        ${Object.entries(owed).filter(([, v]) => v > 0n).map(([cur, v]) => `<p>Owed to your firm: <strong>${money(v, cur)}</strong>. Paid monthly once it reaches ${money(r.minPayoutMinor, cur)}.${!r.w9Received ? " A US firm: send us a Form W-9 before the first payment." : ""}</p>`).join("")}`
+      : `<p class="muted">No clients yet. Share your code or link.</p>`}
+    </div>
+    ${r.payouts.length ? `<div class="panel table-wrap"><h2>Payments to your firm</h2><table><thead><tr><th>Date</th><th>How</th><th>Reference</th><th class="num">Amount</th></tr></thead>
+      <tbody>${r.payouts.map((p) => `<tr><td>${longDate(p.paidOn)}</td><td>${esc(p.method)}</td><td class="mono">${esc(p.reference ?? "")}</td><td class="num">${money(p.totalMinor, p.currency)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    <div class="panel"><h2>Settings</h2>
+      <form data-form="ref-partner">
+        ${rewardPick(r.reward)}
+        ${payout(r)}
+        ${r.termsVersion !== r.currentTermsVersion ? `<label class="check multi"><input type="checkbox" name="acceptTerms" required><span>I agree to the updated ${terms}.</span></label>` : ""}
+        <button type="submit" class="secondary">Save settings</button>
+      </form>
+    </div>`);
+}
+
+/** The operator's page: what every firm is owed, recording payouts made outside TrailBook, and cancelling fees. */
+async function referralFeesView() {
+  state.entity = null;
+  const r = await api(orgPath("/referral-fees"));
+  const owedRows = r.partners.flatMap((p) => p.owed.map((o) => ({ p, o })));
+  app.innerHTML = shell("referral-fees", `
+    <div class="head"><div><h1>Referral fees</h1><p class="muted">What firms in the referral program have earned: 20% of each payment, before tax, by clients they referred, for each client's first 12 months. Pay each firm outside TrailBook (ACH, e-Transfer or cheque), then record it here: the fees are marked paid, the firm is emailed, and a paid bill from the firm goes into your books.</p></div></div>
+    <div class="panel table-wrap"><h2>To pay</h2>
+      ${owedRows.length ? `<table><thead><tr><th>Firm</th><th>How they'd like to be paid</th><th class="num">Owed</th><th>W-9</th><th></th></tr></thead><tbody>
+        ${owedRows.map(({ p, o }) => `<tr><td><strong>${esc(p.name)}</strong><div class="hash">${esc(p.payoutEmail ?? "")} · ${o.fees} payment${o.fees === 1 ? "" : "s"}</div></td><td>${esc(p.payoutNote ?? "")}</td>
+          <td class="num">${money(o.owedMinor, o.currency)}${BigInt(o.owedMinor) < BigInt(r.minPayoutMinor) ? `<div class="hash">under the ${money(r.minPayoutMinor, o.currency)} minimum</div>` : ""}</td>
+          <td>${p.w9Received ? "On file" : `<button class="link" data-action="ref-w9" data-firm="${p.orgId}" data-v="1">Mark received</button>`}</td>
+          <td><form data-form="ref-payout" data-firm="${p.orgId}" data-currency="${o.currency}" class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px">
+            <label>Paid on<input name="paidOn" type="date" required value="${today()}"></label>
+            <label>How<input name="method" required maxlength="80" style="width:110px" placeholder="ACH"></label>
+            <label>Reference<input name="reference" maxlength="120" style="width:110px"></label>
+            <label>Expense account<input name="account" value="6000" maxlength="40" style="width:80px"></label>
+            ${o.currency !== "USD" ? `<label>Cost in USD<input name="bookedAmount" required inputmode="decimal" style="width:90px"></label>` : ""}
+            <button type="submit">Record payment</button></form></td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">Nothing is owed right now.</p>`}
+    </div>
+    <div class="panel table-wrap"><h2>Fees</h2>
+      ${r.fees.length ? `<table><thead><tr><th>Earned</th><th>Firm</th><th>Client</th><th>Invoice</th><th class="num">Payment before tax</th><th class="num">Fee</th><th>Status</th></tr></thead><tbody>
+        ${r.fees.map((f) => `<tr><td>${esc(f.earnedOn)}</td><td>${esc(r.partners.find((p) => p.orgId === f.partnerOrgId)?.name ?? "")}</td><td>${esc(f.client)}</td><td class="mono">${esc(f.invoiceNumber ?? "")}</td>
+          <td class="num">${money(f.baseMinor, f.currency)}</td><td class="num">${money(f.feeMinor, f.currency)}</td>
+          <td>${f.status === "owed" ? `Owed<form data-form="ref-void" data-fee="${f.id}" class="row" style="gap:4px;margin-top:4px"><input name="reason" required maxlength="300" placeholder="Reason to cancel" style="width:140px"><button type="submit" class="link">Cancel fee</button></form>` : f.status === "paid" ? "Paid" : `Cancelled<div class="hash">${esc(f.voidReason ?? "")}</div>`}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">No fees yet.</p>`}
+    </div>
+    <div class="panel table-wrap"><h2>Firms in the program</h2>
+      ${r.partners.length ? `<table><thead><tr><th>Firm</th><th>Code</th><th>Reward</th><th class="num">Clients</th><th>W-9</th></tr></thead><tbody>
+        ${r.partners.map((p) => `<tr><td>${esc(p.name)}</td><td class="mono">${esc(p.code)}</td><td>${esc(REWARD_LABEL[p.reward])}</td><td class="num">${p.clients}</td>
+          <td>${p.w9Received ? `On file <button class="link" data-action="ref-w9" data-firm="${p.orgId}" data-v="0">Undo</button>` : `<button class="link" data-action="ref-w9" data-firm="${p.orgId}" data-v="1">Mark received</button>`}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">No firms have joined yet.</p>`}
+    </div>
+    ${r.payouts.length ? `<div class="panel table-wrap"><h2>Payouts recorded</h2><table><thead><tr><th>Date</th><th>Firm</th><th>How</th><th>Reference</th><th>Bill</th><th class="num">Amount</th></tr></thead>
+      <tbody>${r.payouts.map((p) => `<tr><td>${esc(p.paidOn)}</td><td>${esc(p.name)}</td><td>${esc(p.method)}</td><td class="mono">${esc(p.reference ?? "")}</td><td class="mono">${esc(p.billNumber ?? "")}</td><td class="num">${money(p.totalMinor, p.currency)}</td></tr>`).join("")}</tbody></table></div>` : ""}`);
 }
 
 // ------------------------------------------------------------------ account
@@ -2613,6 +3483,12 @@ async function accountView() {
   app.innerHTML = shell("account", `
     <div class="head"><div><h1>Your account</h1><p class="muted">${esc(u.name)} · ${esc(u.email)}${u.emailVerified ? "" : " (not confirmed yet)"}</p></div></div>
     <div class="panel"><h2>Two-factor sign-in</h2>${mfa}</div>
+    ${u.hubConnected
+      ? `<div class="panel"><h2>Pomeroy Account</h2><p><span class="pill">Connected</span> "Sign in with Pomeroy Account" opens your books. Your two-factor code is still asked for.</p></div>`
+      : (await emailOn(), hubEnabled)
+        ? `<div class="panel"><h2>Pomeroy Account</h2><p>One sign-in for TrailBook, MilePost and pomeroyagency.com. Connect it to this TrailBook login once; your password keeps working too.</p>
+            <a class="btn secondary" href="/api/auth/hub/start?link=1">Connect Pomeroy Account</a></div>`
+        : ""}
     <div class="panel"><h2>Safety and privacy</h2>
       <p>How we protect your books, and what we promise about prices and your data: <a href="/security.html" target="_blank" rel="noopener">Security</a> · <a href="/promises.html" target="_blank" rel="noopener">Our promises</a> · <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a></p></div>`);
 }
@@ -2772,6 +3648,8 @@ async function route() {
     if (["login", "signup", "forgot", "magic"].includes(parts[0])) return await authView(parts[0]);
     if (["email-link", "reset", "verify"].includes(parts[0]) && parts[1]) return await emailLinkView(parts[0], parts[1]);
     if (parts[0] === "join" && parts[1]) return await joinView(parts[1]);
+    if (parts[0] === "hub" && parts[1]) return await hubView(parts[1], parts[2]);
+    if (parts[0] === "hub-link" && parts[1]) return await hubLinkView(parts[1]);
     if (!state.me) {
       try { state.me = await api("/api/me"); } catch {
         // An app sent someone here to connect: come back to the consent page after signing in.
@@ -2797,12 +3675,15 @@ async function route() {
       if (parts[2] === "sales-tax") return await salesTaxView(parts[1], parts[3]);
       if (parts[2] === "payroll" && parts[3] === "form" && parts[4]) return await formView(parts[1], parts[4], parts[5], parts[6]);
       if (["invoices", "bills"].includes(parts[2]) && parts[3]) return await docPageView(parts[1], parts[2] === "invoices" ? "invoice" : "bill", parts[3]);
-      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView, integrations: integrationsView, milepost: milepostView }[parts[2] ?? "overview"] ?? overviewView;
+      const view = { overview: overviewView, reports: reportsView, invoices: (i) => docsView(i, "invoice"), bills: (i) => docsView(i, "bill"), contacts: contactsView, items: itemsView, bank: bankView, reconcile: reconcileView, journal: journalView, "trial-balance": trialBalanceView, periods: periodsView, payroll: payrollView, accounts: accountsView, connections: connectionsView, integrations: integrationsView, milepost: milepostView, move: moveView }[parts[2] ?? "overview"] ?? overviewView;
       return await view(parts[1]);
     }
     if (parts[0] === "team") return await teamView();
+    if (parts[0] === "clients") return await clientsView();
     if (parts[0] === "billing" && parts[1] === "card" && parts[2]) return await cardReturnView(parts[2]);
     if (parts[0] === "billing") return await billingView();
+    if (parts[0] === "referrals") return await referralsView();
+    if (parts[0] === "referral-fees") return await referralFeesView();
     if (parts[0] === "audit") return await auditView();
     if (parts[0] === "newsletter" && parts[1]) return await newsletterIssueView(parts[1]);
     if (parts[0] === "newsletter") return await newsletterView();
@@ -2829,6 +3710,7 @@ document.addEventListener("input", (ev) => {
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.dataset.upload) uploadFile(t).catch((err) => { t.disabled = false; toast(err.message); });
   if (t.name === "country" && t.closest("form[data-form=entity]")) {
     t.form.elements.namedItem("region").innerHTML = regionOptions(t.value);
     t.form.querySelector("[data-region-label]").textContent = countryOf(t.value)?.regionLabel ?? "State";
@@ -2854,7 +3736,7 @@ document.addEventListener("change", (ev) => {
     const useTax = t.form.querySelector("[name=useTax]");
     if (useTax) useTax.checked = Boolean((state.docContacts ?? []).find((c) => c.id === t.value)?.accrueUseTax);
   }
-  if (t.closest("form[data-form=document][data-kind=bill]") && ["contactId", "useTax", "issueDate", "taxCategory", "servicePeriodStart", "servicePeriodEnd", "manualRate", "manualReason"].includes(t.name)) {
+  if (t.closest("form[data-form=document][data-kind=bill]") && ["contactId", "useTax", "issueDate", "taxCategory", "servicePeriodStart", "servicePeriodEnd", "manualRate", "manualReason", "caGst", "caQst"].includes(t.name)) {
     updateDocTotals();
     scheduleTaxPreview();
   }
@@ -2980,7 +3862,7 @@ document.addEventListener("click", async (ev) => {
       Object.assign(document.createElement("a"), { href: url, download: name }).click();
       URL.revokeObjectURL(url);
       b.disabled = false;
-      toast("Bank file downloaded. Upload it on your bank's ACH page, then delete it from this computer");
+      toast(name.startsWith("cpa005") ? "Bank file downloaded. Upload it to your bank's payroll file service, then delete it from this computer" : "Bank file downloaded. Upload it on your bank's ACH page, then delete it from this computer");
     } else if (a === "form-ssn") {
       await formView(state.entity.entity.id, b.dataset.slug, b.dataset.year, b.dataset.quarter || undefined, true);
     } else if (a === "st-range") {
@@ -3010,10 +3892,56 @@ document.addEventListener("click", async (ev) => {
       document.getElementById("doc-lines").insertAdjacentHTML("beforeend", docLineRow(b.dataset.kind));
       updateDocTotals();
       if (b.dataset.kind === "invoice" || useTaxOn()) scheduleTaxPreview();
+    } else if (a === "ca-calc") {
+      // Fills in the tax a vendor would normally charge on this bill's subtotal; check it against their invoice.
+      const sub = readDocLines().reduce((t, l) => t + Math.round(Number(l.quantity || 0) * Number(cents(l.unitPrice) ?? 0)), 0);
+      const rate = b.dataset.tax === "qst" ? 0.09975 : homeGstRate();
+      document.querySelector(`[name=${b.dataset.tax === "qst" ? "caQst" : "caGst"}]`).value = (Math.round(sub * rate) / 100).toFixed(2);
+      updateDocTotals();
     } else if (a === "remove-doc-line") {
       if (document.querySelectorAll("#doc-lines tr").length > 1) b.closest("tr").remove();
       updateDocTotals();
       if (document.querySelector("form[data-form=document][data-kind=invoice]") || useTaxOn()) scheduleTaxPreview();
+    } else if (a === "files-toggle") {
+      const row = document.querySelector(`tr[data-files="${b.dataset.id}"]`) ?? document.querySelector(`[data-files="${b.dataset.id}"]`);
+      row.hidden = !row.hidden;
+      if (!row.hidden) await fillFiles(row.querySelector("[data-files-box]"));
+    } else if (a === "file-remove") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remove this file? Click again"; return; }
+      b.disabled = true;
+      await api(entPath(`/attachments/${b.dataset.id}/remove`), { body: {} });
+      toast("File removed");
+      await fillFiles(document.querySelector(`[data-files-box="${b.dataset.box}"]`));
+    } else if (a === "rule-from-line") {
+      const form = document.querySelector("form[data-form=bank-rule]");
+      form.elements.namedItem("matchText").value = b.dataset.text;
+      form.elements.namedItem("direction").value = b.dataset.dir;
+      const choice = document.querySelector(`[data-line-choice="${b.dataset.id}"]`)?.value ?? "";
+      if (choice.startsWith("acct:")) form.elements.namedItem("account").value = choice.slice(5);
+      form.scrollIntoView({ behavior: "smooth", block: "center" });
+      form.elements.namedItem("matchText").focus();
+    } else if (a === "rule-off") {
+      b.disabled = true;
+      await api(entPath(`/bank-rules/${b.dataset.id}/off`), { body: {} });
+      toast("Rule turned off");
+      await bankView(state.entity.entity.id);
+    } else if (a === "estimate-email") {
+      b.disabled = true;
+      const r = await api(entPath(`/estimates/${b.dataset.id}/email`), { body: {} });
+      toast(`Emailed to ${r.sentTo}`);
+      await docsView(state.entity.entity.id, "invoice");
+    } else if (a === "estimate-decline") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Mark declined? Click again"; return; }
+      b.disabled = true;
+      await api(entPath(`/estimates/${b.dataset.id}/decline`), { body: {} });
+      toast("Marked declined");
+      await docsView(state.entity.entity.id, "invoice");
+    } else if (a === "recurring-stop") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Stop it? Click again"; return; }
+      b.disabled = true;
+      const t = await api(entPath(`/recurring/${b.dataset.id}/stop`), { body: {} });
+      toast("Stopped. Nothing more will be issued on this schedule");
+      await docsView(state.entity.entity.id, t.kind);
     } else if (a === "doc-toggle") {
       const row = document.querySelector(`tr[data-${b.dataset.form}="${b.dataset.id}"]`);
       row.hidden = !row.hidden;
@@ -3043,6 +3971,18 @@ document.addEventListener("click", async (ev) => {
       state.org.stale = true;
       toast("Subscription cancelled. Your books stay readable and downloadable");
       await billingView();
+    } else if (a === "ref-remove") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remove the firm? Click again"; return; }
+      b.disabled = true;
+      await api(orgPath("/billing/referral"), { body: { remove: true } });
+      toast("Firm removed");
+      await billingView();
+    } else if (a === "copy") {
+      await navigator.clipboard.writeText(b.dataset.text);
+      toast("Copied");
+    } else if (a === "ref-w9") {
+      await api(orgPath(`/referral-fees/firms/${b.dataset.firm}/w9`), { body: { received: b.dataset.v === "1" } });
+      await referralFeesView();
     } else if (a === "bill-resume") {
       b.disabled = true;
       await api(orgPath("/billing/resume"), { body: {} });
@@ -3091,6 +4031,32 @@ document.addEventListener("click", async (ev) => {
       await api("/api/auth/logout", { body: {} });
       state.me = null; state.org = null; state.orgId = null;
       await route();
+    } else if (a === "open-client") {
+      state.orgId = b.dataset.org;
+      try { localStorage.setItem("altqbo_org", b.dataset.org); } catch {}
+      state.org = null; state.entity = null;
+      if (location.hash === b.dataset.go) await route(); else location.hash = b.dataset.go;
+    } else if (a === "feed-connect" || a === "feed-relink") {
+      await openPlaid(a === "feed-relink" ? b.dataset.id : null);
+    } else if (a === "feed-sync") {
+      b.disabled = true;
+      const r = await api(entPath(`/bank-feeds/${b.dataset.id}/sync`), { body: {} });
+      toast(r.status === "active" ? `${r.added} new line${r.added === 1 ? "" : "s"}${r.autoRecorded ? `, ${r.autoRecorded} recorded by your rules` : ""}` : r.message ?? "The bank didn't answer");
+      await bankView(state.entity.entity.id);
+    } else if (a === "stripe-connect") {
+      b.disabled = true;
+      const { url } = await api(entPath("/online-payments/connect"), { body: {} });
+      location.href = url;
+    } else if (a === "stripe-disconnect") {
+      b.disabled = true;
+      await api(entPath("/online-payments/disconnect"), { body: {} });
+      toast("Stripe disconnected");
+      await docsView(state.entity.entity.id, "invoice");
+    } else if (a === "feed-remove") {
+      b.disabled = true;
+      await api(entPath(`/bank-feeds/${b.dataset.id}/remove`), { body: {} });
+      toast("Disconnected. Lines already brought in stay");
+      await bankView(state.entity.entity.id);
     } else if (a === "report-tab") {
       rep.tab = b.dataset.tab;
       await reportsView(state.entity.entity.id);
@@ -3115,7 +4081,7 @@ document.addEventListener("click", async (ev) => {
       b.disabled = false;
     } else if (a === "report-csv") {
       const [path, q, name] = reportQuery();
-      const res = await api(entPath(`${path}?${q}&format=csv`), { raw: true });
+      const res = await api(entPath(`${path}?${q}&format=csv${b.dataset.full ? "&tin=full" : ""}`), { raw: true });
       if (!res.ok) throw new Error((await res.json()).error);
       const url = URL.createObjectURL(await res.blob());
       Object.assign(document.createElement("a"), { href: url, download: `${name}.csv` }).click();
@@ -3250,8 +4216,25 @@ document.addEventListener("submit", async (ev) => {
       state.org.stale = true;
       toast("Plan saved");
       await billingView();
+    } else if (kind === "ref-link") {
+      const r = await api(orgPath("/billing/referral"), { body: { code: d.code } });
+      toast(r.reward === "client_discount" ? "Added: 20% off from your next charge" : "Added");
+      await billingView();
+    } else if (kind === "ref-partner") {
+      await api(orgPath("/referrals"), { body: { reward: d.reward, payoutEmail: d.payoutEmail, payoutNote: d.payoutNote, acceptTerms: d.acceptTerms === "on" } });
+      state.org.stale = true;
+      toast("Saved");
+      await route();
+    } else if (kind === "ref-void") {
+      await api(orgPath(`/referral-fees/fees/${f.dataset.fee}/void`), { body: { reason: d.reason } });
+      toast("Fee cancelled");
+      await referralFeesView();
+    } else if (kind === "ref-payout") {
+      const r = await api(orgPath("/referral-fees/payouts"), { body: { partnerOrgId: f.dataset.firm, currency: f.dataset.currency, ...d } });
+      toast(`Recorded ${money(r.totalMinor, r.currency)}, bill ${r.billNumber}`);
+      await referralFeesView();
     } else if (kind === "bill-details") {
-      await api(orgPath("/billing/details"), { body: { name: d.name, email: d.email, address: { line1: d.line1, city: d.city, state: d.state, zip: d.zip } } });
+      await api(orgPath("/billing/details"), { body: { name: d.name, email: d.email, address: { line1: d.line1, city: d.city, state: d.state, zip: d.zip, country: d.country || "US" } } });
       toast("Billing details saved");
       await billingView();
     } else if (kind === "mfa-enable") {
@@ -3311,6 +4294,33 @@ document.addEventListener("submit", async (ev) => {
       if (d.preset && d.preset !== "custom") [rep.from, rep.to] = presetRange(d.preset);
       if (d.asPreset && d.asPreset !== "custom") rep.asOf = presetAsOf(d.asPreset);
       await reportsView(state.entity.entity.id);
+    } else if (kind === "move-date") {
+      move.startDate = d.startDate;
+    } else if (kind === "move") {
+      const step = f.dataset.step;
+      const file = f.querySelector("[name=file]").files[0];
+      if (file && file.size > 4_500_000) throw new Error("that file is over 4.5 MB; export a shorter date range or split it");
+      if (file) move.files[step] = { name: file.name, text: await file.text() };
+      if (!move.files[step]) throw new Error("choose the CSV file first");
+      const preview = ev.submitter?.dataset.as !== "import";
+      const r = await api(entPath(`/migration/${step}`), { body: {
+        csv: move.files[step].text, preview, startDate: move.startDate, kind: d.kind, rollIncome: f.querySelector("[name=rollIncome]")?.checked ?? false,
+      } });
+      move.results[step] = r;
+      if (!preview) { delete move.files[step]; state.entity.fresh = false; toast("Imported"); }
+      await moveView(state.entity.entity.id);
+    } else if (kind === "client-filter") {
+      clientFilter.q = d.q ?? "";
+      clientFilter.attention = f.querySelector("[name=attention]").checked;
+      await clientsView();
+    } else if (kind === "contractor-tax") {
+      const gets = f.querySelector("[name=gets]").checked;
+      const form = gets ? (state.entity.entity.country === "CA" ? "t4a" : "1099_nec") : null;
+      await api(entPath(`/contacts/${f.dataset.id}/tax-form`), { body: {
+        form, recipientType: d.recipientType, tinKind: d.tinKind, legalName: d.legalName ?? "", ...(d.tin?.trim() ? { tin: d.tin.trim() } : {}),
+      } });
+      toast(gets ? "Saved" : "Won't get a form");
+      await reportsView(state.entity.entity.id);
     } else if (kind === "journal-search") {
       jr.q = d.q.trim();
       await journalView(state.entity.entity.id);
@@ -3365,10 +4375,44 @@ document.addEventListener("submit", async (ev) => {
       }
       const lines = readDocLines().filter((l) => l.unitPrice || l.itemId);
       const manualTax = d.manualRate?.trim() ? { ratePercent: d.manualRate.trim(), reason: d.manualReason ?? "" } : undefined;
-      const useTax = k === "bill" ? useTaxOn() : undefined;
-      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, useTax, idempotencyKey: crypto.randomUUID() } });
-      toast(`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`);
+      const useTax = k === "bill" && !inCanada() ? useTaxOn() : undefined;
+      const caTax = k === "bill" && inCanada() ? { gstHst: d.caGst?.trim() || undefined, qst: d.caQst?.trim() || undefined } : undefined;
+      if (ev.submitter?.dataset.as === "estimate") {
+        const est = await api(entPath("/estimates"), { body: { contactId, issueDate: d.issueDate, expiryDate: d.dueDate, memo: d.memo, lines } });
+        toast(`Estimate ${est.number} saved for ${usd(est.totalMinor)}`);
+        return await docsView(state.entity.entity.id, k);
+      }
+      const doc = await api(entPath(`/${DOC[k].path}`), { body: { ...d, contactId, lines, manualTax, useTax, caTax, idempotencyKey: crypto.randomUUID() } });
+      const notes = [`${doc.number} ${k === "invoice" ? "issued" : "recorded"} for ${usd(doc.totalMinor)}`];
+      if (d.repeat) {
+        try {
+          const t = await api(entPath("/recurring"), { body: {
+            kind: k, contactId, lines, memo: d.memo, reference: d.reference, dueDays: daysFrom(d.issueDate, d.dueDate || d.issueDate),
+            frequency: d.repeat, after: d.issueDate, endDate: d.repeatEnd || undefined, email: Boolean(d.emailIt), useTax,
+          } });
+          notes.push(`the next one is on ${t.nextDate}`);
+        } catch (err) { notes.push(`but the schedule wasn't saved: ${err.message}`); }
+      }
+      if (d.emailIt) {
+        try {
+          const r = await api(entPath(`/invoices/${doc.id}/email`), { body: {} });
+          notes.push(`emailed to ${r.sentTo}`);
+        } catch (err) { notes.push(`but it wasn't emailed: ${err.message}`); }
+      }
+      toast(notes.join("; "));
       await docsView(state.entity.entity.id, k);
+    } else if (kind === "est-accept") {
+      const r = await api(entPath(`/estimates/${f.dataset.id}/accept`), { body: d });
+      toast(`${r.invoice.number} issued for ${usd(r.invoice.totalMinor)} from ${r.estimate.number}`);
+      location.hash = `#/e/${state.entity.entity.id}/invoices/${r.invoice.id}`;
+    } else if (kind === "doc-email") {
+      const r = await api(entPath(`/invoices/${f.dataset.id}/email`), { body: { to: d.to } });
+      toast(`Emailed to ${r.sentTo}`);
+      await docPageView(state.entity.entity.id, "invoice", f.dataset.id);
+    } else if (kind === "invoice-emails") {
+      await api(entPath("/invoice-emails"), { body: { reminders: Boolean(f.querySelector("[name=reminders]").checked), replyTo: d.replyTo ?? "" } });
+      toast("Saved");
+      await docsView(state.entity.entity.id, "invoice");
     } else if (kind === "pay") {
       const k = f.dataset.kind;
       await api(entPath(`/${DOC[k].path}/${f.dataset.id}/payments`), { body: { ...d, idempotencyKey: crypto.randomUUID() } });
@@ -3386,10 +4430,14 @@ document.addEventListener("submit", async (ev) => {
     } else if (kind === "bank-import") {
       const file = f.querySelector("[name=file]").files[0];
       const csv = file ? await file.text() : d.csv;
-      if (!csv?.trim()) throw new Error("Choose a CSV file or paste one");
+      if (!csv?.trim()) throw new Error("Choose a statement file or paste a CSV");
       const r = await api(entPath("/bank-imports"), { body: { bankAccount: bankUi.account, csv, fileName: file?.name ?? "pasted" } });
-      toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
+      toast(`Imported ${r.added} line${r.added === 1 ? "" : "s"}${r.autoRecorded ? ` (${r.autoRecorded} recorded by your rules)` : ""}${r.duplicates ? `, skipped ${r.duplicates} already imported` : ""}${r.unreadableRows.length ? `. Couldn't read rows ${r.unreadableRows.join(", ")}` : ""}`);
       bankUi.status = "new";
+      await bankView(state.entity.entity.id);
+    } else if (kind === "bank-rule") {
+      await api(entPath("/bank-rules"), { body: { ...d, autoRecord: Boolean(f.querySelector("[name=autoRecord]").checked) } });
+      toast(`Rule added. Lines containing "${d.matchText}" now go to ${d.account}`);
       await bankView(state.entity.entity.id);
     } else if (kind === "bank-undo") {
       await api(entPath(`/bank-lines/${f.dataset.id}/undo`), { body: { date: bookDate(), reason: d.reason } });
@@ -3407,6 +4455,14 @@ document.addEventListener("submit", async (ev) => {
       state.entity.fresh = false;
       toast(r.late ? "Recorded. It was paid after the due date, so a late-deposit penalty may follow" : "Payment recorded and posted to the books");
       await payrollView(state.entity.entity.id);
+    } else if (kind === "ca-sales-tax-settings") {
+      const pst = Object.fromEntries(["BC", "MB", "SK"].map((p) => [p, { account: d[`pst_${p}`] || null, frequency: d[`pstFreq_${p}`] || null }]));
+      await api(entPath("/sales-tax-settings"), { body: {
+        country: "CA", gstRegistered: Boolean(d.gstRegistered), gstAccount: d.gstAccount || null, gstFrequency: d.gstFrequency || null,
+        qstAccount: d.qstAccount || null, qstFrequency: d.qstFrequency || null, pst,
+      } });
+      toast("Registrations saved");
+      await route();
     } else if (kind === "sales-tax-settings") {
       await api(entPath("/sales-tax-settings"), { body: { sellerPermit: d.sellerPermit, cdtfaAccount: d.cdtfaAccount, filingFrequency: d.filingFrequency, startDate: d.startDate } });
       toast("Sales tax settings saved");
@@ -3415,9 +4471,22 @@ document.addEventListener("submit", async (ev) => {
       await api(entPath("/payroll-settings"), { body: { stateEmployerAccount: d.stateEmployerAccount } });
       toast("Account number saved");
       await route();
+    } else if (kind === "remitter-settings") {
+      await api(entPath("/payroll-settings"), { body: {
+        craRemitterType: d.craRemitterType, ...(d.rqRemitterType ? { rqRemitterType: d.rqRemitterType } : {}), t4DentalCode: d.t4DentalCode || null,
+      } });
+      toast("Remittance settings saved");
+      await payrollView(state.entity.entity.id);
     } else if (kind === "deposit-schedule") {
       await api(entPath("/payroll-settings"), { body: { federalDepositSchedule: d.federalDepositSchedule } });
       toast("Deposit schedule saved");
+      await payrollView(state.entity.entity.id);
+    } else if (kind === "ca-dd-settings") {
+      await api(entPath("/direct-deposit-settings"), { body: {
+        originatorId: d.originatorId, dataCentre: d.dataCentre, shortName: d.shortName, longName: d.longName,
+        returnInstitution: d.returnInstitution, returnTransit: d.returnTransit, ...(d.returnAccount.trim() ? { returnAccount: d.returnAccount.trim() } : {}),
+      } });
+      toast("Bank details saved");
       await payrollView(state.entity.entity.id);
     } else if (kind === "dd-settings") {
       await api(entPath("/direct-deposit-settings"), { body: {

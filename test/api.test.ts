@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleApi } from "../src/app/api.js";
-import { pool } from "./helpers.js";
+import { passSecondFactor, pool } from "./helpers.js";
 
 const BASE = "https://alt-qbo.test";
 const opts = { signupCode: "invite-123" };
@@ -28,7 +28,7 @@ async function signup(orgName = "Test Co") {
   const r = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Test User", email, password: "long-enough-pw", orgName, inviteCode: "invite-123" } });
   expect(r.status).toBe(201);
   const me = await call("/api/me", { cookie: r.cookie });
-  return { cookie: r.cookie!, email, orgId: me.data.orgs[0].id as string };
+  return { cookie: await passSecondFactor(r.cookie!), email, orgId: me.data.orgs[0].id as string };
 }
 
 /** Invites an email and has that person sign up through the link. Returns their session. */
@@ -37,7 +37,7 @@ async function join(s: { cookie: string; orgId: string }, email: string, role: s
   expect(inv.status).toBe(201);
   const r = await call("/api/auth/signup", { body: { acceptTerms: true, name: email.split("@")[0], email, password, inviteToken: inv.data.token } });
   expect(r.status).toBe(201);
-  return { cookie: r.cookie!, email, token: inv.data.token as string };
+  return { cookie: await passSecondFactor(r.cookie!), email, token: inv.data.token as string };
 }
 
 async function entity(s: { cookie: string; orgId: string }) {
@@ -807,6 +807,58 @@ describe("terms of service", () => {
 });
 
 describe("a Canadian business", () => {
+  it("pays Canadian employees by direct deposit with a CPA 005 file", async () => {
+    const s = await signup();
+    const r = await call(`/api/orgs/${s.orgId}/entities`, { cookie: s.cookie, body: { legalName: "Harbour Studio Ltd", entityType: "ca_corporation", country: "CA", region: "ON", firstFiscalYear: 2026 } });
+    const base = `/api/orgs/${s.orgId}/entities/${r.data.id}`;
+    await call(`${base}/address`, { cookie: s.cookie, body: { address: { line1: "1 Front St", city: "Toronto", state: "ON", zip: "M5J 2N1" } } });
+    await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { stateRatesPercent: { ON_WSIB: "1.2", ON_EHT: "0" } } });
+    const person = { name: "Avery Chen", hireDate: "2026-07-01", payType: "salary", payFrequency: "biweekly", payRate: "52000", sin: "130 692 544", address: { line1: "2 Bay St", city: "Toronto", state: "ON", zip: "M5J 2N1" } };
+    // A Canadian employee gives an institution and transit number, not a US routing number.
+    expect((await call(`${base}/employees`, { cookie: s.cookie, body: { ...person, directDeposit: { routing: "121000358", account: "12345678" } } })).status).toBe(422);
+    expect((await call(`${base}/employees`, { cookie: s.cookie, body: { ...person, directDeposit: { institution: "4", transit: "12345", account: "1234567" } } })).status).toBe(422);
+    const e = await call(`${base}/employees`, { cookie: s.cookie, body: { ...person, directDeposit: { institution: "004", transit: "12345", account: "5678-901" } } });
+    expect(e.status).toBe(201);
+    expect(e.data.directDeposit).toEqual({ routing: "000412345", accountType: "checking", accountLast4: "8901" });
+    expect(JSON.stringify(e.data)).not.toContain("5678901");
+
+    const run = (await call(`${base}/pay-runs`, { cookie: s.cookie, body: { periodStart: "2026-08-01", periodEnd: "2026-08-14", payDate: "2026-08-21", lines: [{ employeeId: e.data.id }] } })).data;
+    expect((await call(`${base}/pay-runs/${run.id}/approve`, { cookie: s.cookie, body: {} })).status).toBe(201);
+    expect((await call(`${base}/pay-runs/${run.id}`, { cookie: s.cookie })).data.directDeposit).toMatchObject({ ready: false, problem: "add your business's bank details for direct deposit first" });
+
+    expect((await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { originatorId: "TBK0001234", dataCentre: "330", returnInstitution: "003", returnTransit: "01234", returnAccount: "1002003" } })).status).toBe(422);
+    expect((await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { originatorId: "TBK0001234", dataCentre: "00330", returnInstitution: "003", returnTransit: "01234" } })).status).toBe(422);
+    const settings = await call(`${base}/direct-deposit-settings`, { cookie: s.cookie, body: { originatorId: "tbk0001234", dataCentre: "00330", returnInstitution: "003", returnTransit: "01234", returnAccount: "1002003" } });
+    expect(settings.data).toEqual({
+      format: "cpa005", originatorId: "TBK0001234", dataCentre: "00330", shortName: "Harbour Studio", longName: "Harbour Studio Ltd",
+      returnInstitution: "003", returnTransit: "01234", returnAccountLast4: "2003", lastFileNumber: 0,
+    });
+    expect((await call(`${base}/employees`, { cookie: s.cookie })).data.directDeposit).toMatchObject({ format: "cpa005", originatorId: "TBK0001234" });
+
+    const detail = (await call(`${base}/pay-runs/${run.id}`, { cookie: s.cookie })).data.directDeposit;
+    expect(detail).toMatchObject({ ready: true, problem: null });
+    const file = await call(`${base}/pay-runs/${run.id}/direct-deposit`, { cookie: s.cookie });
+    expect(file.status).toBe(200);
+    const lines = (file.data as string).split("\r\n").filter(Boolean);
+    expect(lines.map((l) => l[0])).toEqual(["A", "C", "Z"]);
+    expect(lines.every((l) => l.length === 1464)).toBe(true);
+    expect(lines[0]!.slice(20, 24)).toBe("0001");
+    const seg = lines[1]!.slice(24, 264);
+    expect(seg.slice(0, 13)).toBe("200" + String(detail.totalMinor).padStart(10, "0"));
+    expect(seg.slice(19, 40)).toBe("0004123455678901     ");
+    // Each download takes the next file number, so the bank never sees a duplicate.
+    const again = await call(`${base}/pay-runs/${run.id}/direct-deposit`, { cookie: s.cookie });
+    expect((again.data as string).slice(20, 24)).toBe("0002");
+    expect((await call(`${base}/employees`, { cookie: s.cookie })).data.directDeposit.lastFileNumber).toBe(2);
+
+    const audit = JSON.stringify((await call(`/api/orgs/${s.orgId}/audit`, { cookie: s.cookie })).data.events);
+    expect(audit).not.toContain("5678901");
+    expect(audit).not.toContain("1002003");
+    const backup = await call(`${base}/backup`, { cookie: s.cookie, body: {} });
+    expect(backup.data.tables.ca_direct_deposit_settings).toHaveLength(1);
+    expect(JSON.stringify(backup.data)).not.toContain("sealed");
+  });
+
   it("sets up in British Columbia with a business number, payroll account, SIN and TD1", async () => {
     const s = await signup();
     const bad = await call(`/api/orgs/${s.orgId}/entities`, { cookie: s.cookie, body: { legalName: "Coast LLC", entityType: "llc_single", country: "CA", region: "BC", firstFiscalYear: 2026 } });
@@ -834,5 +886,33 @@ describe("a Canadian business", () => {
     // Saved runs use the released Canadian packs.
     const run = await call(`${base}/pay-runs`, { cookie: s.cookie, body: { periodStart: "2026-08-01", periodEnd: "2026-08-14", payDate: "2026-08-21", lines: [{ employeeId: emp.data.id }] } });
     expect(run.status).toBe(201);
+
+    // Remittances, remitter types and the T4.
+    expect((await call(`${base}/pay-runs/${run.data.id}/approve`, { cookie: s.cookie, body: {} })).status).toBe(201);
+    const deps = (await call(`${base}/tax-deposits?year=2026`, { cookie: s.cookie })).data;
+    expect(deps).toMatchObject({ remitterTypes: { cra: "regular", rq: "regular" }, t4DentalCode: null });
+    expect(deps.deposits.map((d: any) => [d.key, d.agency, d.dueDate])).toEqual([["ca_cra_remit:2026-08", "CRA", "2026-09-15"]]);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { craRemitterType: "weekly" } })).status).toBe(422);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { rqRemitterType: "regular" } })).status).toBe(400);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { t4DentalCode: 7 } })).status).toBe(400);
+    expect((await call(`${base}/payroll-settings`, { cookie: s.cookie, body: { craRemitterType: "quarterly", t4DentalCode: "1" } })).status).toBe(200);
+    const q = (await call(`${base}/tax-deposits?year=2026`, { cookie: s.cookie })).data;
+    expect(q).toMatchObject({ remitterTypes: { cra: "quarterly" }, t4DentalCode: 1 });
+    expect(q.deposits.map((d: any) => d.key)).toEqual(["ca_cra_remit:2026-Q3"]);
+    const forms = (await call(`${base}/payroll-forms?year=2026`, { cookie: s.cookie })).data.forms;
+    expect(forms.map((f: any) => f.slug)).toEqual(["t4"]);
+    const t4 = await call(`${base}/payroll-forms/prepared?form=t4&year=2026`, { cookie: s.cookie });
+    expect(t4.status).toBe(200);
+    expect(t4.data.employees[0]).toMatchObject({ name: "Avery Chen", box10: "BC", box14: "200000", box45: 1 });
+    expect(t4.data.lines.find((l: any) => l.line === "Account").value).toBe("123456789RP0001");
+    expect((await call(`${base}/payroll-forms/prepared?form=rl1&year=2026`, { cookie: s.cookie })).status).toBe(422);
+    expect((await call(`${base}/payroll-forms/prepared?form=t4&year=2026&format=csv`, { cookie: s.cookie })).data).toMatch(/box14/);
+    // The ROE shows up once the employee has a last day.
+    expect((await call(`${base}/employees/${emp.data.id}`, { cookie: s.cookie, body: { terminationDate: "2026-08-14" } })).status).toBe(200);
+    const withRoe = (await call(`${base}/payroll-forms?year=2026`, { cookie: s.cookie })).data.forms;
+    expect(withRoe.map((f: any) => f.slug)).toEqual(["t4", `roe-${emp.data.id}`]);
+    const roe = await call(`${base}/payroll-forms/prepared?form=roe-${emp.data.id}&year=2026`, { cookie: s.cookie });
+    expect(roe.status).toBe(200);
+    expect(roe.data).toMatchObject({ form: "ROE", dueDate: "2026-08-19" });
   });
 });

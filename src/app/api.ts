@@ -4,6 +4,12 @@ import { appendAudit, verifyAuditChain } from "../core/audit.js";
 import { LedgerError } from "../core/errors.js";
 import { findPeriod, getEntry, postJournal, reverseEntry, setPeriodStatus, type Actor, type LineInput, type PeriodStatus, type Role } from "../core/ledger.js";
 import { trialBalance, taxLineExportCsv } from "../core/reports.js";
+import {
+  FREQUENCIES, acceptEstimate, createEstimate, createRecurring, customerEmailSettings, declineEstimate, documentEmails, emailDocument, emailEstimate,
+  firstOwnerEmail, getEstimate, listEstimates, listRecurring, nextDate, setCustomerEmailSettings, stopRecurring, viewByToken, type Frequency,
+} from "../core/invoicing.js";
+import { ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES, addAttachment, attachmentCounts, listAttachments, readAttachment, removeAttachment, type AttachmentObject, type FileStore } from "../core/attachments.js";
+import { createBankRule, listBankRules, switchOffBankRule, type RuleDirection } from "../core/bank-rules.js";
 import { aging, createContact, getDocument, listContacts, listDocuments, priceLine, recordPayment, updateContact, voidDocument, type ContactKind, type DocumentKind } from "../core/documents.js";
 import {
   cleanAddress, createItem, currentCategories, decideSalesTax, decideUseTax, explainTax, explainUseTax, issueInvoice, listItems, recordBill, salesTaxReport, setBusinessAddress,
@@ -11,7 +17,8 @@ import {
 } from "../core/sales-tax.js";
 import { categorizeBankLine, importBankCsv, listBankLines, matchBankLine, setBankLineExcluded, undoBankLine, MAX_CSV_BYTES, type BankLineStatus } from "../core/bank.js";
 import { completeReconciliation, listReconciliations, reconciliationItems } from "../core/reconcile.js";
-import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv } from "../core/statements.js";
+import { contractorFormsCsv, contractorSummary, getContractorInfo, prepareContractorForms, setContractorInfo, type RecipientType } from "../core/contractor-forms.js";
+import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedgerAll, generalLedgerCsv, profitAndLoss, profitAndLossCsv, cashFlowStatement, cashFlowCsv } from "../core/statements.js";
 import { backupEntity } from "../core/backup.js";
 import { listRestorePoints, readRestorePoint, type BackupStore } from "../core/nightly-backups.js";
 import {
@@ -21,6 +28,13 @@ import {
 import { GatewayError } from "../billing/gateway.js";
 import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
 import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
+import { clientOverview } from "../core/firm.js";
+import { accrueReferralFees, clientReferral, linkReferral, operatorOverview, partnerOverview, recordPayout, savePartner, setW9, unlinkReferral, voidFee } from "../billing/referrals.js";
+import { connectFeed, feedAccessToken, listFeeds, markReconnected, removeFeed, syncFeed } from "../core/bank-feeds.js";
+import { PlaidError, type PlaidClient } from "./plaid.js";
+import { ConnectError, type InvoicePayments } from "./stripe-connect.js";
+import { confirmFromView, connectStart, disconnect, finishConnect, payableByToken, paymentsStatus, readConnectState, startCheckout } from "../core/invoice-payments.js";
+import { importChart, importContacts, importOpenDocuments, importOpeningBalances, migrationStatus } from "../core/migration.js";
 import { attention, closeBooksThrough, closedThrough, moneyAtAGlance } from "../core/overview.js";
 import { EXAMPLE_ORG_NAME, createExampleBusiness } from "./example.js";
 import { D, parseMoney, toMajor } from "../core/money.js";
@@ -28,6 +42,7 @@ import { csvCell } from "../core/csv.js";
 import { ACCOUNT_KINDS, createAccount, suggestedTaxLine, taxLineOptions, updateAccount } from "../core/accounts.js";
 import { acceptInvitation, changeRole, invite, listInvitations, listMembers, previewInvitation, removeMember, revokeInvitation, type InviteRole, type MemberRole } from "./team.js";
 import { emailText, issueEmailToken, useEmailToken, type EmailPurpose } from "./email-auth.js";
+import { HUB_STATE_COOKIE, HubSignInError, connectHubAccount, hubSignInOn, redeemHubCode, startHubSignIn, takeHubSignIn } from "./hub-signin.js";
 import { beginMfaSetup, checkSecondFactor, disableMfa, enableMfa, issueMfaTicket, mfaStatus, redeemMfaTicket, regenerateRecoveryCodes } from "./mfa.js";
 import type { Mailer } from "./mail.js";
 import { TERMS_VERSION, acceptTerms, orgsAccepted } from "./terms.js";
@@ -37,12 +52,14 @@ import { minimumWageOn } from "../rules/minimum-wage.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove } from "../rules/local-minimum-wage.js";
 import { approveAndPostPayRun, type PayRunInput } from "../payroll/pay-run.js";
 import { createEmployee, listEmployees, setSickLeavePolicy, setStateTaxRate, updateEmployee, type Employee, type EmployeeFields } from "../payroll/employees.js";
-import { directDepositFile, directDepositSummary, getDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
+import { directDepositFile, directDepositSummary, getEntityDirectDepositSettings, saveCanadaDirectDepositSettings, saveDirectDepositSettings } from "../payroll/direct-deposit.js";
 import { pacificToday } from "../payroll/business-days.js";
+import { canadaRegistrations, canadaSalesTaxReturn, setCanadaSalesTaxSettings, type CaReturnTax } from "../core/canada-sales-tax.js";
 import { FILING_FREQUENCIES, prepareSalesTaxReturn, returnPeriods, salesTaxSettings, setSalesTaxSettings, type FilingFrequency } from "../core/sales-tax-return.js";
 import { form940, form941, formDe9, formsFor, formStateQuarterly, formW2, type PreparedForm } from "../payroll/forms.js";
-import { federalDepositSchedule, recordDepositPayment, setFederalDepositSchedule, taxDeposits } from "../payroll/tax-deposits.js";
-import { calculateSavedRun, carrySickLeave, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
+import { federalDepositSchedule, recordDepositPayment, remitterTypes, setFederalDepositSchedule, setRemitterType, taxDeposits } from "../payroll/tax-deposits.js";
+import { canadaFormsFor, formRl1, formRoe, formT4, roesFor } from "../payroll/canada-forms.js";
+import { calculateSavedRun, carrySickLeave, carryVacationPay, employeeCount, payRunInputFromEmployees, yearToDate, type PayRunRequest } from "../payroll/runs.js";
 import { CAN_CONNECT, OAuthError, findClient, issueCode, listGrants, parseScopes, redirectWith, revokeGrant, updateGrantSettings, type OAuthClient } from "./oauth.js";
 import { handleOAuth, handlePublicApi } from "./public-api.js";
 import {
@@ -52,7 +69,7 @@ import { NewsletterError, requestSubscription, addNote, approveIssue, cancelIssu
 import { BrevoError } from "../newsletter/brevo.js";
 import type { NewsletterTask } from "../newsletter/config.js";
 import {
-  AuthError, SESSION_COOKIE, checkSignInAllowed, createSession, recordSignIn, endSession, hashPassword, membershipRole, normaliseEmail,
+  AuthError, SESSION_COOKIE, checkSignInAllowed, createSession, recordSignIn, endSession, hashPassword, markSecondFactor, membershipRole, normaliseEmail,
   sessionUser, verifyPassword, type SessionUser,
 } from "./auth.js";
 
@@ -79,6 +96,12 @@ export interface ApiOptions {
   newsletter?: NewsletterConfig;
   /** The Pomeroy account hub: where TrailBook reports each organisation's status (hub.ts). */
   hub?: HubOptions;
+  /** Automatic bank feeds through Plaid (plaid.ts). Without it, the bank page offers file import only. */
+  plaid?: PlaidClient;
+  /** Card and bank payments on invoices through each business's own Stripe account (stripe-connect.ts). Off without it. */
+  invoicePayments?: InvoicePayments;
+  /** Where receipts and other attached files are kept (Netlify Blobs in production). Without it, files can't be added. */
+  files?: FileStore;
   /** Starts the newsletter's background worker. */
   startNewsletterJob?: (task: NewsletterTask) => Promise<void>;
 }
@@ -89,7 +112,7 @@ function appUrl(req: Request, opts: ApiOptions): string {
 }
 
 class HttpError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly code?: string) {
     super(message);
   }
 }
@@ -180,6 +203,73 @@ async function ensureEntity(tx: Tx, entityId: string) {
   if (!rows[0]) throw new HttpError(404, "entity not found");
 }
 
+// ------------------------------------------------------------ referrals
+
+// The referral program: firms get a code; clients enter it; the operator pays fees. See billing/referrals.ts.
+
+/** Owners and admins of the organisation that sells TrailBook; everyone else gets a 404. */
+function requireOperator(ctx: Ctx) {
+  if (!ctx.opts.billing?.seller || ctx.opts.billing.seller.orgId !== ctx.orgId || !["owner", "admin"].includes(ctx.role)) throw new HttpError(404, "not found");
+}
+
+route("GET", "/api/orgs/:org/referrals", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  return withSystem(ctx.pool, async (tx) => json({
+    ...(await partnerOverview(tx, ctx.orgId)), appUrl: ctx.opts.appUrl ?? null,
+  }));
+});
+
+route("POST", "/api/orgs/:org/referrals", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => savePartner(tx, ctx.orgId, ctx.user.id, ctx.actor, b));
+  return json({ ok: true });
+});
+
+route("GET", "/api/orgs/:org/billing/referral", async (_req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  return withSystem(ctx.pool, async (tx) => json(await clientReferral(tx, ctx.orgId, pacificToday())));
+});
+
+route("POST", "/api/orgs/:org/billing/referral", async (req, _p, ctx) => {
+  requireRole(ctx, ["owner", "admin"]);
+  const b = await body(req);
+  const out = await withSystem<object>(ctx.pool, (tx) => b.remove === true
+    ? unlinkReferral(tx, ctx.orgId, ctx.actor).then(() => ({ removed: true }))
+    : linkReferral(tx, ctx.orgId, pacificToday(), b.code, ctx.actor));
+  return json(out);
+});
+
+route("GET", "/api/orgs/:org/referral-fees", async (_req, _p, ctx) => {
+  requireOperator(ctx);
+  await accrueReferralFees(ctx.pool);
+  return withSystem(ctx.pool, async (tx) => json(await operatorOverview(tx)));
+});
+
+route("POST", "/api/orgs/:org/referral-fees/payouts", async (req, _p, ctx) => {
+  requireOperator(ctx);
+  const b = await body(req);
+  await accrueReferralFees(ctx.pool);
+  return json(await recordPayout(ctx.pool, billingCfg(ctx), {
+    partnerOrgId: uuid(b.partnerOrgId, "choose a firm"), currency: b.currency, paidOn: date(b.paidOn, "payment date"),
+    method: b.method, reference: b.reference, account: b.account, bookedAmount: b.bookedAmount,
+  }, ctx.actor), 201);
+});
+
+route("POST", "/api/orgs/:org/referral-fees/fees/:fee/void", async (req, p, ctx) => {
+  requireOperator(ctx);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => voidFee(tx, uuid(p.fee, "no such fee"), b.reason));
+  return json({ ok: true });
+});
+
+route("POST", "/api/orgs/:org/referral-fees/firms/:firm/w9", async (req, p, ctx) => {
+  requireOperator(ctx);
+  const b = await body(req);
+  await withSystem(ctx.pool, (tx) => setW9(tx, uuid(p.firm, "no such firm"), b.received === true));
+  return json({ ok: true });
+});
+
 // ------------------------------------------------------------ newsletter
 
 /** The newsletter's settings, for owners and admins of the operator's own organisation; everyone else gets a 404. */
@@ -267,7 +357,12 @@ route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
          FROM entities ORDER BY created_at`,
     )).rows;
     // Countries and their states or provinces, for the place-of-business picker.
-    return json({ org, role: ctx.role, entities, access, countries: COUNTRIES, newsletter: Boolean(newsletterFor(ctx, false)) });
+    return json({
+      org, role: ctx.role, entities, access, countries: COUNTRIES, newsletter: Boolean(newsletterFor(ctx, false)),
+      // Whether to show the Referrals page (a firm in the program) and the Referral fees page (the operator).
+      referrals: Boolean((await ctx.pool.query("SELECT 1 FROM referral_partners WHERE org_id = $1", [ctx.orgId])).rows[0]),
+      referralFees: Boolean(ctx.opts.billing?.seller?.orgId === ctx.orgId && ["owner", "admin"].includes(ctx.role)),
+    });
   });
 });
 
@@ -383,7 +478,7 @@ route("GET", "/api/orgs/:org/billing", async (_req, _p, ctx) => {
 route("POST", "/api/orgs/:org/billing/details", async (req, _p, ctx) => {
   requireRole(ctx, ["owner", "admin"]);
   const b = await body(req);
-  await withSystem(ctx.pool, (tx) => saveBillingDetails(tx, ctx.orgId, pacificToday(), b));
+  await withSystem(ctx.pool, (tx) => saveBillingDetails(tx, ctx.orgId, pacificToday(), b, { canada: ctx.opts.billing?.canada }));
   return json({ ok: true });
 });
 
@@ -422,7 +517,7 @@ route("POST", "/api/orgs/:org/billing/card", async (req, _p, ctx) => {
   if (!sub.address_line1) throw new HttpError(400, "add the billing name, email and address first");
   const base = appUrl(req, ctx.opts);
   const out = await gateway.startCardSetup({
-    orgId: ctx.orgId, customerId: sub.processor_customer, email: sub.billing_email!, name: sub.billing_name!,
+    orgId: ctx.orgId, customerId: sub.processor_customer, email: sub.billing_email!, name: sub.billing_name!, currency: sub.currency,
     successUrl: `${base}/#/billing/card/{CHECKOUT_SESSION_ID}`, cancelUrl: `${base}/#/billing`,
   });
   if (!sub.processor_customer) await ctx.pool.query("UPDATE subscriptions SET processor_customer = $2 WHERE org_id = $1", [ctx.orgId, out.customerId]);
@@ -921,6 +1016,10 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
         return recordBill(tx, {
           ...common,
           useTax: typeof b.useTax === "boolean" ? b.useTax : undefined, lookup: ctx.opts.taxRates, manual: manualTax(b.manualTax),
+          ...(b.caTax && typeof b.caTax === "object" ? { caTax: {
+            gstHst: typeof b.caTax.gstHst === "string" ? b.caTax.gstHst.trim().slice(0, 20) : undefined,
+            qst: typeof b.caTax.qst === "string" ? b.caTax.qst.trim().slice(0, 20) : undefined,
+          } } : {}),
           lines: lines.map((l, i) => {
             if (!l.account) throw new HttpError(400, `line ${i + 1}: choose an account`);
             if (!l.unitPrice) throw new HttpError(400, `line ${i + 1}: enter a price`);
@@ -942,7 +1041,8 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
     tenant(ctx, async (tx) => {
       const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = $3", [p.doc, p.entity, kind]);
       if (!rows[0]) throw new HttpError(404, `${kind} not found`);
-      return json(await getDocument(tx, p.doc!));
+      const doc = await getDocument(tx, p.doc!);
+      return json(kind === "invoice" ? { ...doc, emails: await documentEmails(tx, p.doc!) } : doc);
     }),
   );
 
@@ -978,6 +1078,221 @@ for (const kind of ["invoice", "bill"] as DocumentKind[]) {
   });
 }
 
+
+// ------------------------------------------------------- getting paid
+
+route("POST", "/api/orgs/:org/entities/:entity/invoices/:doc/email", async (req, p, ctx) => {
+  const b = await body(req);
+  await tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM documents WHERE id = $1 AND entity_id = $2 AND kind = 'invoice'", [p.doc, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "invoice not found");
+  });
+  const r = await emailDocument(ctx.pool, {
+    orgId: ctx.orgId, documentId: p.doc!, mailer: ctx.opts.mailer, appUrl: ctx.opts.appUrl || appUrl(req, ctx.opts),
+    to: typeof b.to === "string" && b.to.trim() ? str(b.to, "email address", 200) : undefined, actor: ctx.actor,
+  });
+  return json(r);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/invoice-emails", async (_req, p, ctx) => {
+  const fallback = await firstOwnerEmail(ctx.pool, ctx.orgId);
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ ...(await customerEmailSettings(tx, p.entity!, fallback)), emailEnabled: Boolean(ctx.opts.mailer) });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/invoice-emails", async (req, p, ctx) => {
+  const b = await body(req);
+  const fallback = await firstOwnerEmail(ctx.pool, ctx.orgId);
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    await setCustomerEmailSettings(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor,
+      ...(typeof b.reminders === "boolean" ? { reminders: b.reminders } : {}),
+      ...(b.replyTo !== undefined ? { replyTo: typeof b.replyTo === "string" ? b.replyTo.slice(0, 200) : null } : {}),
+    });
+    return json({ ...(await customerEmailSettings(tx, p.entity!, fallback)), emailEnabled: Boolean(ctx.opts.mailer) });
+  });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/estimates", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ estimates: await listEstimates(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates", async (req, p, ctx) => {
+  const b = await body(req);
+  const est = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createEstimate(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, contactId: uuid(b.contactId, "choose a customer"), issueDate: date(b.issueDate, "date"),
+      expiryDate: b.expiryDate ? date(b.expiryDate, "good until") : undefined, memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
+      lines: invoiceLines(b.lines), lookup: ctx.opts.taxRates, actor: ctx.actor,
+    });
+  });
+  return json(est, 201);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/estimates/:estimate", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM estimates WHERE id = $1 AND entity_id = $2", [p.estimate, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "estimate not found");
+    return json(await getEstimate(tx, p.estimate!));
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/accept", async (req, p, ctx) => {
+  const b = await body(req);
+  const r = await tenant(ctx, (tx) => acceptEstimate(tx, {
+    orgId: ctx.orgId, entityId: p.entity!, estimateId: p.estimate!, issueDate: date(b.issueDate, "invoice date"),
+    dueDate: b.dueDate ? date(b.dueDate, "due date") : undefined, lookup: ctx.opts.taxRates, manual: manualTax(b.manualTax), actor: ctx.actor,
+  }), writeOpts(ctx));
+  return json(r, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/decline", async (_req, p, ctx) =>
+  json(await tenant(ctx, (tx) => declineEstimate(tx, { orgId: ctx.orgId, entityId: p.entity!, estimateId: p.estimate!, actor: ctx.actor }))),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/estimates/:estimate/email", async (req, p, ctx) => {
+  const b = await body(req);
+  await tenant(ctx, async (tx) => {
+    const { rows } = await tx.query("SELECT 1 FROM estimates WHERE id = $1 AND entity_id = $2", [p.estimate, p.entity]);
+    if (!rows[0]) throw new HttpError(404, "estimate not found");
+  });
+  return json(await emailEstimate(ctx.pool, {
+    orgId: ctx.orgId, estimateId: p.estimate!, mailer: ctx.opts.mailer, appUrl: ctx.opts.appUrl || appUrl(req, ctx.opts),
+    to: typeof b.to === "string" && b.to.trim() ? str(b.to, "email address", 200) : undefined, actor: ctx.actor,
+  }));
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/recurring", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ templates: await listRecurring(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/recurring", async (req, p, ctx) => {
+  const b = await body(req);
+  const kind = b.kind as DocumentKind;
+  if (kind !== "invoice" && kind !== "bill") throw new HttpError(400, "kind must be invoice or bill");
+  const frequency = b.frequency as Frequency;
+  if (!FREQUENCIES.includes(frequency)) throw new HttpError(400, "choose weekly, monthly, quarterly or yearly");
+  // "after" starts the schedule one period after a document just issued by hand.
+  const startDate = b.after ? (() => { const d = date(b.after, "date"); return nextDate(d, frequency, Number(d.slice(8, 10))); })() : date(b.startDate, "start date");
+  const t = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createRecurring(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, kind, contactId: uuid(b.contactId, kind === "invoice" ? "choose a customer" : "choose a vendor"),
+      lines: invoiceLines(b.lines), memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : "",
+      reference: typeof b.reference === "string" ? b.reference.slice(0, 60) : undefined,
+      dueDays: b.dueDays !== undefined && b.dueDays !== "" ? Number(b.dueDays) : undefined, frequency, startDate,
+      endDate: b.endDate ? date(b.endDate, "end date") : undefined, email: Boolean(b.email), useTax: Boolean(b.useTax), actor: ctx.actor,
+    });
+  });
+  return json(t, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/recurring/:template/stop", async (_req, p, ctx) =>
+  json(await tenant(ctx, (tx) => stopRecurring(tx, { orgId: ctx.orgId, entityId: p.entity!, templateId: p.template!, actor: ctx.actor }))),
+);
+
+
+// ---------------------------------------------------------- bank rules
+
+route("GET", "/api/orgs/:org/entities/:entity/bank-rules", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ rules: await listBankRules(tx, p.entity!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-rules", async (req, p, ctx) => {
+  const b = await body(req);
+  const rule = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return createBankRule(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, matchText: str(b.matchText, "words to look for", 100),
+      direction: (["any", "in", "out"].includes(b.direction) ? b.direction : "any") as RuleDirection,
+      min: typeof b.min === "string" ? b.min : undefined, max: typeof b.max === "string" ? b.max : undefined,
+      bankAccount: typeof b.bankAccount === "string" && b.bankAccount ? b.bankAccount.slice(0, 40) : undefined,
+      account: str(b.account, "account", 40), autoRecord: Boolean(b.autoRecord),
+      memo: typeof b.memo === "string" ? b.memo.slice(0, 300) : undefined, actor: ctx.actor,
+    });
+  });
+  return json(rule, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-rules/:rule/off", async (_req, p, ctx) => {
+  await tenant(ctx, (tx) => switchOffBankRule(tx, { orgId: ctx.orgId, entityId: p.entity!, ruleId: p.rule!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
+// ---------------------------------------------------------- attachments
+
+const ATTACH_OBJECTS: AttachmentObject[] = ["document", "bank_line", "journal_entry"];
+
+function filesFor(ctx: Ctx): FileStore {
+  if (!ctx.opts.files) throw new HttpError(503, "file storage isn't set up on this site yet");
+  return ctx.opts.files;
+}
+
+route("GET", "/api/orgs/:org/entities/:entity/attachments", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const type = q.get("type") as AttachmentObject;
+  if (!ATTACH_OBJECTS.includes(type)) throw new HttpError(400, "unknown record type");
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const id = q.get("id");
+    if (!id) return json({ counts: await attachmentCounts(tx, p.entity!, type) });
+    return json({ attachments: await listAttachments(tx, p.entity!, type, uuid(id, "record")), enabled: Boolean(ctx.opts.files) });
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/attachments", async (req, p, ctx) => {
+  const b = await body(req);
+  const type = b.objectType as AttachmentObject;
+  if (!ATTACH_OBJECTS.includes(type)) throw new HttpError(400, "unknown record type");
+  if (typeof b.data !== "string" || !b.data) throw new HttpError(400, "choose a file");
+  if (b.data.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4) throw new HttpError(413, "files can be up to 4 MB");
+  const data = new Uint8Array(Buffer.from(b.data, "base64"));
+  const store = filesFor(ctx);
+  const a = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return addAttachment(tx, store, {
+      orgId: ctx.orgId, entityId: p.entity!, objectType: type, objectId: uuid(b.objectId, "record"),
+      fileName: typeof b.fileName === "string" ? b.fileName : "receipt", data, actor: ctx.actor,
+    });
+  });
+  return json(a, 201);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/attachments/:attachment", async (_req, p, ctx) => {
+  const store = filesFor(ctx);
+  const { meta, data } = await tenant(ctx, (tx) => readAttachment(tx, store, p.entity!, p.attachment!));
+  if (!(ATTACHMENT_TYPES as readonly string[]).includes(meta.contentType)) throw new HttpError(415, "unsupported file");
+  return new Response(new Uint8Array(data) as unknown as BodyInit, {
+    headers: {
+      "content-type": meta.contentType,
+      // Opened in its own tab for viewing, but never run as a page.
+      "content-disposition": `inline; filename="${meta.fileName.replace(/[^\w.-]+/g, "-")}"`,
+      "content-security-policy": "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+      "x-content-type-options": "nosniff",
+      "cache-control": "private, no-store",
+    },
+  });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/attachments/:attachment/remove", async (_req, p, ctx) => {
+  const store = filesFor(ctx);
+  await tenant(ctx, (tx) => removeAttachment(tx, store, { orgId: ctx.orgId, entityId: p.entity!, attachmentId: p.attachment!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
 // -------------------------------------------------------------------- bank
 
 const writeOpts = (ctx: Ctx) => ({ allowSoftClosed: ["owner", "admin", "accountant"].includes(ctx.role) });
@@ -995,17 +1310,141 @@ route("GET", "/api/orgs/:org/entities/:entity/bank-lines", async (req, p, ctx) =
 
 route("POST", "/api/orgs/:org/entities/:entity/bank-imports", async (req, p, ctx) => {
   const b = await body(req);
-  if (typeof b.csv !== "string" || !b.csv.trim()) throw new HttpError(400, "choose a CSV file");
+  if (typeof b.csv !== "string" || !b.csv.trim()) throw new HttpError(400, "choose a CSV, OFX, QFX or QBO file");
   if (b.csv.length > MAX_CSV_BYTES) throw new HttpError(413, "the file is larger than 2 MB; split it");
   const out = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
     return importBankCsv(tx, {
       orgId: ctx.orgId, entityId: p.entity!, bankAccount: str(b.bankAccount, "bank account", 40), csv: b.csv,
       fileName: typeof b.fileName === "string" ? b.fileName.slice(0, 200) : "", actor: ctx.actor,
+      ofxAccount: typeof b.ofxAccount === "string" && /^\w{1,32}$/.test(b.ofxAccount) ? b.ofxAccount : undefined,
     });
   });
   return json(out, 201);
 });
+
+// ---------------------------------------------------- automatic bank feeds
+
+function plaidOf(ctx: Ctx): PlaidClient {
+  if (!ctx.opts.plaid) throw new HttpError(503, "automatic bank feeds aren't switched on yet; import an OFX, QFX or CSV file instead");
+  return ctx.opts.plaid;
+}
+
+route("GET", "/api/orgs/:org/entities/:entity/bank-feeds", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ enabled: Boolean(ctx.opts.plaid), env: ctx.opts.plaid?.env ?? null, feeds: await listFeeds(tx, p.entity!) });
+  }),
+);
+
+/** A token for Plaid Link: a new connection, or (with feedId) signing in again to one. */
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/link-token", async (req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  const b = await body(req);
+  if (!["owner", "admin", "accountant"].includes(ctx.role)) throw new HttpError(403, "only an owner, admin or accountant can connect a bank");
+  const accessToken = typeof b.feedId === "string" ? await tenant(ctx, (tx) => feedAccessToken(tx, p.entity!, uuid(b.feedId, "connection"))) : undefined;
+  return json({ linkToken: await plaid.linkToken({ userId: `${ctx.orgId}:${ctx.user.id}`, accessToken }) });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds", async (req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  const b = await body(req);
+  const out = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return connectFeed(tx, plaid, {
+      orgId: ctx.orgId, entityId: p.entity!, bankAccount: str(b.bankAccount, "bank account", 40), publicToken: str(b.publicToken, "bank sign-in", 300),
+      providerAccountId: typeof b.providerAccountId === "string" ? b.providerAccountId.slice(0, 100) : undefined,
+      institution: typeof b.institution === "string" ? b.institution : undefined, actor: ctx.actor,
+    });
+  });
+  return json(out, 201);
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/:feed/sync", async (_req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  return json(await tenant(ctx, (tx) => syncFeed(tx, plaid, { orgId: ctx.orgId, entityId: p.entity!, feedId: p.feed!, actor: ctx.actor })));
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/:feed/reconnected", async (_req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  return json(await tenant(ctx, async (tx) => {
+    await markReconnected(tx, { orgId: ctx.orgId, entityId: p.entity!, feedId: p.feed!, actor: ctx.actor });
+    return syncFeed(tx, plaid, { orgId: ctx.orgId, entityId: p.entity!, feedId: p.feed!, actor: ctx.actor });
+  }));
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/bank-feeds/:feed/remove", async (_req, p, ctx) => {
+  const plaid = plaidOf(ctx);
+  await tenant(ctx, (tx) => removeFeed(tx, plaid, { orgId: ctx.orgId, entityId: p.entity!, feedId: p.feed!, actor: ctx.actor }));
+  return json({ ok: true });
+});
+
+// ------------------------------------------------- payments on invoices
+
+function paymentsOf(ctx: Ctx): InvoicePayments {
+  if (!ctx.opts.invoicePayments) throw new HttpError(503, "online payments on invoices aren't switched on yet");
+  return ctx.opts.invoicePayments;
+}
+
+route("GET", "/api/orgs/:org/entities/:entity/online-payments", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    const example = (await tx.query("SELECT name FROM organizations WHERE id = $1", [ctx.orgId])).rows[0]?.name === EXAMPLE_ORG_NAME;
+    const st = await paymentsStatus(tx, p.entity!, ctx.opts.invoicePayments);
+    return json(example ? { ...st, available: false, reason: "The example business can't take real payments." } : st);
+  }),
+);
+
+/** Where to send the owner to sign in to Stripe and connect their account. */
+route("POST", "/api/orgs/:org/entities/:entity/online-payments/connect", async (req, p, ctx) => {
+  const payments = paymentsOf(ctx);
+  const url = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    if ((await tx.query("SELECT name FROM organizations WHERE id = $1", [ctx.orgId])).rows[0]?.name === EXAMPLE_ORG_NAME) {
+      throw new HttpError(422, "the example business can't take real payments");
+    }
+    return connectStart(tx, payments, {
+      orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor, userId: ctx.user.id, email: ctx.user.email,
+      redirectUri: `${appUrl(req, ctx.opts)}/api/stripe/connect/callback`,
+    });
+  });
+  return json({ url });
+});
+
+route("POST", "/api/orgs/:org/entities/:entity/online-payments/disconnect", async (_req, p, ctx) =>
+  json(await tenant(ctx, (tx) => disconnect(tx, ctx.opts.invoicePayments, { orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor }))),
+);
+
+/** Stripe sends the owner back here after they connect (or decline). */
+async function stripeConnectCallback(req: Request, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
+  const url = new URL(req.url);
+  const base = appUrl(req, opts);
+  const page = (title: string, text: string, href: string) => new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="/styles.css"><main class="panel" style="max-width:520px;margin:60px auto"><h1>${title}</h1><p>${text.replace(/[&<>"']/g, "")}</p><p><a class="btn" href="${href}">Back to TrailBook</a></p></main>`,
+    { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+  );
+  const state = readConnectState(url.searchParams.get("state") ?? "");
+  if (!state) return page("Stripe wasn't connected", "This sign-in link has expired. Start again from the Invoices page.", `${base}/#/`);
+  const back = `${base}/#/e/${state.entityId}/invoices`;
+  if (!opts.invoicePayments) return page("Stripe wasn't connected", "Online payments aren't switched on.", back);
+  if (url.searchParams.get("error")) return page("Stripe wasn't connected", "You left Stripe before connecting. Nothing was changed.", back);
+  const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+  if (!user || user.id !== state.userId) return page("Stripe wasn't connected", "Sign in to TrailBook as the person who started connecting Stripe, then try again.", back);
+  const role = await membershipRole(pool, user.id, state.orgId);
+  if (!role) return page("Stripe wasn't connected", "You're no longer part of this organisation.", `${base}/#/`);
+  try {
+    await requireMfaIfOrgDoes(pool, state.orgId, user.id);
+    await withTenant(pool, state.orgId, (tx) => finishConnect(tx, opts.invoicePayments!, {
+      orgId: state.orgId, entityId: state.entityId, code: url.searchParams.get("code") ?? "", actor: { id: `user:${user.email}`, role },
+    }));
+  } catch (err) {
+    if (err instanceof LedgerError || err instanceof ConnectError || err instanceof AuthError || err instanceof HttpError) {
+      return page("Stripe wasn't connected", err.message, back);
+    }
+    throw err;
+  }
+  return new Response(null, { status: 302, headers: { location: back, "cache-control": "no-store" } });
+}
 
 async function ensureLine(tx: Tx, entityId: string, lineId: string) {
   const { rows } = await tx.query("SELECT 1 FROM bank_lines WHERE id = $1 AND entity_id = $2", [lineId, entityId]);
@@ -1149,6 +1588,100 @@ route("GET", "/api/orgs/:org/entities/:entity/reports/profit-and-loss", async (r
     return profitAndLoss(tx, p.entity!, from, to);
   });
   return q.get("format") === "csv" ? csvResponse(profitAndLossCsv(pl), `profit-and-loss-${from}-to-${to}.csv`) : json(pl);
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/reports/cash-flow", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const from = date(q.get("from"), "from"), to = date(q.get("to"), "to");
+  const cf = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return cashFlowStatement(tx, p.entity!, from, to);
+  });
+  return q.get("format") === "csv" ? csvResponse(cashFlowCsv(cf), `cash-flow-${from}-to-${to}.csv`) : json(cf);
+});
+
+// ------------------------------------------- moving from QuickBooks or Xero
+
+/** Thrown inside the transaction to roll a preview back while keeping its result. */
+class PreviewOnly { constructor(readonly result: unknown) {} }
+
+route("GET", "/api/orgs/:org/entities/:entity/migration", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json(await migrationStatus(tx, p.entity!));
+  }),
+);
+
+for (const step of ["chart", "contacts", "invoices", "bills", "opening"] as const) {
+  route("POST", `/api/orgs/:org/entities/:entity/migration/${step}`, async (req, p, ctx) => {
+    const b = await body(req);
+    const csv = str(b.csv, "file", 5_000_000);
+    const base = { orgId: ctx.orgId, entityId: p.entity!, csv, actor: ctx.actor };
+    const run = (tx: Tx): Promise<unknown> => {
+      if (step === "chart") return importChart(tx, base);
+      if (step === "contacts") return importContacts(tx, { ...base, kind: ["customer", "vendor", "both"].includes(b.kind) ? b.kind : undefined });
+      if (step === "opening") return importOpeningBalances(tx, { ...base, startDate: date(b.startDate, "start date"), rollIncome: b.rollIncome === true });
+      return importOpenDocuments(tx, { ...base, kind: step === "invoices" ? "invoice" : "bill", startDate: date(b.startDate, "start date") });
+    };
+    try {
+      const result = await tenant(ctx, async (tx) => {
+        await ensureEntity(tx, p.entity!);
+        const r = await run(tx);
+        if (b.preview === true) throw new PreviewOnly(r);
+        return r;
+      }, writeOpts(ctx));
+      return json({ preview: false, result });
+    } catch (err) {
+      if (err instanceof PreviewOnly) return json({ preview: true, result: err.result });
+      throw err;
+    }
+  });
+}
+
+// ------------------------------------------------ contractors' year-end forms
+
+route("GET", "/api/orgs/:org/entities/:entity/contractor-forms", async (req, p, ctx) => {
+  const year = Number(new URL(req.url).searchParams.get("year"));
+  return tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json(await contractorSummary(tx, p.entity!, year));
+  });
+});
+
+/** The prepared 1099-NEC or T4A forms; full taxpayer numbers need the second factor. */
+route("GET", "/api/orgs/:org/entities/:entity/contractor-forms/prepared", async (req, p, ctx) => {
+  const q = new URL(req.url).searchParams;
+  const year = Number(q.get("year"));
+  const forms = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return prepareContractorForms(tx, p.entity!, year, { full: q.get("tin") === "full", orgId: ctx.orgId, actor: ctx.actor });
+  });
+  if (q.get("format") === "csv") return csvResponse(contractorFormsCsv(forms), `${forms[0]?.form === "t4a" ? "t4a" : "1099-nec"}-${year}.csv`);
+  return json({ year, forms });
+});
+
+route("GET", "/api/orgs/:org/entities/:entity/contacts/:contact/tax-form", async (_req, p, ctx) =>
+  tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return json({ taxForm: await getContractorInfo(tx, p.contact!) });
+  }),
+);
+
+route("POST", "/api/orgs/:org/entities/:entity/contacts/:contact/tax-form", async (req, p, ctx) => {
+  const b = await body(req);
+  const form = b.form === "1099_nec" || b.form === "t4a" ? b.form : b.form ? (() => { throw new HttpError(400, "pick 1099-NEC, T4A or none"); })() : null;
+  const info = await tenant(ctx, async (tx) => {
+    await ensureEntity(tx, p.entity!);
+    return setContractorInfo(tx, {
+      orgId: ctx.orgId, entityId: p.entity!, contactId: p.contact!, form,
+      recipientType: typeof b.recipientType === "string" ? (b.recipientType as RecipientType) : undefined,
+      tin: typeof b.tin === "string" ? b.tin : undefined,
+      tinKind: typeof b.tinKind === "string" && b.tinKind ? (b.tinKind as "ssn" | "ein" | "sin" | "bn") : undefined,
+      legalName: typeof b.legalName === "string" ? b.legalName : undefined,
+      actor: ctx.actor,
+    });
+  });
+  return json({ taxForm: info });
 });
 
 route("GET", "/api/orgs/:org/entities/:entity/reports/balance-sheet", async (req, p, ctx) => {
@@ -1391,7 +1924,7 @@ route("GET", "/api/orgs/:org/entities/:entity/employees", async (_req, p, ctx) =
       // Kept for older clients: California's UI rate.
       caUiRate: rates.CA_UI ? String(Number(rates.CA_UI)) : null,
       sickLeavePolicy: ent?.sick_leave_policy ?? "accrual",
-      directDeposit: await getDirectDepositSettings(tx, p.entity!),
+      directDeposit: await getEntityDirectDepositSettings(tx, p.entity!),
       workCities: pack.place.region === "CA" ? LOCAL_MINIMUM_WAGE_PLACES : [],
     });
   }),
@@ -1506,10 +2039,10 @@ function withLocalMinimums(place: Place, employees: Employee[], today: string) {
 /** The parts of an employee in a request; a field left out is left alone. Checked in payroll/employees.ts. */
 function employeeFields(b: Record<string, any>): EmployeeFields {
   const keys = ["name", "email", "address", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours",
-    "overtimeExempt", "w4", "de4", "stateWithholding", "td1", "deductions", "sickBalanceHours", "ssn", "sin", "openingYtd", "directDeposit"] as const;
+    "overtimeExempt", "w4", "de4", "stateWithholding", "td1", "deductions", "sickBalanceHours", "vacationMethod", "vacationBalance", "vacationPercent", "ssn", "sin", "openingYtd", "directDeposit"] as const;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
-  for (const k of ["name", "email", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "ssn", "sin"]) {
+  for (const k of ["name", "email", "workCity", "hireDate", "terminationDate", "payType", "payFrequency", "payRate", "usualHours", "sickBalanceHours", "vacationMethod", "vacationBalance", "vacationPercent", "ssn", "sin"]) {
     if (out[k] !== undefined && out[k] !== null && typeof out[k] !== "string") throw new HttpError(400, `${k} should be text`);
   }
   for (const k of ["w4", "de4", "stateWithholding", "td1", "openingYtd", "address", "directDeposit"]) {
@@ -1550,6 +2083,25 @@ route("POST", "/api/orgs/:org/entities/:entity/payroll-settings", async (req, p,
       requireRole(ctx, ["owner", "admin", "accountant"]);
       await setSickLeavePolicy(tx, { orgId: ctx.orgId, entityId: p.entity!, policy: String(b.sickLeavePolicy), actor: ctx.actor });
     }
+    for (const [field, agency] of [["craRemitterType", "cra"], ["rqRemitterType", "rq"]] as const) {
+      if (b[field] === undefined) continue;
+      if (ent.country !== "CA") throw new HttpError(400, "remitter types are for Canadian businesses");
+      if (agency === "rq" && ent.region !== "QC") throw new HttpError(400, "the Revenu Québec remitter type is for Quebec businesses");
+      requireRole(ctx, ["owner", "admin", "accountant"]);
+      await setRemitterType(tx, { orgId: ctx.orgId, entityId: p.entity!, agency, type: String(b[field]), actor: ctx.actor });
+    }
+    if (b.t4DentalCode !== undefined) {
+      if (ent.country !== "CA") throw new HttpError(400, "the T4 dental benefits code is for Canadian businesses");
+      const code = b.t4DentalCode === null || b.t4DentalCode === "" ? null : Number(b.t4DentalCode);
+      if (code !== null && !(Number.isInteger(code) && code >= 1 && code <= 5)) throw new HttpError(400, "the dental benefits code should be 1 to 5");
+      requireRole(ctx, ["owner", "admin", "accountant"]);
+      const before = (await tx.query("SELECT t4_dental_code FROM entities WHERE id = $1", [p.entity])).rows[0].t4_dental_code;
+      await tx.query("UPDATE entities SET t4_dental_code = $2 WHERE id = $1", [p.entity, code]);
+      await appendAudit(tx, {
+        orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor.id, action: "entity.updated", objectType: "entity", objectId: p.entity!,
+        before: { t4DentalCode: before }, after: { t4DentalCode: code }, context: { role: ctx.role },
+      });
+    }
     if (b.federalDepositSchedule !== undefined) {
       if (ent.country !== "US") throw new HttpError(400, "the federal deposit schedule is for US businesses");
       await setFederalDepositSchedule(tx, { orgId: ctx.orgId, entityId: p.entity!, schedule: String(b.federalDepositSchedule), actor: ctx.actor });
@@ -1569,7 +2121,9 @@ route("GET", "/api/orgs/:org/entities/:entity/tax-deposits", async (req, p, ctx)
     const deposits = await taxDeposits(tx, p.entity!, year, today);
     // December's deposits fall due in January, so the start of a year also shows last year's still open.
     const carried = (await taxDeposits(tx, p.entity!, year - 1, today)).filter((d) => d.status !== "paid");
-    return new Response(toJson({ year, today, federalSchedule: await federalDepositSchedule(tx, p.entity!), deposits: [...carried, ...deposits] }), {
+    const ent = (await tx.query("SELECT country, t4_dental_code FROM entities WHERE id = $1", [p.entity])).rows[0];
+    const canada = ent.country === "CA" ? { remitterTypes: await remitterTypes(tx, p.entity!), t4DentalCode: ent.t4_dental_code } : {};
+    return new Response(toJson({ year, today, federalSchedule: await federalDepositSchedule(tx, p.entity!), ...canada, deposits: [...carried, ...deposits] }), {
       headers: { "content-type": "application/json" },
     });
   });
@@ -1602,7 +2156,7 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms", async (req, p, ctx
     const ent = (await tx.query("SELECT country, region, state_employer_id FROM entities WHERE id = $1", [p.entity])).rows[0];
     const pack = statePackFor({ country: ent.country, region: ent.region }, today);
     return json({
-      year, forms: formsFor(year, today, pack), stateEmployerAccount: ent.state_employer_id, employerAccount: pack.payroll.employerAccount, stateName: pack.name,
+      year, forms: ent.country === "CA" ? [...canadaFormsFor(year, pack), ...await roesFor(tx, p.entity!, year)] : formsFor(year, today, pack), stateEmployerAccount: ent.state_employer_id, employerAccount: pack.payroll.employerAccount, stateName: pack.name,
     });
   });
 });
@@ -1620,8 +2174,12 @@ route("GET", "/api/orgs/:org/entities/:entity/payroll-forms/prepared", async (re
       case "940": return form940(tx, p.entity!, year);
       case "de9": return formDe9(tx, { ...base, quarter });
       case "w2": return formW2(tx, base);
+      case "t4": return formT4(tx, base);
+      case "rl1": return formRl1(tx, base);
       default: {
         const slug = q.get("form") ?? "";
+        const roe = /^roe-([0-9a-f-]{36})$/.exec(slug);
+        if (roe) return formRoe(tx, { orgId: ctx.orgId, entityId: p.entity!, employeeId: roe[1]!, fullSsn, actor: ctx.actor });
         const ent = (await tx.query("SELECT country, region FROM entities WHERE id = $1", [p.entity])).rows[0];
         const forms = statePackFor({ country: ent.country, region: ent.region }, `${year}-12-31`).forms.quarterly;
         if (!forms.some((f) => f.slug === slug && f.kind !== "ca_de9")) throw new HttpError(404, "no such form");
@@ -1657,6 +2215,9 @@ route("GET", "/api/orgs/:org/entities/:entity/sales-tax", async (req, p, ctx) =>
   if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new HttpError(400, "year should be like 2027");
   return tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
+    if ((await tx.query("SELECT country FROM entities WHERE id = $1", [p.entity])).rows[0].country === "CA") {
+      return json({ year, today, country: "CA", ...await canadaRegistrations(tx, p.entity!, year) });
+    }
     const settings = await salesTaxSettings(tx, p.entity!);
     const periods = settings.filingFrequency ? returnPeriods(settings.filingFrequency, year, today, settings.startDate) : [];
     return json({ year, today, ...settings, frequencies: FILING_FREQUENCIES, periods });
@@ -1665,6 +2226,21 @@ route("GET", "/api/orgs/:org/entities/:entity/sales-tax", async (req, p, ctx) =>
 
 route("POST", "/api/orgs/:org/entities/:entity/sales-tax-settings", async (req, p, ctx) => {
   const b = await body(req);
+  if (b.country === "CA") {
+    for (const k of ["gstAccount", "gstFrequency", "qstAccount", "qstFrequency"]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
+    if (b.pst !== undefined && (typeof b.pst !== "object" || b.pst === null || Array.isArray(b.pst))) throw new HttpError(400, "pst should list registrations by province");
+    for (const r of Object.values(b.pst ?? {}) as any[]) {
+      if (r !== null && (typeof r !== "object" || ["account", "frequency"].some((k) => r[k] !== undefined && r[k] !== null && typeof r[k] !== "string"))) throw new HttpError(400, "each PST registration needs an account and a frequency");
+    }
+    const saved = await tenant(ctx, async (tx) => {
+      await ensureEntity(tx, p.entity!);
+      return setCanadaSalesTaxSettings(tx, {
+        orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor, gstRegistered: b.gstRegistered === true,
+        gstAccount: b.gstAccount, gstFrequency: b.gstFrequency, qstAccount: b.qstAccount, qstFrequency: b.qstFrequency, pst: b.pst,
+      });
+    });
+    return json(saved);
+  }
   for (const k of ["sellerPermit", "cdtfaAccount", "filingFrequency", "startDate"]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
   const saved = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
@@ -1678,9 +2254,15 @@ route("POST", "/api/orgs/:org/entities/:entity/sales-tax-settings", async (req, 
 
 /** The prepared return for one period. */
 route("GET", "/api/orgs/:org/entities/:entity/sales-tax/return", async (req, p, ctx) => {
-  const period = new URL(req.url).searchParams.get("period") ?? "";
+  const q = new URL(req.url).searchParams;
+  const period = q.get("period") ?? "";
+  const tax = q.get("tax");
   return tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
+    if (tax) {
+      if (!["gst", "qst", "pst_bc", "pst_mb", "pst_sk"].includes(tax)) throw new HttpError(400, "tax should be gst, qst, pst_bc, pst_mb or pst_sk");
+      return json(await canadaSalesTaxReturn(tx, p.entity!, tax as CaReturnTax, period));
+    }
     return json(await prepareSalesTaxReturn(tx, p.entity!, period));
   });
 });
@@ -1689,9 +2271,14 @@ route("GET", "/api/orgs/:org/entities/:entity/sales-tax/return", async (req, p, 
 route("POST", "/api/orgs/:org/entities/:entity/direct-deposit-settings", async (req, p, ctx) => {
   const b = await body(req);
   const keys = ["odfiRouting", "immediateDestination", "destinationName", "immediateOrigin", "companyId", "companyName", "accountType", "account"];
-  for (const k of keys) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
+  const caKeys = ["originatorId", "dataCentre", "shortName", "longName", "returnInstitution", "returnTransit", "returnAccount"];
+  for (const k of [...keys, ...caKeys]) if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "string") throw new HttpError(400, `${k} should be text`);
   const saved = await tenant(ctx, async (tx) => {
     await ensureEntity(tx, p.entity!);
+    const country = (await tx.query("SELECT country FROM entities WHERE id = $1", [p.entity])).rows[0].country;
+    if (country === "CA") {
+      return saveCanadaDirectDepositSettings(tx, { ...Object.fromEntries(caKeys.map((k) => [k, b[k]])), orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor });
+    }
     return saveDirectDepositSettings(tx, { ...Object.fromEntries(keys.map((k) => [k, b[k]])), balanced: b.balanced === true, orgId: ctx.orgId, entityId: p.entity!, actor: ctx.actor });
   });
   return json(saved);
@@ -1725,6 +2312,9 @@ function payRunRequest(b: Record<string, any>): PayRunRequest {
         reimbursement: amount(l.reimbursement, `${n} reimbursement`),
         bonusDiscretionary: l.bonusDiscretionary === true,
         sickHoursUsed: amount(l.sickHoursUsed, `${n} sick hours`),
+        holidayHoursWorked: amount(l.holidayHoursWorked, `${n} holiday hours worked`),
+        noHolidayPay: l.noHolidayPay === true,
+        vacationPay: amount(l.vacationPay, `${n} vacation pay`),
       };
     }),
   };
@@ -1860,6 +2450,7 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
     });
     await tx.query("UPDATE pay_runs SET status = 'posted', approved_by = $2, entry_id = $3, result = $4 WHERE id = $1", [p.run, ctx.actor.id, posted.id, toJson(run)]);
     await carrySickLeave(tx, p.entity!, run.paychecks, run.payDate);
+    await carryVacationPay(tx, p.entity!, run.paychecks);
     return posted;
   });
   return json(entry, 201);
@@ -1873,7 +2464,7 @@ const ALWAYS_ALLOWED = /\/(billing(\/.*)?|leave|security|backup|backups\/[^/]+\/
 const ROLE_NAMES: Record<string, string> = { admin: "an admin", bookkeeper: "a bookkeeper", approver: "an approver", accountant: "an accountant", read_only: "a viewer" };
 
 const EMAIL_ROUTE: Record<string, EmailPurpose> = { "email-link": "sign_in", reset: "reset", verify: "verify" };
-const EMAIL_HASH: Record<EmailPurpose, string> = { sign_in: "email-link", reset: "reset", verify: "verify" };
+const EMAIL_HASH: Record<EmailPurpose, string> = { sign_in: "email-link", reset: "reset", verify: "verify", hub_link: "hub-link" };
 
 /** Emails a one-time link if the account exists and isn't over its hourly limit. Says nothing either way, so the form can't be used to find accounts. */
 async function sendEmailLink(req: Request, pool: pg.Pool, opts: ApiOptions, email: string, purpose: EmailPurpose): Promise<void> {
@@ -1894,11 +2485,11 @@ async function sendEmailLink(req: Request, pool: pg.Pool, opts: ApiOptions, emai
 }
 
 /** Signs someone in, joining an invitation if they came through one. */
-async function startSession(pool: pg.Pool, userId: string, inviteToken?: unknown): Promise<Response> {
+async function startSession(pool: pg.Pool, userId: string, inviteToken?: unknown, secondFactor = false): Promise<Response> {
   const joined = typeof inviteToken === "string" && inviteToken
     ? (await withSystem(pool, (tx) => acceptInvitation(tx, { token: inviteToken, userId }))).orgId
     : undefined;
-  const s = await createSession(pool, userId);
+  const s = await createSession(pool, userId, { secondFactor });
   return json({ ok: true, joined }, 200, { "set-cookie": sessionCookie(s.token, s.maxAge) });
 }
 
@@ -1914,6 +2505,35 @@ async function signedIn(pool: pg.Pool, userId: string, inviteToken?: unknown): P
   return startSession(pool, userId, inviteToken);
 }
 
+/**
+ * Payroll, bank details and tax filings need a session that passed the
+ * second factor, whatever the organisation's own setting. Reading the
+ * payroll pages stays open; the direct deposit file (bank numbers) and the
+ * prepared filings count as these too. The example business is practice
+ * data, so it's left out.
+ */
+const SECOND_FACTOR_PATHS = /\/entities\/[^/]+\/(employees(\/[^/]+)?|payroll-settings|direct-deposit-settings|pay-runs(\/[^/]+\/approve)?|tax-deposits\/pay|sales-tax-settings|contacts\/[^/]+\/tax-form|bank-feeds|bank-feeds\/link-token|bank-feeds\/[^/]+\/(remove|reconnected)|online-payments\/(connect|disconnect))$/;
+const SECOND_FACTOR_READS = /\/entities\/[^/]+\/(pay-runs\/[^/]+\/direct-deposit|payroll-forms\/prepared|sales-tax\/return|contractor-forms\/prepared)$/;
+
+// Recording money paid out to a referring firm.
+const SECOND_FACTOR_ORG_PATHS = /^\/api\/orgs\/[^/]+\/referral-fees\/payouts$/;
+
+export function needsSecondFactor(method: string, path: string): boolean {
+  return method === "GET" ? SECOND_FACTOR_READS.test(path) : SECOND_FACTOR_PATHS.test(path) || SECOND_FACTOR_ORG_PATHS.test(path);
+}
+
+async function requireSecondFactor(pool: pg.Pool, orgId: string, user: SessionUser): Promise<void> {
+  if (user.secondFactor) return;
+  const { rows } = await pool.query(
+    "SELECT o.name = $3 AS example, u.totp_enabled_at IS NOT NULL AS has_mfa FROM organizations o, users u WHERE o.id = $1 AND u.id = $2",
+    [orgId, user.id, EXAMPLE_ORG_NAME],
+  );
+  if (rows[0]?.example) return;
+  throw new HttpError(403, rows[0]?.has_mfa
+    ? "payroll, bank details and tax filings need your two-factor code; sign out and sign in again with it"
+    : "payroll, bank details and tax filings need two-factor sign-in; turn it on under Your account first", "second_factor_required");
+}
+
 async function requireMfaIfOrgDoes(pool: pg.Pool, orgId: string, userId: string): Promise<void> {
   const { rows } = await pool.query(
     "SELECT o.require_mfa, u.totp_enabled_at IS NOT NULL AS has_mfa FROM organizations o, users u WHERE o.id = $1 AND u.id = $2",
@@ -1922,6 +2542,120 @@ async function requireMfaIfOrgDoes(pool: pg.Pool, orgId: string, userId: string)
   if (rows[0]?.require_mfa && !rows[0].has_mfa) {
     throw new HttpError(403, "this organisation requires two-factor sign-in; turn it on under Your account first");
   }
+}
+
+/** A page of the app, with any cookies to set: where the hub sign-in ends up. */
+function redirect(to: string, cookies: string[] = []): Response {
+  const headers = new Headers({ location: to, "cache-control": "no-store" });
+  for (const c of cookies) headers.append("set-cookie", c);
+  return new Response(null, { status: 302, headers });
+}
+
+const hubStateCookie = (state: string, maxAge: number) =>
+  `${HUB_STATE_COOKIE}=${state}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/hub; Max-Age=${maxAge}`;
+/** Marks one restart of a hub sign-in that came back to a browser that didn't start it. */
+const HUB_RETRY_COOKIE = "tb_hub_retry";
+const hubRetryCookie = (on: boolean) =>
+  `${HUB_RETRY_COOKIE}=${on ? "1" : ""}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/hub; Max-Age=${on ? 120 : 0}`;
+
+/**
+ * "Sign in with Pomeroy Account" (hub-signin.ts): start, the hub's return,
+ * and the emailed link that connects a Pomeroy Account to a TrailBook login.
+ * The return always lands on an app page (#/hub/<what happened>), never on JSON.
+ */
+async function hubSignInRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response> {
+  const base = appUrl(req, opts);
+  const hub = opts.hub;
+  const page = (what: string, cookies: string[] = []) =>
+    redirect(`${base}/#/hub/${what}`, [hubStateCookie("", 0), hubRetryCookie(false), ...cookies]);
+
+  // The emailed link: proves the TrailBook address, then connects and signs in.
+  const linkPath = /^\/api\/auth\/hub-link\/([\w-]{20,100})$/.exec(path);
+  if (req.method === "POST" && linkPath) {
+    const user = await withSystem(pool, async (tx) => {
+      const u = await useEmailToken(tx, linkPath[1]!, "hub_link");
+      await connectHubAccount(tx, u.id, u.hubUserId!);
+      return u;
+    });
+    return signedIn(pool, user.id);
+  }
+
+  if (req.method === "GET" && path === "/api/auth/hub/start") {
+    if (!hubSignInOn(hub)) return page("unavailable");
+    const q = new URL(req.url).searchParams;
+    let linkUserId: string | undefined;
+    if (q.get("link") === "1") {
+      const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+      if (!user) return redirect(`${base}/#/login`);
+      linkUserId = user.id;
+    }
+    const s = await startHubSignIn(pool, hub, base, { linkUserId, signup: q.get("screen") === "signup" });
+    return redirect(s.location, [hubStateCookie(s.state, 600)]);
+  }
+
+  if (req.method === "GET" && path === "/api/auth/hub/callback") {
+    if (!hubSignInOn(hub)) return page("unavailable");
+    const q = new URL(req.url).searchParams;
+    const state = q.get("state") ?? "";
+    const started = cookie(req, HUB_STATE_COOKIE);
+    // No sign-in started in this browser: the hub finished somewhere else, such as
+    // a hub email link opened in a phone's mail app. The hub is signed in here now,
+    // so start once more from this browser and it comes straight back.
+    if (!started && q.get("code") && !cookie(req, HUB_RETRY_COOKIE)) {
+      return redirect(`${base}/api/auth/hub/start`, [hubRetryCookie(true)]);
+    }
+    // The state must come back to the browser that started, or someone else's sign-in could land here.
+    if (!state || started !== state) return page("expired");
+    let identity, linkUserId: string | null;
+    try {
+      const waiting = await takeHubSignIn(pool, state);
+      linkUserId = waiting.linkUserId;
+      if (q.get("error") || !q.get("code")) return page("cancelled");
+      identity = await redeemHubCode(hub, base, q.get("code")!, waiting.verifier);
+    } catch (err) {
+      if (err instanceof HubSignInError) {
+        console.error(`hub sign-in: ${err.message}`);
+        return page(err.code);
+      }
+      throw err;
+    }
+
+    // Connecting from Your account: the same person must still be signed in here.
+    if (linkUserId) {
+      const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+      if (user?.id !== linkUserId) return page("expired");
+      try {
+        await connectHubAccount(pool, linkUserId, identity.sub);
+      } catch (err) {
+        if (err instanceof HubSignInError) return page(err.code);
+        throw err;
+      }
+      return page("connected");
+    }
+
+    const linked = (await pool.query("SELECT id FROM users WHERE hub_user_id = $1", [identity.sub])).rows[0];
+    if (linked) {
+      // TrailBook's own second factor still applies.
+      if ((await mfaStatus(pool, linked.id)).enabled) return page(`code/${await issueMfaTicket(pool, linked.id)}`);
+      const s = await createSession(pool, linked.id);
+      return redirect(`${base}/#/`, [hubStateCookie("", 0), hubRetryCookie(false), sessionCookie(s.token, s.maxAge)]);
+    }
+
+    // Not connected yet: a one-time link to the TrailBook login with that email proves it's the same person.
+    const user = (await pool.query("SELECT id, email, name FROM users WHERE email = $1", [identity.email])).rows[0];
+    if (!user) return page("no-account");
+    if (!opts.mailer) return page("unavailable");
+    const token = await withSystem(pool, (tx) => issueEmailToken(tx, user, "hub_link", identity.sub));
+    if (token) {
+      try {
+        await opts.mailer({ to: user.email, ...emailText.hub_link(user.name, `${base}/#/hub-link/${token}`) });
+      } catch (err) {
+        console.error("hub link email failed", err);
+      }
+    }
+    return page("check-email");
+  }
+  throw new HttpError(404, "not found");
 }
 
 /** Turning two-factor sign-in on and off for the signed-in person. */
@@ -1943,6 +2677,8 @@ async function mfaRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOpt
   }
   if (path === "/api/me/mfa/enable") {
     const recoveryCodes = await withSystem(pool, (tx) => enableMfa(tx, user.id, b.code));
+    // The code just entered counts as this session's second factor.
+    await markSecondFactor(pool, cookie(req, SESSION_COOKIE));
     await notify(true);
     return json({ ok: true, recoveryCodes });
   }
@@ -1969,7 +2705,9 @@ async function mfaRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOpt
 }
 
 async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOptions): Promise<Response | null> {
-  if (req.method === "GET" && path === "/api/auth/options") return json({ email: Boolean(opts.mailer) });
+  if (req.method === "GET" && path === "/api/stripe/connect/callback") return stripeConnectCallback(req, pool, opts);
+  if (req.method === "GET" && path === "/api/auth/options") return json({ email: Boolean(opts.mailer), hub: hubSignInOn(opts.hub) });
+  if (path.startsWith("/api/auth/hub/") || path.startsWith("/api/auth/hub-link/")) return hubSignInRoutes(req, path, pool, opts);
   // Checks the sales tax rate lookup end to end with one fixed address
   // (Los Angeles City Hall). Takes no input, so it can't be used to look up
   // anything else; answers are cached like any other lookup.
@@ -2066,6 +2804,10 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
         const org = await createOrganization(tx, { name: orgName!, actor: { id: `user:${email}`, role: "owner" } });
         await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [uid, org.id]);
         await acceptTerms(tx, org.id, uid);
+        // A firm's referral code, from its sign-up link or typed in.
+        if (typeof b.referralCode === "string" && b.referralCode.trim()) {
+          await linkReferral(tx, org.id, pacificToday(), b.referralCode, { id: `user:${email}`, role: "owner" });
+        }
         created = org.id;
       }
       return uid;
@@ -2096,7 +2838,7 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
     const b = await body(req);
     const out = await withSystem(pool, (tx) => redeemMfaTicket(tx, b.ticket, b.code));
     if ("error" in out) throw new AuthError(out.error);
-    return startSession(pool, out.userId, b.inviteToken);
+    return startSession(pool, out.userId, b.inviteToken, true);
   }
   if (req.method === "POST" && path === "/api/auth/logout") {
     await endSession(pool, cookie(req, SESSION_COOKIE));
@@ -2122,13 +2864,19 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
         WHERE m.user_id = $1 ORDER BY m.created_at`,
       [user.id],
     );
-    const verified = (await pool.query("SELECT email_verified_at IS NOT NULL AS v FROM users WHERE id = $1", [user.id])).rows[0].v;
+    const { v: verified, hub } = (await pool.query("SELECT email_verified_at IS NOT NULL AS v, hub_user_id IS NOT NULL AS hub FROM users WHERE id = $1", [user.id])).rows[0];
     const mfa = await mfaStatus(pool, user.id);
     const accepted = await withSystem(pool, (tx) => orgsAccepted(tx, rows.map((r) => r.id)));
     return json({
-      user: { ...user, emailVerified: verified, mfa }, orgs: rows.map((r) => ({ ...r, termsAccepted: accepted.has(r.id) || r.name === EXAMPLE_ORG_NAME })),
+      user: { ...user, emailVerified: verified, mfa, hubConnected: hub }, orgs: rows.map((r) => ({ ...r, termsAccepted: accepted.has(r.id) || r.name === EXAMPLE_ORG_NAME })),
       emailEnabled: Boolean(opts.mailer), termsVersion: TERMS_VERSION,
     });
+  }
+  // The firm console: every client this person can open, with what each business needs.
+  if (req.method === "GET" && path === "/api/clients") {
+    const user = await sessionUser(pool, cookie(req, SESSION_COOKIE));
+    if (!user) throw new AuthError("not signed in");
+    return json({ today: pacificToday(), clients: await clientOverview(pool, user, { today: pacificToday(), exampleOrgName: EXAMPLE_ORG_NAME }) });
   }
   // An owner or admin accepts the current terms for their organisation.
   const termsPath = /^\/api\/orgs\/([0-9a-f-]{36})\/terms\/accept$/.exec(path);
@@ -2200,6 +2948,21 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       const origin = req.headers.get("origin");
       if (origin && new URL(origin).host !== url.host) throw new HttpError(403, "cross-site request refused");
     }
+    // A customer's link to an invoice or estimate. The token travels in the body, never the address, so it stays out of logs.
+    if (req.method === "POST" && path === "/api/view") {
+      const b = await body(req);
+      const v = typeof b.token === "string" ? await viewByToken(pool, b.token) : null;
+      if (!v) throw new HttpError(404, "this link isn't valid; ask the business for a new one");
+      return json({ ...v, payable: await payableByToken(pool, opts.invoicePayments, b.token as string) });
+    }
+    // The customer pays on Stripe's page, on the business's own Stripe account.
+    if (req.method === "POST" && (path === "/api/view/pay" || path === "/api/view/pay/confirm")) {
+      if (!opts.invoicePayments) throw new HttpError(404, "this business doesn't take online payments");
+      const b = await body(req);
+      const token = typeof b.token === "string" ? b.token : "";
+      if (path.endsWith("/confirm")) return json(await confirmFromView(pool, opts.invoicePayments, { token, sessionId: typeof b.session === "string" ? b.session : "" }));
+      return json(await startCheckout(pool, opts.invoicePayments, { token, appUrl: appUrl(req, opts) }));
+    }
     const open = await authRoutes(req, path, pool, opts);
     if (open) return open;
 
@@ -2214,6 +2977,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       const role = await membershipRole(pool, user.id, params.org!);
       if (!role) throw new HttpError(404, "organisation not found");
       if (!path.endsWith("/leave")) await requireMfaIfOrgDoes(pool, params.org!, user.id);
+      if (needsSecondFactor(req.method, path)) await requireSecondFactor(pool, params.org!, user);
       if (req.method !== "GET" && opts.billing?.enforce && !ALWAYS_ALLOWED.test(path)) {
         const access = await checkAccess(pool, params.org!, opts.billing, pacificToday(), path);
         if (access.level === "read_only") throw new HttpError(402, access.reason!);
@@ -2224,7 +2988,7 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
     }
     return json({ error: "not found" }, 404);
   } catch (err) {
-    if (err instanceof HttpError) return json({ error: err.message }, err.status);
+    if (err instanceof HttpError) return json(err.code ? { error: err.message, code: err.code } : { error: err.message }, err.status);
     if (err instanceof AuthError) return json({ error: err.message }, err.status);
     if (err instanceof LedgerError) {
       const status = err.code === "FORBIDDEN" ? 403 : err.code === "IDEMPOTENCY_CONFLICT" ? 409 : 422;
@@ -2234,8 +2998,11 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
     if (err instanceof GatewayError) return json({ error: err.message }, 502);
     if (err instanceof JurisdictionError) return json({ error: err.message, code: "JURISDICTION" }, 422);
     if (err instanceof OAuthError) return json({ error: err.message, code: err.code }, err.status);
+    if (err instanceof HubSignInError) return json({ error: err.message, code: err.code }, 409);
     if (err instanceof NewsletterError) return json({ error: err.message }, err.status);
     if (err instanceof BrevoError) return json({ error: err.message }, 502);
+    if (err instanceof PlaidError) return json({ error: err.message, code: err.code }, 502);
+    if (err instanceof ConnectError) return json({ error: err.message }, 502);
     console.error(err);
     return json({ error: "something went wrong on our side" }, 500);
   }

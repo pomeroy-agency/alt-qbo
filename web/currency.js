@@ -1,5 +1,5 @@
 /* PA-CURRENCY-V2: shows CAD prices to visitors in Canada, USD to everyone else. A visitor's own pick (US or Canadian flag,
-   in the header and the footer) wins; otherwise the country comes from their IP address (app.pomeroyagency.com/geo),
+   in the footer only, so it never crowds the header on phones) wins; otherwise the country comes from their IP address (app.pomeroyagency.com/geo),
    with time zone and browser language as the fallback.
    Used by the app pricing page (web/pricing.html) and inlined into the Pomeroy Agency Wix embeds (marketing-site/build.py). */
 (function(){
@@ -53,9 +53,7 @@
   }
   function init(){
     collect();if(!nodes.length)return;
-    var st=document.createElement('style');st.textContent=".pa-cur{display:inline-flex;align-items:flex-end;gap:8px;white-space:nowrap;font:500 9.5px/1.1 var(--mono,ui-monospace,monospace);letter-spacing:.06em}\n.pa-cur-head{margin-left:14px;color:rgba(255,255,255,.8)}\n.pa-cur-top{display:flex;justify-content:flex-end;margin:0;padding:6px 14px;background:#1f2a3a;color:rgba(255,255,255,.8)}\n.pa-cur-foot{display:flex;justify-content:center;margin:18px auto 0;font-size:10.5px;color:inherit}\n.pa-cur-lead{align-self:center;margin-right:2px}\n.pa-cur button{display:inline-flex;flex-direction:column;align-items:center;gap:3px;font:inherit;letter-spacing:inherit;background:none;border:0;padding:2px;color:inherit;cursor:pointer;opacity:.5}\n.pa-cur button svg{display:block;border-radius:2px;box-shadow:0 0 0 1px rgba(127,127,127,.4)}\n.pa-cur button[aria-pressed=\"true\"]{opacity:1;font-weight:700}\n.pa-cur button[aria-pressed=\"true\"] svg{box-shadow:0 0 0 2px currentColor}\n.pa-cur button:focus-visible{outline:2px solid currentColor;outline-offset:2px}\n.pa-ca-note{display:none}\nhtml.pa-cad .pa-ca-note{display:block}\n";document.head.appendChild(st);
-    var row=document.querySelector('.site-header .nav-row');
-    if(row)row.appendChild(picker('pa-cur-head'));else document.body.insertBefore(picker('pa-cur-top'),document.body.firstChild);
+    var st=document.createElement('style');st.textContent=".pa-cur{display:inline-flex;align-items:flex-end;gap:8px;white-space:nowrap;font:500 9.5px/1.1 var(--mono,ui-monospace,monospace);letter-spacing:.06em}\n.pa-cur-foot{display:flex;justify-content:center;margin:18px auto 0;font-size:10.5px;color:inherit}\n.pa-cur-lead{align-self:center;margin-right:2px}\n.pa-cur button{display:inline-flex;flex-direction:column;align-items:center;gap:3px;font:inherit;letter-spacing:inherit;background:none;border:0;padding:2px;color:inherit;cursor:pointer;opacity:.5}\n.pa-cur button svg{display:block;border-radius:2px;box-shadow:0 0 0 1px rgba(127,127,127,.4)}\n.pa-cur button[aria-pressed=\"true\"]{opacity:1;font-weight:700}\n.pa-cur button[aria-pressed=\"true\"] svg{box-shadow:0 0 0 2px currentColor}\n.pa-cur button:focus-visible{outline:2px solid currentColor;outline-offset:2px}\n.pa-ca-note{display:none}\nhtml.pa-cad .pa-ca-note{display:block}\n";document.head.appendChild(st);
     var fs=document.querySelectorAll('.pa-footer, .site-footer, footer'),foot=fs[fs.length-1];
     var fp=picker('pa-cur-foot','Prices are all in:');
     if(foot)(foot.querySelector('.shell')||foot).appendChild(fp);else document.body.appendChild(fp);

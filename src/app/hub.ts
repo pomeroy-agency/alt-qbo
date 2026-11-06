@@ -2,6 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type pg from "pg";
 import { withSystem, type Tx } from "../db/pool.js";
 import { appendAudit } from "../core/audit.js";
+import { endAllSessions } from "./auth.js";
 import { pacificToday } from "../payroll/business-days.js";
 import { BillingError, accessFor, clearComp, compActive, peoplePaid, setComp, type BillingConfig } from "../billing/billing.js";
 import { addDays, type Plan } from "../billing/plans.js";
@@ -16,7 +17,13 @@ import { addDays, type Plan } from "../billing/plans.js";
 // - a signed GET /api/hub/status here, which the hub's nightly check reads;
 // - a signed POST /api/hub/comp here, which sets or ends a complimentary
 //   period: dated (The Install, 12 months) or open-ended (the agency plans,
-//   until the hub ends it).
+//   until the hub ends it);
+// - a signed POST /api/hub/entitlements-changed here, when what an
+//   organisation holds at the hub changes. TrailBook records the hub's access
+//   version and answers with its own status; its memberships and billing
+//   still decide access on every request;
+// - a signed POST /api/hub/signout here, the hub's back-channel sign-out,
+//   which ends every TrailBook session the person has.
 //
 // Every request either way carries `x-pomeroy-signature: t=<unix seconds>,v1=<hex>`,
 // an HMAC-SHA256 with the shared ACCOUNT_HUB_SECRET over "<t>.<payload>",
@@ -33,6 +40,9 @@ export interface HubOptions {
   url: string;
   /** Shared with the hub; at least 32 characters. */
   secret: string;
+  /** TrailBook's client id and secret at the hub, for "Sign in with Pomeroy Account" (hub-signin.ts). */
+  clientId?: string;
+  clientSecret?: string;
   /** For tests. */
   fetch?: typeof fetch;
   now?: () => number;
@@ -51,7 +61,9 @@ export function hubFromEnv(env: Record<string, string | undefined> = process.env
     console.error("ACCOUNT_HUB_SECRET is shorter than 32 characters; the account hub link is off");
     return undefined;
   }
-  return { url: url.replace(/\/+$/, ""), secret };
+  const clientId = env.ACCOUNT_HUB_CLIENT_ID?.trim() || undefined;
+  const clientSecret = env.ACCOUNT_HUB_CLIENT_SECRET?.trim() || undefined;
+  return { url: url.replace(/\/+$/, ""), secret, clientId, clientSecret };
 }
 
 const nowSeconds = (hub: HubOptions) => Math.floor((hub.now ?? Date.now)() / 1000);
@@ -260,15 +272,55 @@ export async function handleHub(req: Request, path: string, pool: pg.Pool, opts:
     return json({ generated_at: new Date().toISOString(), orgs });
   }
 
-  if (req.method === "POST" && path === "/api/hub/comp") {
-    const raw = await req.text();
-    if (!verifySignature(hub, req.headers.get(SIGNATURE_HEADER), raw)) return fail(401, "bad_signature", "the request isn't signed by the account hub");
-    let b: Record<string, unknown>;
-    try {
-      b = JSON.parse(raw);
-    } catch {
-      return fail(400, "invalid", "the body isn't JSON");
-    }
+  if (req.method !== "POST") return fail(404, "not_found", "no such account hub endpoint");
+  const raw = await req.text();
+  if (!verifySignature(hub, req.headers.get(SIGNATURE_HEADER), raw)) return fail(401, "bad_signature", "the request isn't signed by the account hub");
+  let b: Record<string, unknown>;
+  try {
+    b = JSON.parse(raw);
+    if (!b || typeof b !== "object" || Array.isArray(b)) throw new Error();
+  } catch {
+    return fail(400, "invalid", "the body isn't a JSON object");
+  }
+
+  if (path === "/api/hub/entitlements-changed") {
+    const orgId = typeof b.trailbook_org_id === "string" && UUID.test(b.trailbook_org_id) ? b.trailbook_org_id : null;
+    if (!orgId) return fail(404, "not_found", "no such TrailBook organisation");
+    const version = b.ent_version;
+    if (!Number.isSafeInteger(version) || (version as number) < 1) return fail(400, "invalid", "ent_version is a whole number from 1");
+    const hubOrg = typeof b.org_id === "string" && b.org_id.length >= 1 && b.org_id.length <= 100 ? b.org_id : null;
+    const status = await withSystem(pool, (tx) => orgStatus(tx, orgId, cfg, today));
+    if (!status) return fail(404, "not_found", "no such TrailBook organisation");
+    // A notice that arrives after a newer one is kept out, so the version only goes up.
+    await pool.query(
+      `INSERT INTO hub_pushes (org_id, hub_org_id, ent_version, ent_changed_at) VALUES ($1, $2, $3, now())
+       ON CONFLICT (org_id) DO UPDATE SET hub_org_id = coalesce($2, hub_pushes.hub_org_id), ent_version = $3, ent_changed_at = now()
+        WHERE hub_pushes.ent_version IS NULL OR hub_pushes.ent_version < $3`,
+      [orgId, hubOrg, version],
+    );
+    return json({ ok: true, org: status });
+  }
+
+  if (path === "/api/hub/signout") {
+    // The hub sends its own user id (user_id) and the email; a connected Pomeroy Account is matched by its id first.
+    const hubUserId = typeof b.user_id === "string" && b.user_id.length >= 1 && b.user_id.length <= 100 ? b.user_id : null;
+    const userId = typeof b.trailbook_user_id === "string" && UUID.test(b.trailbook_user_id) ? b.trailbook_user_id : null;
+    const email = typeof b.email === "string" && b.email.length <= 320 ? b.email.trim().toLowerCase() : null;
+    if (!hubUserId && !userId && !email) return fail(400, "invalid", "send user_id, trailbook_user_id or email");
+    const user = (await pool.query(
+      `SELECT id FROM users
+        WHERE ($1::text IS NOT NULL AND hub_user_id = $1)
+           OR ($2::uuid IS NOT NULL AND id = $2::uuid)
+           OR ($3::text IS NOT NULL AND email = $3)
+        ORDER BY (hub_user_id = $1) IS TRUE DESC, (id = $2::uuid) IS TRUE DESC LIMIT 1`,
+      [hubUserId, userId, email],
+    )).rows[0];
+    // Someone with no TrailBook account has nothing to sign out of.
+    const ended = user ? await endAllSessions(pool, user.id) : 0;
+    return json({ ok: true, sessions_ended: ended });
+  }
+
+  if (path === "/api/hub/comp") {
     const orgId = typeof b.trailbook_org_id === "string" && UUID.test(b.trailbook_org_id) ? b.trailbook_org_id : null;
     if (!orgId) return fail(404, "not_found", "no such TrailBook organisation");
     try {

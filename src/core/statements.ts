@@ -213,6 +213,87 @@ export async function generalLedgerAll(tx: Tx, entityId: string, from: string, t
 const money = (m: bigint) => toMajor(m).toFixed(2);
 const cell = csvCell;
 
+export interface CashFlowRow {
+  accountId: string;
+  code: string;
+  name: string;
+  /** Cash the change in this account brought in (positive) or used (negative). */
+  amountMinor: bigint;
+}
+
+export interface CashFlowStatement {
+  from: string;
+  to: string;
+  netIncomeMinor: bigint;
+  operating: CashFlowRow[];
+  operatingMinor: bigint;
+  investing: CashFlowRow[];
+  investingMinor: bigint;
+  financing: CashFlowRow[];
+  financingMinor: bigint;
+  /** Accounts mapped to no cash flow class (retained earnings, mostly): shown so the statement still ties out. */
+  unclassified: CashFlowRow[];
+  unclassifiedMinor: bigint;
+  netChangeMinor: bigint;
+  cashStartMinor: bigint;
+  cashEndMinor: bigint;
+  /** Net change equals the change in cash accounts; always true for balanced books. */
+  tiesOut: boolean;
+}
+
+/**
+ * Statement of cash flows, indirect method (ASC 230): net income, then the
+ * change in each non-cash balance sheet account in the period, grouped by the
+ * account's cash flow class. An asset that grew used cash; a liability or
+ * equity account that grew brought it in. Because the books balance, the total
+ * always equals the change in the cash accounts.
+ */
+export async function cashFlowStatement(tx: Tx, entityId: string, from: string, to: string): Promise<CashFlowStatement> {
+  if (from > to) throw new LedgerError("INVALID", "the start date is after the end date");
+  const { rows } = await tx.query(
+    `SELECT a.id, a.code, a.name, a.type, a.cash_flow_class,
+            coalesce(sum(l.debit_minor - l.credit_minor) FILTER (WHERE e.entry_date >= $2 AND e.entry_date <= $3), 0)::bigint AS change,
+            coalesce(sum(l.debit_minor - l.credit_minor) FILTER (WHERE e.entry_date < $2), 0)::bigint AS opening
+       FROM accounts a
+       LEFT JOIN journal_lines l ON l.account_id = a.id
+       LEFT JOIN journal_entries e ON e.id = l.entry_id
+      WHERE a.entity_id = $1
+      GROUP BY a.id ORDER BY a.code`,
+    [entityId, from, to],
+  );
+  const pick = (cls: string) => rows
+    .filter((r) => !["revenue", "expense"].includes(r.type) && r.cash_flow_class === cls && r.change !== 0n)
+    .map((r): CashFlowRow => ({ accountId: r.id, code: r.code, name: r.name, amountMinor: -(r.change as bigint) }));
+  const sum = (xs: CashFlowRow[]) => xs.reduce((s, r) => s + r.amountMinor, 0n);
+  const netIncome = rows.filter((r) => ["revenue", "expense"].includes(r.type)).reduce((s, r) => s - (r.change as bigint), 0n);
+  const operating = pick("operating"), investing = pick("investing"), financing = pick("financing"), unclassified = pick("none");
+  const cash = rows.filter((r) => r.cash_flow_class === "cash" && !["revenue", "expense"].includes(r.type));
+  const cashStart = cash.reduce((s, r) => s + (r.opening as bigint), 0n);
+  const cashChange = cash.reduce((s, r) => s + (r.change as bigint), 0n);
+  const operatingMinor = netIncome + sum(operating);
+  const net = operatingMinor + sum(investing) + sum(financing) + sum(unclassified);
+  return {
+    from, to, netIncomeMinor: netIncome,
+    operating, operatingMinor, investing, investingMinor: sum(investing), financing, financingMinor: sum(financing),
+    unclassified, unclassifiedMinor: sum(unclassified),
+    netChangeMinor: net, cashStartMinor: cashStart, cashEndMinor: cashStart + cashChange, tiesOut: net === cashChange,
+  };
+}
+
+export function cashFlowCsv(cf: CashFlowStatement): string {
+  const out = [`Statement of cash flows,${cf.from} to ${cf.to}`, "Section,Account,Name,Amount"];
+  out.push(`Operating activities,,Net income,${money(cf.netIncomeMinor)}`);
+  for (const r of cf.operating) out.push(["Operating activities", r.code, cell(`Change in ${r.name}`), money(r.amountMinor)].join(","));
+  out.push(`Net cash from operating activities,,,${money(cf.operatingMinor)}`);
+  for (const r of cf.investing) out.push(["Investing activities", r.code, cell(r.name), money(r.amountMinor)].join(","));
+  out.push(`Net cash from investing activities,,,${money(cf.investingMinor)}`);
+  for (const r of cf.financing) out.push(["Financing activities", r.code, cell(r.name), money(r.amountMinor)].join(","));
+  out.push(`Net cash from financing activities,,,${money(cf.financingMinor)}`);
+  for (const r of cf.unclassified) out.push(["Not classified", r.code, cell(r.name), money(r.amountMinor)].join(","));
+  out.push(`Net change in cash,,,${money(cf.netChangeMinor)}`, `Cash at start,,,${money(cf.cashStartMinor)}`, `Cash at end,,,${money(cf.cashEndMinor)}`);
+  return out.join("\n") + "\n";
+}
+
 export function profitAndLossCsv(pl: ProfitAndLoss): string {
   const out = [`Profit and loss,${pl.from} to ${pl.to}`, "Section,Account,Name,Amount"];
   for (const s of pl.sections) {

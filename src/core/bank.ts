@@ -1,3 +1,4 @@
+import { activeRules, countRuleUse, firstMatch } from "./bank-rules.js";
 import type { Tx } from "../db/pool.js";
 import { appendAudit } from "./audit.js";
 import { recordPayment, type DocumentKind } from "./documents.js";
@@ -124,9 +125,57 @@ export function readStatement(text: string, order: "MDY" | "DMY" = "MDY"): { row
   return { rows, unreadable };
 }
 
+// ---------------------------------------------------------------- OFX / QFX
+
+/** Whether a file is OFX (also sold as QFX for Quicken and .QBO "Web Connect" for QuickBooks). */
+export function isOfx(text: string): boolean {
+  return /OFXHEADER|<OFX>/i.test(text.slice(0, 4000));
+}
+
+/** One tag's value in an OFX block: SGML (OFX 1.x, no closing tags) or XML (OFX 2.x). */
+function ofxTag(block: string, tag: string): string {
+  const m = new RegExp(`<${tag}>([^<\r\n]*)`, "i").exec(block);
+  return (m?.[1] ?? "").trim().replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&apos;/g, "'").replace(/&quot;/g, '"');
+}
+
+/**
+ * Reads the transactions in an OFX, QFX or QBO file. Each carries the bank's
+ * own transaction ID (FITID), which is what catches a re-import. A file with
+ * several accounts must name one with `accountId` (its last four digits are enough).
+ */
+export function readOfx(text: string, accountId?: string): { rows: (StatementRow & { fitid: string })[]; unreadable: number[]; accounts: string[] } {
+  const statements = [...text.matchAll(/<(STMTRS|CCSTMTRS)>([\s\S]*?)(<\/\1>|(?=<(?:STMTRS|CCSTMTRS)>)|$)/gi)].map((m) => m[2]!);
+  if (!statements.length) throw new LedgerError("INVALID", "this OFX file has no bank or card statement in it");
+  const acctOf = (st: string) => ofxTag(st, "ACCTID");
+  const accounts = statements.map(acctOf).filter(Boolean);
+  let chosen = statements;
+  if (statements.length > 1) {
+    if (!accountId) throw new LedgerError("INVALID", `this file has ${statements.length} accounts (ending ${accounts.map((a) => a.slice(-4)).join(", ")}); download one account at a time`);
+    chosen = statements.filter((st) => acctOf(st).endsWith(accountId));
+  }
+  const rows: (StatementRow & { fitid: string })[] = [], unreadable: number[] = [];
+  let n = 0;
+  for (const st of chosen) {
+    for (const m of st.matchAll(/<STMTTRN>([\s\S]*?)(?:<\/STMTTRN>|(?=<STMTTRN>)|(?=<\/BANKTRANLIST>))/gi)) {
+      n++;
+      if (n > MAX_CSV_ROWS) throw new LedgerError("INVALID", `a statement can have at most ${MAX_CSV_ROWS} lines; download a shorter period`);
+      const b = m[1]!;
+      const d = /^(\d{4})(\d{2})(\d{2})/.exec(ofxTag(b, "DTPOSTED"));
+      const date = d ? parseStatementDate(`${d[1]}-${d[2]}-${d[3]}`) : null;
+      const amount = parseStatementAmount(ofxTag(b, "TRNAMT"));
+      const name = ofxTag(b, "NAME"), memo = ofxTag(b, "MEMO");
+      const description = [name, memo && memo !== name ? memo : ""].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300) || ofxTag(b, "TRNTYPE") || "Bank transaction";
+      const fitid = ofxTag(b, "FITID");
+      if (!date || amount === null || amount === 0n) { unreadable.push(n); continue; }
+      rows.push({ row: n, date, description, amountMinor: amount, fitid });
+    }
+  }
+  return { rows, unreadable, accounts };
+}
+
 // ------------------------------------------------------------------- import
 
-async function bankAccount(tx: Tx, entityId: string, key: string) {
+export async function bankAccount(tx: Tx, entityId: string, key: string) {
   const { rows } = await tx.query(
     "SELECT id, code, name, subtype, is_active FROM accounts WHERE entity_id = $1 AND (code = $2 OR system_key = $2)",
     [entityId, key],
@@ -137,9 +186,21 @@ async function bankAccount(tx: Tx, entityId: string, key: string) {
   return a as { id: string; code: string; name: string };
 }
 
+/** Whether an entry dated this day can post: its month is open (or soft-closed, when the request allows that). */
+async function periodOpenFor(tx: Tx, entityId: string, date: string): Promise<boolean> {
+  const r = (await tx.query(
+    `SELECT status, current_setting('app.allow_soft_closed', true) AS soft FROM periods WHERE entity_id = $1 AND start_date <= $2 AND end_date >= $2`,
+    [entityId, date],
+  )).rows[0];
+  if (!r) return false;
+  return r.status === "open" || (r.status === "soft_closed" && r.soft === "on");
+}
+
 export interface ImportResult {
   importId: string;
   added: number;
+  /** Lines a bank rule recorded straight away. */
+  autoRecorded: number;
   duplicates: number;
   unreadableRows: number[];
 }
@@ -151,45 +212,100 @@ export interface ImportResult {
  */
 export async function importBankCsv(
   tx: Tx,
-  input: { orgId: string; entityId: string; bankAccount: string; csv: string; fileName?: string; actor: Actor },
+  input: { orgId: string; entityId: string; bankAccount: string; csv: string; fileName?: string; ofxAccount?: string; actor: Actor },
 ): Promise<ImportResult> {
   requireWriter(input.actor, "import bank statements");
   if (Buffer.byteLength(input.csv) > MAX_CSV_BYTES) throw new LedgerError("INVALID", "the file is larger than 2 MB; split it");
   const acct = await bankAccount(tx, input.entityId, input.bankAccount);
-  const { rows, unreadable } = readStatement(input.csv, "MDY");
+  let keyed: (StatementRow & { key: string })[];
+  let unreadable: number[];
+  if (isOfx(input.csv)) {
+    const r = readOfx(input.csv, input.ofxAccount);
+    unreadable = r.unreadable;
+    // The bank's own transaction ID; without one, fall back to the same key a CSV line gets.
+    const seen = new Map<string, number>();
+    keyed = r.rows.map((x) => {
+      if (x.fitid) return { ...x, key: `fitid:${x.fitid}` };
+      const base = `${x.date}|${x.amountMinor}|${x.description.toLowerCase()}`;
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      return { ...x, key: `${base}|${n}` };
+    });
+  } else {
+    const r = readStatement(input.csv, "MDY");
+    unreadable = r.unreadable;
+    const seen = new Map<string, number>();
+    keyed = r.rows.map((x) => {
+      const base = `${x.date}|${x.amountMinor}|${x.description.toLowerCase()}`;
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      return { ...x, key: `${base}|${n}` };
+    });
+  }
+  return insertBankLines(tx, { orgId: input.orgId, entityId: input.entityId, acct, lines: keyed, unreadable, fileName: input.fileName ?? "", actor: input.actor });
+}
 
-  const seen = new Map<string, number>();
-  const keyed = rows.map((r) => {
-    const base = `${r.date}|${r.amountMinor}|${r.description.toLowerCase()}`;
-    const n = (seen.get(base) ?? 0) + 1;
-    seen.set(base, n);
-    return { ...r, key: `${base}|${n}` };
-  });
-  const existing = new Set<string>(keyed.length
-    ? (await tx.query("SELECT dedupe_key FROM bank_lines WHERE bank_account_id = $1 AND dedupe_key = ANY($2)", [acct.id, keyed.map((k) => k.key)])).rows.map((r) => r.dedupe_key)
+/**
+ * Adds statement lines to a bank account, skipping any whose key was seen
+ * before for that account, and lets auto-record rules record them. Used by
+ * file imports and by automatic bank feeds.
+ */
+export async function insertBankLines(
+  tx: Tx,
+  input: {
+    orgId: string; entityId: string; acct: { id: string; code: string }; fileName: string; actor: Actor;
+    lines: { date: string; description: string; amountMinor: bigint; key: string }[]; unreadable: number[];
+  },
+): Promise<ImportResult> {
+  const { acct, lines: keyed, unreadable } = input;
+  const unique = new Map<string, (typeof keyed)[number]>();
+  for (const k of keyed) if (!unique.has(k.key)) unique.set(k.key, k);
+  const all = [...unique.values()];
+  const existing = new Set<string>(all.length
+    ? (await tx.query("SELECT dedupe_key FROM bank_lines WHERE bank_account_id = $1 AND dedupe_key = ANY($2)", [acct.id, all.map((k) => k.key)])).rows.map((r) => r.dedupe_key)
     : []);
-  const fresh = keyed.filter((k) => !existing.has(k.key));
+  const fresh = all.filter((k) => !existing.has(k.key));
+  const duplicates = keyed.length - fresh.length;
 
   const imp = await run(() => tx.query(
     `INSERT INTO bank_imports (org_id, entity_id, bank_account_id, file_name, added, duplicates, unreadable, imported_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-    [input.orgId, input.entityId, acct.id, (input.fileName ?? "").slice(0, 200), fresh.length, keyed.length - fresh.length, unreadable.length, input.actor.id],
+    [input.orgId, input.entityId, acct.id, input.fileName.slice(0, 200), fresh.length, duplicates, unreadable.length, input.actor.id],
   ));
   const importId: string = imp.rows[0].id;
+  const inserted: { id: string; date: string; description: string; amountMinor: bigint }[] = [];
   for (const r of fresh) {
-    await run(() => tx.query(
+    const ins = await run(() => tx.query(
       `INSERT INTO bank_lines (org_id, entity_id, bank_account_id, import_id, txn_date, description, amount_minor, dedupe_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
       [input.orgId, input.entityId, acct.id, importId, r.date, r.description, r.amountMinor, r.key],
     ));
+    inserted.push({ id: ins.rows[0].id, date: r.date, description: r.description, amountMinor: r.amountMinor });
   }
   await appendAudit(tx, {
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "bank.imported",
     objectType: "bank_import", objectId: importId,
-    after: { bankAccount: acct.code, fileName: input.fileName ?? "", added: fresh.length, duplicates: keyed.length - fresh.length, unreadableRows: unreadable },
+    after: { bankAccount: acct.code, fileName: input.fileName, added: fresh.length, duplicates, unreadableRows: unreadable },
     context: { role: input.actor.role },
   });
-  return { importId, added: fresh.length, duplicates: keyed.length - fresh.length, unreadableRows: unreadable };
+  // Rules set to record on import do so now. A line that can't be recorded
+  // (its month is closed, say) stays in the review queue.
+  let autoRecorded = 0;
+  // The first matching rule decides, as on the review screen: a suggest-only rule ahead of an auto one wins.
+  const rules = await activeRules(tx, input.entityId);
+  if (rules.some((r) => r.auto_record)) {
+    for (const line of inserted) {
+      const rule = firstMatch(rules, { ...line, bankAccountId: acct.id });
+      if (!rule?.auto_record) continue;
+      // Savepoints can't be used here (the ledger checks each entry is written by the top-level transaction), so
+      // the one likely failure, a closed month, is checked first.
+      if (!(await periodOpenFor(tx, input.entityId, line.date))) continue;
+      await categorizeBankLine(tx, { orgId: input.orgId, entityId: input.entityId, lineId: line.id, account: rule.account_code, memo: rule.memo ?? undefined, actor: input.actor, ruleId: rule.id });
+      await countRuleUse(tx, rule.id);
+      autoRecorded++;
+    }
+  }
+  return { importId, added: fresh.length, autoRecorded, duplicates, unreadableRows: unreadable };
 }
 
 // ------------------------------------------------------------------- review
@@ -198,6 +314,7 @@ export type BankLineStatus = "new" | "posted" | "excluded";
 
 export interface Suggestion {
   kind: "invoice" | "bill" | "account";
+  ruleId?: string;
   documentId?: string;
   account?: string;
   label: string;
@@ -227,7 +344,7 @@ export async function listBankLines(
 ): Promise<BankLine[]> {
   const acct = input.bankAccount ? await bankAccount(tx, input.entityId, input.bankAccount) : null;
   const { rows } = await tx.query(
-    `SELECT b.id, a.code AS bank_code, b.txn_date, b.description, b.amount_minor, b.status, b.entry_id,
+    `SELECT b.id, b.bank_account_id, a.code AS bank_code, b.txn_date, b.description, b.amount_minor, b.status, b.entry_id,
             c.code AS category_code, b.document_id, d.number AS document_number, b.decided_by
        FROM bank_lines b
        JOIN accounts a ON a.id = b.bank_account_id
@@ -237,6 +354,7 @@ export async function listBankLines(
       ORDER BY b.txn_date DESC, b.created_at DESC LIMIT $4`,
     [input.entityId, acct?.id ?? null, input.status ?? null, Math.min(input.limit ?? 500, 2000)],
   );
+  const accountOf = new Map(rows.map((r) => [r.id as string, r.bank_account_id as string]));
   const lines: BankLine[] = rows.map((r) => ({
     id: r.id, bankAccount: r.bank_code, date: r.txn_date, description: r.description, amountMinor: r.amount_minor,
     status: r.status, entryId: r.entry_id, categoryAccount: r.category_code, documentId: r.document_id,
@@ -258,6 +376,7 @@ export async function listBankLines(
   )).rows;
   const byWord = new Map<string, { code: string; description: string }>();
   for (const p of past) if (!byWord.has(firstWord(p.description))) byWord.set(firstWord(p.description), { code: p.code, description: p.description });
+  const rules = await activeRules(tx, input.entityId);
   const used = new Set<string>();
   for (const l of lines) {
     if (l.status !== "new") continue;
@@ -267,6 +386,11 @@ export async function listBankLines(
     if (doc) {
       used.add(doc.id);
       l.suggestion = { kind, documentId: doc.id, label: `${kind === "invoice" ? "Payment from" : "Payment to"} ${doc.name} for ${doc.number}` };
+      continue;
+    }
+    const rule = firstMatch(rules, { description: l.description, amountMinor: l.amountMinor, bankAccountId: accountOf.get(l.id)! });
+    if (rule) {
+      l.suggestion = { kind: "account", account: rule.account_code, label: `Rule: description contains "${rule.match_text}"`, ruleId: rule.id };
       continue;
     }
     const prior = byWord.get(firstWord(l.description));
@@ -288,7 +412,7 @@ async function lockLine(tx: Tx, entityId: string, lineId: string) {
 /** Records a bank line against an account: bank and category, either way round by sign. */
 export async function categorizeBankLine(
   tx: Tx,
-  input: { orgId: string; entityId: string; lineId: string; account: string; memo?: string; actor: Actor },
+  input: { orgId: string; entityId: string; lineId: string; account: string; memo?: string; actor: Actor; ruleId?: string },
 ): Promise<BankLine> {
   requireWriter(input.actor, "record bank lines");
   const line = await lockLine(tx, input.entityId, input.lineId);
@@ -326,7 +450,7 @@ export async function categorizeBankLine(
   await appendAudit(tx, {
     orgId: input.orgId, entityId: input.entityId, actor: input.actor.id, action: "bank_line.categorized",
     objectType: "bank_line", objectId: line.id, after: { account: c.code, entryId: entry.id, amount: line.amount_minor },
-    context: { role: input.actor.role },
+    context: { role: input.actor.role, ...(input.ruleId ? { ruleId: input.ruleId } : {}) },
   });
   return (await listOne(tx, input.entityId, line.id));
 }

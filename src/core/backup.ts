@@ -26,17 +26,35 @@ const TABLES: [string, string][] = [
   ["documents", "SELECT * FROM documents WHERE entity_id = $1 ORDER BY kind, issue_date, number"],
   ["document_lines", "SELECT l.* FROM document_lines l JOIN documents d ON d.id = l.document_id WHERE l.entity_id = $1 ORDER BY d.kind, d.number, l.line_no"],
   ["document_payments", "SELECT * FROM document_payments WHERE entity_id = $1 ORDER BY payment_date, created_at"],
+  ["estimates", "SELECT * FROM estimates WHERE entity_id = $1 ORDER BY number"],
+  ["recurring_templates", "SELECT * FROM recurring_templates WHERE entity_id = $1 ORDER BY created_at"],
+  // View links stay out: they are only hashes of links already emailed.
+  ["customer_emails", "SELECT * FROM customer_emails WHERE entity_id = $1 ORDER BY sent_at"],
   ["bank_imports", "SELECT * FROM bank_imports WHERE entity_id = $1 ORDER BY created_at"],
   ["bank_lines", "SELECT * FROM bank_lines WHERE entity_id = $1 ORDER BY txn_date, created_at"],
+  ["bank_rules", "SELECT * FROM bank_rules WHERE entity_id = $1 ORDER BY created_at"],
+  // What each attached file is and its hash; the files themselves are in their own store.
+  ["attachments", "SELECT * FROM attachments WHERE entity_id = $1 ORDER BY uploaded_at"],
   ["reconciliations", "SELECT * FROM reconciliations WHERE entity_id = $1 ORDER BY statement_date"],
   ["reconciliation_lines", "SELECT * FROM reconciliation_lines WHERE entity_id = $1 ORDER BY reconciliation_id, journal_line_id"],
   // Social Security and bank account numbers stay out; only their last four digits are copied.
   ["employees", `SELECT id, org_id, entity_id, name, email, address_line1, address_city, address_state, address_zip, hire_date, termination_date,
-     pay_type, pay_frequency, pay_rate, usual_hours, overtime_exempt, w4, de4, deductions, sick_balance_hours, ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4, created_at, updated_at
+     pay_type, pay_frequency, pay_rate, usual_hours, overtime_exempt, w4, de4, deductions, sick_balance_hours, vacation_method, vacation_balance, vacation_rate, ssn_last4, opening_ytd, dd_routing, dd_account_type, dd_account_last4, created_at, updated_at
      FROM employees WHERE entity_id = $1 ORDER BY lower(name)`],
+  ["migration_account_map", "SELECT * FROM migration_account_map WHERE entity_id = $1 ORDER BY source, source_key"],
+  // Bank connection tokens stay out; the backup only says which accounts were connected.
+  ["bank_feeds", `SELECT id, org_id, entity_id, bank_account_id, provider, institution, account_name, account_mask, status, last_synced_at, created_by, created_at, removed_at
+     FROM bank_feeds WHERE entity_id = $1 ORDER BY created_at`],
+  ["stripe_connections", "SELECT * FROM stripe_connections WHERE entity_id = $1 ORDER BY connected_at"],
+  ["invoice_payment_sessions", "SELECT * FROM invoice_payment_sessions WHERE entity_id = $1 ORDER BY created_at"],
+  // Contractors' taxpayer numbers stay out; only their last four digits are copied.
+  ["contractor_tax_info", `SELECT contact_id, org_id, entity_id, form, recipient_type, tin_kind, tin_last4, legal_name, updated_by, updated_at
+     FROM contractor_tax_info WHERE entity_id = $1 ORDER BY contact_id`],
   // Bank account numbers stay out too; only their last four digits are copied.
   ["direct_deposit_settings", `SELECT entity_id, org_id, odfi_routing, immediate_destination, destination_name, immediate_origin, company_id, company_name,
      balanced, account_type, account_last4, updated_at FROM direct_deposit_settings WHERE entity_id = $1`],
+  ["ca_direct_deposit_settings", `SELECT entity_id, org_id, originator_id, data_centre, short_name, long_name, return_institution, return_transit,
+     return_account_last4, last_file_number, updated_at FROM ca_direct_deposit_settings WHERE entity_id = $1`],
   ["pay_runs", "SELECT * FROM pay_runs WHERE entity_id = $1 ORDER BY created_at"],
   ["tax_deposit_payments", "SELECT * FROM tax_deposit_payments WHERE entity_id = $1 ORDER BY created_at"],
   // Connection credentials stay out; the backup only says the connection existed.

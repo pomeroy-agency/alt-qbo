@@ -1,20 +1,24 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleApi } from "../src/app/api.js";
-import { runBilling, type BillingConfig } from "../src/billing/billing.js";
+import { runBilling, splitInProportion, unbookedCharges, type BillingConfig } from "../src/billing/billing.js";
 import { formEncode, stripeGateway, type ChargeResult, type PaymentGateway } from "../src/billing/gateway.js";
 import { addDays } from "../src/billing/plans.js";
 import { pacificToday } from "../src/payroll/business-days.js";
 import { getDocument } from "../src/core/documents.js";
 import { withTenant } from "../src/db/pool.js";
-import { pool, setupCaliforniaBusiness } from "./helpers.js";
+import { passSecondFactor, pool, setupCaliforniaBusiness } from "./helpers.js";
 
 const BASE = "https://alt-qbo.test";
 const sent: { to: string; subject: string; text: string }[] = [];
-const charges: { amountMinor: bigint; idempotencyKey: string }[] = [];
+const charges: { amountMinor: bigint; idempotencyKey: string; currency?: string }[] = [];
 let decline: string | null = null;
+/** CAD to USD, as the fake card processor converts it; null makes reading the conversion fail. */
+let fxRate: number | null = 0.72;
+const setups: { currency?: string }[] = [];
 
 const gateway: PaymentGateway = {
   async startCardSetup(input) {
+    setups.push({ currency: input.currency });
     return { url: `https://checkout.example/${input.orgId}`, customerId: input.customerId ?? `cus_${input.orgId.slice(0, 8)}` };
   },
   async finishCardSetup(sessionId) {
@@ -22,8 +26,13 @@ const gateway: PaymentGateway = {
     return { orgId: orgId!, customerId: `cus_${orgId!.slice(0, 8)}`, paymentMethodId: `pm_${last4}`, brand: "visa", last4: last4!, expMonth: 4, expYear: 2030 };
   },
   async charge(input): Promise<ChargeResult> {
-    charges.push({ amountMinor: input.amountMinor, idempotencyKey: input.idempotencyKey });
+    charges.push({ amountMinor: input.amountMinor, idempotencyKey: input.idempotencyKey, currency: input.currency });
     return decline ? { ok: false, id: "pi_declined", message: decline } : { ok: true, id: `pi_${charges.length}` };
+  },
+  async settlement(chargeId) {
+    if (fxRate === null) throw new Error("The provided key does not have the required permissions for this endpoint (rak_charge_read)");
+    const c = charges[Number(chargeId.slice(3)) - 1]!;
+    return { amountMinor: BigInt(Math.round(Number(c.amountMinor) * fxRate)), currency: "USD", rate: String(fxRate) };
   },
 };
 
@@ -50,13 +59,15 @@ async function call(path: string, init: { body?: unknown; cookie?: string } = {}
 }
 
 let n = 0;
-async function customer(plan: "books" | "books_payroll" = "books", interval: "month" | "year" = "month") {
+const LA = { line1: "200 N Spring St", city: "Los Angeles", state: "CA", zip: "90012" };
+const VANCOUVER = { line1: "453 W 12th Ave", city: "Vancouver", state: "BC", zip: "v5y1v4", country: "CA" };
+async function customer(plan: "books" | "books_payroll" = "books", interval: "month" | "year" = "month", address: Record<string, string> = LA) {
   const email = `bill${Date.now()}${n++}@example.com`;
   const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "Owner", email, password: "long-enough-pw", orgName: `Billed ${n}`, inviteCode: "c" } });
-  const cookie = su.cookie!;
+  const cookie = await passSecondFactor(su.cookie!);
   const orgId = (await call("/api/me", { cookie })).data.orgs[0].id as string;
   const o = (p: string) => `/api/orgs/${orgId}${p}`;
-  expect((await call(o("/billing/details"), { cookie, body: { name: `Billed ${n} LLC`, email, address: { line1: "200 N Spring St", city: "Los Angeles", state: "CA", zip: "90012" } } })).status).toBe(200);
+  expect((await call(o("/billing/details"), { cookie, body: { name: `Billed ${n} LLC`, email, address } })).status).toBe(200);
   expect((await call(o("/billing/plan"), { cookie, body: { plan, interval } })).status).toBe(200);
   const card = await call(o("/billing/card"), { cookie, body: {} });
   expect(card.data.url).toContain("checkout.example");
@@ -206,6 +217,20 @@ describe("Stripe client", () => {
     expect((calls[0]!.init.headers as Record<string, string>)["idempotency-key"]).toBe("k1");
     expect(String(calls[0]!.init.body)).toContain("off_session=true");
   });
+
+  it("charges in Canadian dollars and reads the conversion", async () => {
+    const calls: string[] = [];
+    const fake = (async (url: string, init: RequestInit) => {
+      calls.push(`${init.method} ${url} ${init.body ?? ""}`);
+      if (init.method === "POST") return new Response(JSON.stringify({ id: "pi_9", status: "succeeded" }), { status: 200 });
+      return new Response(JSON.stringify({ id: "pi_9", latest_charge: { id: "ch_9", balance_transaction: { amount: 1512, currency: "usd", exchange_rate: 0.72 } } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const g = stripeGateway("rk_test_x", fake);
+    expect(await g.charge({ customerId: "cus_1", paymentMethodId: "pm_1", amountMinor: 2100n, currency: "CAD", description: "d", idempotencyKey: "k", metadata: {} })).toEqual({ ok: true, id: "pi_9" });
+    expect(calls[0]).toContain("currency=cad");
+    expect(await g.settlement("pi_9")).toEqual({ amountMinor: 1512n, currency: "USD", rate: "0.72" });
+    expect(calls[1]).toContain("/payment_intents/pi_9?expand[]=latest_charge.balance_transaction");
+  });
 });
 
 describe("partner discount", () => {
@@ -217,5 +242,103 @@ describe("partner discount", () => {
     expect(charges.at(-1)!.amountMinor).toBe(1200n);
     const ch = (await pool.query("SELECT lines FROM billing_charges WHERE org_id = $1", [c.orgId])).rows[0];
     expect(ch.lines[0].description).toMatch(/20% partner discount/);
+  });
+});
+
+describe("Canadian billing", () => {
+  it("stays closed until it is switched on", async () => {
+    const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `ca-closed${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Closed Co", inviteCode: "c" } });
+    const orgId = (await call("/api/me", { cookie: su.cookie })).data.orgs[0].id;
+    const r = await call(`/api/orgs/${orgId}/billing/details`, { cookie: su.cookie, body: { name: "X", email: "x@example.com", address: VANCOUVER } });
+    expect(r.status).toBe(400);
+    expect(r.data.error).toMatch(/Canada isn't open yet/);
+  });
+
+  it("bills a Canadian address in Canadian dollars and books the US dollars paid out", async () => {
+    billing.canada = true;
+    try {
+      const c = await customer("books_payroll", "month", VANCOUVER);
+      expect(setups.at(-1)!.currency).toBe("CAD");
+      const b = await call(c.o("/billing"), { cookie: c.cookie });
+      expect(b.data).toMatchObject({ currency: "CAD", canadaOpen: true, billing: { address: { state: "BC", zip: "V5Y 1V4", country: "CA" } } });
+      expect(b.data.prices.plan.books_payroll.month).toBe(4900);
+      expect(b.data.prices.perPersonMonth).toBe(600);
+
+      await endTrial(c.orgId, 1);
+      const today = pacificToday();
+      expect(await runBilling(pool, cfg(), today, c.orgId)).toMatchObject({ charged: 1, failed: 0 });
+      expect(charges.at(-1)).toMatchObject({ amountMinor: 4900n, currency: "CAD" });
+      expect(sent.at(-1)!.text).toContain("C$49.00");
+
+      const ch = (await pool.query("SELECT * FROM billing_charges WHERE org_id = $1", [c.orgId])).rows[0];
+      expect(ch).toMatchObject({ status: "paid", currency: "CAD", subtotal_minor: 4900n, tax_minor: 0n, total_minor: 4900n, settled_minor: 3528n });
+      expect(Number(ch.fx_rate)).toBe(0.72);
+      const doc = await withTenant(pool, seller.orgId, (tx) => getDocument(tx, ch.invoice_id));
+      // The seller's books are in US dollars: the invoice is for what the card processor paid out, with no US sales tax.
+      expect(doc).toMatchObject({ status: "paid", currency: "USD", totalMinor: 3528n, taxMinor: 0n });
+      expect(doc.lines[0]!.description).toContain("1 x C$49.00");
+      expect(doc.memo).toContain("Charged C$49.00");
+      expect((await sub(c.orgId))).toMatchObject({ status: "active", currency: "CAD", founding: true });
+
+      // Once paid, the subscription stays in Canadian dollars.
+      const move = await call(c.o("/billing/details"), { cookie: c.cookie, body: { name: "X", email: c.email, address: LA } });
+      expect(move.status).toBe(409);
+    } finally {
+      billing.canada = false;
+    }
+  });
+
+  it("keeps a paid charge paid when the conversion can't be read, and books it on a later run", async () => {
+    billing.canada = true;
+    try {
+      const c = await customer("books", "month", { ...VANCOUVER, state: "ON", city: "Toronto", zip: "M5V 2T6" });
+      await endTrial(c.orgId, 1);
+      fxRate = null;
+      const today = pacificToday();
+      expect((await runBilling(pool, cfg(), today, c.orgId)).charged).toBe(1);
+      let ch = (await pool.query("SELECT * FROM billing_charges WHERE org_id = $1", [c.orgId])).rows[0];
+      expect(ch).toMatchObject({ status: "paid", invoice_id: null });
+      expect(ch.book_failure).toMatch(/permissions/);
+      expect((await sub(c.orgId)).status).toBe("active");
+      await pool.query("UPDATE billing_charges SET paid_at = now() - interval '2 hours' WHERE id = $1", [ch.id]);
+      expect((await unbookedCharges(pool)).map((u) => u.id)).toContain(ch.id);
+
+      fxRate = 0.7;
+      await runBilling(pool, cfg(), today, c.orgId);
+      ch = (await pool.query("SELECT * FROM billing_charges WHERE org_id = $1", [c.orgId])).rows[0];
+      expect(ch).toMatchObject({ settled_minor: 1470n, book_failure: null });
+      expect(ch.invoice_id).not.toBeNull();
+      expect(charges.filter((x) => x.idempotencyKey.startsWith(ch.id))).toHaveLength(1);
+    } finally {
+      fxRate = 0.72;
+      billing.canada = false;
+    }
+  });
+
+  it("switches currency with the address only before the first payment", async () => {
+    billing.canada = true;
+    try {
+      const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `ca-switch${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Switch Co", inviteCode: "c" } });
+      const cookie = await passSecondFactor(su.cookie!);
+      const orgId = (await call("/api/me", { cookie })).data.orgs[0].id;
+      const o = (p: string) => `/api/orgs/${orgId}${p}`;
+      expect((await call(o("/billing/details"), { cookie, body: { name: "X", email: "x@example.com", address: VANCOUVER } })).status).toBe(200);
+      expect((await call(o("/billing"), { cookie })).data.currency).toBe("CAD");
+      expect((await call(o("/billing/details"), { cookie, body: { name: "X", email: "x@example.com", address: LA } })).status).toBe(200);
+      const b = (await call(o("/billing"), { cookie })).data;
+      expect(b.currency).toBe("USD");
+      expect(b.prices.plan.books.month).toBe(1500);
+      // A province typed with the US picked, and a bad postal code, are both caught.
+      expect((await call(o("/billing/details"), { cookie, body: { name: "X", email: "x@example.com", address: { ...LA, state: "BC" } } })).status).toBe(400);
+      expect((await call(o("/billing/details"), { cookie, body: { name: "X", email: "x@example.com", address: { ...VANCOUVER, zip: "90012" } } })).status).toBe(400);
+    } finally {
+      billing.canada = false;
+    }
+  });
+
+  it("splits the converted amount across lines to the cent", () => {
+    expect(splitInProportion([4900n, 3600n], 6120n)).toEqual([3528n, 2592n]);
+    expect(splitInProportion([100n, 100n, 100n], 100n)).toEqual([33n, 33n, 34n]);
+    expect(splitInProportion([0n], 0n)).toEqual([0n]);
   });
 });

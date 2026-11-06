@@ -4,7 +4,7 @@ import { mailerFromEnv } from "../../src/app/mail.js";
 import { pacificToday, weekday } from "../../src/payroll/business-days.js";
 import { jobSecretMatches, newsletterFromEnv, type NewsletterTask } from "../../src/newsletter/config.js";
 import { draftWeeklyIssue, refreshSent, runNewsWatch } from "../../src/newsletter/newsletter.js";
-import "../../src/db/pool.js";
+import { strictSsl } from "../../src/db/pool.js";
 
 // The newsletter's worker, a background function so reading the feeds and
 // waiting on Claude can take minutes. Started by the daily schedule
@@ -18,7 +18,7 @@ export default async (req: Request) => {
   const cfg = newsletterFromEnv(process.env, mailerFromEnv(), appUrl);
   if (!cfg) return;
   const task = ((await req.json().catch(() => ({}))) as { task?: NewsletterTask }).task ?? "daily";
-  const pool = new pg.Pool({ connectionString: getConnectionString(), max: 2 });
+  const pool = new pg.Pool({ connectionString: strictSsl(getConnectionString()), max: 2 });
   try {
     if (task === "daily" || task === "watch") {
       const w = await runNewsWatch(pool, cfg);
