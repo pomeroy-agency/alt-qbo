@@ -65,6 +65,7 @@ const ROWS: readonly LocalMinimumWageRow[] = Object.freeze([
   // January 1, 2027, as announced by October 2026
   { place: "Belmont", from: "2027-01-01", rate: "19.60" },
   { place: "Burlingame", from: "2027-01-01", rate: "18.47" },
+  { place: "Cupertino", from: "2027-01-01", rate: "19.25" },
   { place: "Half Moon Bay", from: "2027-01-01", rate: "18.51" },
   { place: "Hayward", from: "2027-01-01", rate: "18.39", minEmployees: 26 },
   { place: "Novato", from: "2027-01-01", rate: "17.97", minEmployees: 26 },
