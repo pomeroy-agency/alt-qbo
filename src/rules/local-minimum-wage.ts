@@ -65,16 +65,21 @@ const ROWS: readonly LocalMinimumWageRow[] = Object.freeze([
   // January 1, 2027, as announced by October 2026
   { place: "Belmont", from: "2027-01-01", rate: "19.60" },
   { place: "Burlingame", from: "2027-01-01", rate: "18.47" },
+  { place: "Cupertino", from: "2027-01-01", rate: "19.25" },
   { place: "Half Moon Bay", from: "2027-01-01", rate: "18.51" },
   { place: "Hayward", from: "2027-01-01", rate: "18.39", minEmployees: 26 },
+  { place: "Los Altos", from: "2027-01-01", rate: "19.25" },
   { place: "Novato", from: "2027-01-01", rate: "17.97", minEmployees: 26 },
   { place: "Novato", from: "2027-01-01", rate: "18.25", minEmployees: 100 },
   { place: "Palo Alto", from: "2027-01-01", rate: "19.25" },
   { place: "Petaluma", from: "2027-01-01", rate: "18.93" },
+  { place: "Redwood City", from: "2027-01-01", rate: "19.30" },
   { place: "San Diego", from: "2027-01-01", rate: "18.35" },
+  { place: "San Jose", from: "2027-01-01", rate: "19.00" },
   { place: "San Mateo", from: "2027-01-01", rate: "19.25" },
   { place: "San Mateo County (unincorporated)", from: "2027-01-01", rate: "18.58" },
   { place: "Santa Clara", from: "2027-01-01", rate: "19.25" },
+  { place: "Sunnyvale", from: "2027-01-01", rate: "20.05" },
   { place: "West Hollywood", from: "2027-01-01", rate: "20.94" },
 ].map((r) => Object.freeze(r)));
 

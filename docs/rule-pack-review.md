@@ -6,6 +6,20 @@ Before a pack's `status` changes from `draft` to `released`, each item below nee
 
 **Sign-off, 2026-10-29.** Greg approved every new state pack (Texas, Florida, Nevada, Tennessee, South Dakota, Wyoming, New Hampshire, Alaska, Washington, Arizona, Oregon and New York) as it stands, ⚠️ items included. Those packs are now `released`, so saved pay runs can use them. The known gaps listed in each section remain open, and the daily rule watch keeps checking them.
 
+## us-federal 2027.1 (`src/rules/us-federal-2027.ts`), draft, added by the rule watch 2026-11-06
+
+| Figure | 2027 value | Basis |
+|---|---|---|
+| Brackets, MFJ | 10% to $25,600; 12% to $104,050; 22% to $218,250; 24% to $416,650; 32% to $529,100; 35% to $793,650; 37% above | Rev. Proc. 2026-35, Table 1 ✅ |
+| Brackets, head of household | 10% to $18,250; 12% to $69,650; 22% to $109,100; 24% to $208,300; 32% to $264,550; 35% to $661,350; 37% above | Rev. Proc. 2026-35, Table 2 ✅ |
+| Brackets, single (also used for MFS, as in 2026) | 10% to $12,800; 12% to $52,025; 22% to $109,125; 24% to $208,325; 32% to $264,550; 35% to $661,375; 37% above | Rev. Proc. 2026-35, Table 3 ✅ |
+| Standard deduction | $33,200 MFJ; $24,925 HOH; $16,600 single and MFS | Rev. Proc. 2026-35, section 3.15 ✅ |
+| Social Security wage base | $192,300 | SSA, Oct 14, 2026 ✅ |
+| Worksheet 1A line 1g, deposit thresholds | carried over from 2026 | ⚠️ check against the 2027 Pub 15-T and Pub 15 (December) |
+| FICA, Additional Medicare, FUTA, supplemental rate | unchanged (statutory) | ✅ |
+
+The pack stays `draft` until the 2027 Pub 15-T is out and its annual percentage tables are checked against this pack, and until 2027 state packs exist. Until then nothing calculates on it: a 2027 pay date still finds no state pack, and live runs need released packs.
+
 ## us-federal 2026.1 (`src/rules/us-federal-2026.ts`), released 2026-10-27
 
 | Figure | Value | Source | Check |
@@ -48,7 +62,7 @@ Each employee can have a city where they work. When it has its own minimum wage 
 |---|---|---|
 | Rates from Jan 1, 2026 | 28 cities and San Mateo County unincorporated, incl. San Jose $18.45, San Diego $17.75, Oakland $17.34, Mountain View $19.70, Sunnyvale $19.50, West Hollywood $20.25 | ⚠️ from CalChamber, Davis Wright Tremaine and CDF summaries; city sites and the Berkeley Labor Center list are blocked here |
 | Rates from Jul 1, 2026 | Alameda, Berkeley, Emeryville, Fremont, Los Angeles, LA County unincorporated, Malibu, Milpitas, Pasadena, San Francisco, Santa Monica | ⚠️ same sources. Pay periods ending before Jul 1, 2026 aren't checked for these 11 |
-| Announced for Jan 1, 2027 | Belmont $19.60 (city FAQ page, rule watch 2026-10-28), Burlingame, Half Moon Bay, Hayward, Novato, Palo Alto, Petaluma, San Diego, San Mateo, San Mateo County, Santa Clara, West Hollywood | ⚠️ the other cities announce in Nov and Dec; the daily rule watch adds them. Local rates below the 2027 state $17.40 (e.g. Oakland's 2026 rate) are ignored |
+| Announced for Jan 1, 2027 | Belmont $19.60 (city FAQ page, rule watch 2026-10-28), Burlingame, Cupertino $19.25 (city page, rule watch 2026-11-07), Half Moon Bay, Hayward, Los Altos $19.25, Novato, Palo Alto, Petaluma, Redwood City $19.30, San Diego, San Jose $19.00 (city's 2027 bulletin as quoted by Experian and RegWatch, rule watch 2026-11-11), San Mateo, San Mateo County, Santa Clara, Sunnyvale $20.05 (Experian's 2027 list and RegWatch, rule watch 2026-11-10), West Hollywood | ⚠️ the other cities announce in Nov and Dec; the daily rule watch adds them. Local rates below the 2027 state $17.40 (e.g. Oakland's 2026 rate) are ignored |
 | Size tiers | Hayward (26+ employees), Novato (26 to 99, 100+) | ⚠️ counts employees on file in TrailBook, which may miss staff paid elsewhere |
 | Not covered | hotel and health-care worker rates, salaried non-exempt staff, local sick-leave rules | known gap |
 
@@ -61,9 +75,10 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | Exempt salary floor | $72,384 | follows from the minimum wage |
 | UI and ETT wage base, ETT rate | $7,000; 0.1% | final (EDD) |
 | SDI rate | 1.4% forecast | final rate due in December |
-| Federal brackets, Pub 15-T, EDD Method B | not yet published | expected Oct to Dec 2026 |
+| Federal brackets and standard deductions | MFJ $33,200, HOH $24,925, single and MFS $16,600; brackets in `us-federal-2027.ts` | final (Rev. Proc. 2026-35, Nov 5, 2026); draft pack us-federal 2027.1 |
+| Pub 15-T, EDD Method B | not yet published | expected December 2026 |
 
-### Other states: announced for 2027 (rule watch 2026-10-29; each 2027 state pack needs these)
+### Other states: announced for 2027 (rule watch 2026-10-29 and later; each 2027 state pack needs these)
 
 | State | Figure | 2026 pack | 2027 value | Source |
 |---|---|---|---|---|
@@ -73,8 +88,28 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | Wyoming | UI wage base | $33,800 | $34,900 | Wyoming DWS, as reported by HR Morning and Thomas & Company (Sep 2026) |
 | New York | Paid Family Leave | 0.432%, at most $411.91 | 0.452%, at most $451.81 | DFS rate decision; paidfamilyleave.ny.gov/2027 |
 | New York | Minimum wage | $17.00 NYC, Long Island, Westchester; $16.00 elsewhere | unchanged on Jan 1, 2027 (the off-ramp was met; a proposal to raise it from March 2027 is not law) | governor.ny.gov, New York State Minimum Wage for 2027 |
+| Colorado | Minimum wage | $15.16 | $15.71 (tipped $12.69) | CDLE press release, Aug 13, 2026 (Bloomberg Tax, ColoradoBiz); rule watch 2026-10-30 |
+| Colorado | Denver minimum wage | $19.29 | $19.84 (tipped $16.82) | Denver Labor press release, Aug 6, 2026 (Bloomberg Tax); rule watch 2026-10-30 |
+| Minnesota | Minimum wage | $11.41 | $11.87 (90-day under-20 training wage $9.68) | DLI news release, Aug 19, 2026 (Bloomberg Tax); rule watch 2026-10-30 |
+| Minnesota | Minneapolis minimum wage | $16.37 | $17.02, all employers | City of Minneapolis website, Aug 2026 (Bloomberg Government, Brightmine); rule watch 2026-10-30 |
+| Minnesota | St. Paul minimum wage | $16.37 (one rate in the pack) | Jan 1: $17.02 for 101+ employees, $16.37 for 6 to 100, $14.25 for 5 or fewer. Jul 1: $17.02 for 6 or more, $15.00 for 5 or fewer | City of Saint Paul announcement, 2027 minimum wage rates (stpaul.gov); rule watch 2026-10-30. The 2027 pack needs St. Paul's size tiers |
+| Washington | Minimum wage and exempt salary | $17.13; $80,168.40 | $17.73 (14 and 15 year olds $15.07). Exempt salary $82,976.40 ($1,595.70 a week) for 50 or fewer employees, $92,196 ($1,773 a week) for 51 or more; hourly computer professionals $62.06 | L&I news release 26-17 (Sep 30, 2026) and rule notice WSR 26-20-043; rule watch 2026-10-31. The 2027 pack needs the exempt salary split by employer size |
+| Arizona | Minimum wage | $15.15 | $15.65 (tip credit stays $3.00) | Industrial Commission of Arizona 2027 poster (KTAR, FreshPlaza); rule watch 2026-10-31 |
+| Ohio | Minimum wage | $11.00 | $11.40 (tipped $5.70); applies above $420,000 gross receipts | Ohio Dept of Commerce 2027 poster and announcement, Sep 30, 2026; rule watch 2026-10-31 |
+| Maine | Minimum wage and exempt salary | $15.10; $45,300 | $15.70; exempt salary $905.79 a week ($47,101.08) | Maine DOL 2027 minimum wage poster (maine.gov/labor/docs/2027); rule watch 2026-10-31 |
+| New Jersey | Minimum wage | $15.92; seasonal or fewer than 6 employees $15.23 | $16.48; seasonal or fewer than 6 employees $16.25 (farm $15.00, tipped cash wage $6.61) | NJDOL press release, Sep 29, 2026 (main rate); the other categories from secondary tables quoting it; rule watch 2026-10-31 |
+| Montana | Minimum wage | $10.85 | $11.20 | Montana DLI annual adjustment, as reported by HR Morning and FedRateCalc (state page not yet showing it); rule watch 2026-10-31 |
+| Connecticut | Minimum wage | $16.94 | $17.48 (tipped cash wages for 2027 not yet published) | Governor's press release, Aug 5, 2026 (CT Mirror, Hartford Business Journal); rule watch 2026-11-01 |
+| Virginia | Minimum wage | $12.77 | $13.75 from Jan 1, 2027 ($15.00 from Jan 1, 2028); farm workers covered from 2027 | SB 1 / HB 1, signed Apr 9, 2026 (Virginia Mercury); rule watch 2026-11-01 |
+| Alaska | Minimum wage and exempt salary | $14.00 from Jul 1, 2026; $58,240 | $15.00 from Jul 1, 2027 (exempt salary twice that for 40 hours, $62,400); CPI-indexed after | Ballot Measure 1 (2024), AS 23.10.065; rule watch 2026-11-01. The 2027 pack needs it as a mid-year change |
+| Iowa | UI wage base | $20,400 | $21,100 | Iowa Workforce Development release, Jun 30, 2026 (Bloomberg Tax, Thomas & Company); rule watch 2026-11-02 |
+| Colorado | City of Boulder minimum wage | $16.82 (one area with unincorporated Boulder County) | $18.17 (tipped $15.15) | Boulder Ordinance 8664 schedule (bouldercolorado.gov); rule watch 2026-11-02. Unincorporated Boulder County moves by CPI and its 2027 figure isn't published, so the 2027 pack needs the city and county as separate areas |
+| Delaware | UI wage base | $14,500 | $16,500 (fixed from 2027 on); experience rates move to a new method | HB 433, signed Aug 15, 2024 (EY, Bloomberg Tax); rule watch 2026-11-07. Delaware Paid Leave follows the Social Security wage base, $192,300 |
+| Michigan | Minimum wage | $13.73 | $15.00 (tipped cash wage $6.30, 42%; minors $12.75); indexed from 2028 | Michigan LEO minimum wage page and 2027 poster; rule watch 2026-11-08 |
+| Nebraska | Minimum wage | $15.00 | $15.26 (then 1.75% a year) | Nebraska DOL wage schedule (Jul 31, 2026) under the law signed Feb 9, 2026 (Bloomberg Tax); rule watch 2026-11-08 |
+| South Dakota | Minimum wage | $11.85 (tipped $5.925) | $12.30 (tipped $6.15) | DLR minimum wage page (Bloomberg Tax, Oct 14, 2026); rule watch 2026-11-09 |
 
-Not yet final, so not listed: New Jersey's 2027 wage bases ($46,400 UI, $177,100 disability and family leave) are only a proposed rule (58 N.J.R. 1978(a)). Colorado ($32,100) and Oklahoma ($24,400) appear on one aggregator only.
+Not yet final, so not listed: New Jersey's 2027 wage bases ($46,400 UI, $177,100 disability and family leave) are only a proposed rule (58 N.J.R. 1978(a)). Colorado's ($32,100) and Oklahoma's ($24,400) UI wage bases appear on one aggregator only. Cupertino's $19.25 (city page, rule watch 2026-11-07), Los Altos $19.25 and Redwood City $19.30 (ADP chart, RegWatch and Employment Law Aid, rule watch 2026-11-08) are added to `local-minimum-wage.ts`. Sunnyvale's $20.05 is added (Experian and RegWatch, rule watch 2026-11-10). San Jose's $19.00 is added (rule watch 2026-11-11). Mountain View, Oakland and Berkeley haven't posted. Seattle's $22.14 for 2027 is announced, but Washington local minimum wages aren't checked yet.
 
 ## us-ca-sales-tax 2026.1 (`src/rules/sales-tax/us-ca-2026.ts`), released 2026-10-27
 

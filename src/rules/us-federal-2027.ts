@@ -1,0 +1,70 @@
+import type { FederalRulePack } from "./types.js";
+
+export const usFederal2027: FederalRulePack = {
+  kind: "us-federal",
+  id: "us-federal",
+  version: "2027.1",
+  place: { country: "US" },
+  effectiveFrom: "2027-01-01",
+  effectiveTo: "2027-12-31",
+  status: "draft",
+  sources: [
+    { ref: "Rev. Proc. 2026-35 (released November 5, 2026), section 3.01 Tables 1-4 and 3.15", covers: "2027 brackets for every filing status; standard deductions $33,200 / $24,925 / $16,600", basis: "published" },
+    { ref: "SSA announcement, October 14, 2026", covers: "Social Security wage base $192,300", basis: "published" },
+    { ref: "IRS Publication 15-T (2026) and Publication 15 (2026), carried over until the 2027 editions (December 2026)", covers: "Worksheet 1A line 1g ($12,900 MFJ, $8,600 other); deposit schedules and thresholds", basis: "working-knowledge" },
+    { ref: "IRC 3101, 3111, 3301, 3102(f)", covers: "FICA rates, Additional Medicare 0.9% over $200,000, FUTA 0.6% net on $7,000, 22% supplemental rate (all statutory, unchanged for 2027)", basis: "published" },
+  ],
+  reviewNotes: [
+    "Draft, made by the rule watch on 2026-11-06. Final for 2027: the brackets and standard deductions (Rev. Proc. 2026-35, checked against the IRS PDF) and the $192,300 Social Security wage base.",
+    "Carried over from 2026 until the 2027 Pub 15-T and Pub 15 come out (usually December): Worksheet 1A line 1g amounts, deposit thresholds, and the assumption that Pub 15-T's annual percentage tables are still the brackets shifted by the standard deduction. Check the 2027 Pub 15-T tables against this pack before release.",
+    "Statutory and unchanged: FICA rates, the $200,000 Additional Medicare threshold, FUTA 0.6% on $7,000, the 22% supplemental rate. The 2027 FUTA credit reduction list comes in November 2027 and lands on Form 940 Schedule A.",
+  ],
+  payroll: {
+    socialSecurity: { employeeRate: "0.062", employerRate: "0.062", wageBase: "192300" },
+    medicare: { employeeRate: "0.0145", employerRate: "0.0145", additionalRate: "0.009", additionalThreshold: "200000" },
+    futa: { rate: "0.006", wageBase: "7000", note: "net of the 5.4% state credit; credit reduction handled on Schedule A", creditReduction: { CA: null } },
+    supplementalRate: "0.22",
+    deposits: { semiweeklyLookbackOver: "50000", nextDayAtOrAbove: "100000", payWithReturnUnder: "2500", futaDepositOver: "500" },
+    incomeTax: {
+      brackets: {
+        single_or_mfs: [
+          { over: "0", rate: "0.10" },
+          { over: "12800", rate: "0.12" },
+          { over: "52025", rate: "0.22" },
+          { over: "109125", rate: "0.24" },
+          { over: "208325", rate: "0.32" },
+          { over: "264550", rate: "0.35" },
+          { over: "661375", rate: "0.37" },
+        ],
+        mfj: [
+          { over: "0", rate: "0.10" },
+          { over: "25600", rate: "0.12" },
+          { over: "104050", rate: "0.22" },
+          { over: "218250", rate: "0.24" },
+          { over: "416650", rate: "0.32" },
+          { over: "529100", rate: "0.35" },
+          { over: "793650", rate: "0.37" },
+        ],
+        hoh: [
+          { over: "0", rate: "0.10" },
+          { over: "18250", rate: "0.12" },
+          { over: "69650", rate: "0.22" },
+          { over: "109100", rate: "0.24" },
+          { over: "208300", rate: "0.32" },
+          { over: "264550", rate: "0.35" },
+          { over: "661350", rate: "0.37" },
+        ],
+      },
+      standardDeduction: { single_or_mfs: "16600", mfj: "33200", hoh: "24925" },
+      line1g: { mfj: "12900", other: "8600" },
+    },
+  },
+  entityDefaults: {
+    framework: "US_GAAP",
+    functionalCurrency: "USD",
+    fiscalYearStartMonth: 1,
+    coaTemplate: "us-service",
+    ledgerRetentionYears: 7,
+    payrollRetentionYears: 4,
+  },
+};
