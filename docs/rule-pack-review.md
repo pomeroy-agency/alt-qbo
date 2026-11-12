@@ -62,7 +62,7 @@ Each employee can have a city where they work. When it has its own minimum wage 
 |---|---|---|
 | Rates from Jan 1, 2026 | 28 cities and San Mateo County unincorporated, incl. San Jose $18.45, San Diego $17.75, Oakland $17.34, Mountain View $19.70, Sunnyvale $19.50, West Hollywood $20.25 | ⚠️ from CalChamber, Davis Wright Tremaine and CDF summaries; city sites and the Berkeley Labor Center list are blocked here |
 | Rates from Jul 1, 2026 | Alameda, Berkeley, Emeryville, Fremont, Los Angeles, LA County unincorporated, Malibu, Milpitas, Pasadena, San Francisco, Santa Monica | ⚠️ same sources. Pay periods ending before Jul 1, 2026 aren't checked for these 11 |
-| Announced for Jan 1, 2027 | Belmont $19.60 (city FAQ page, rule watch 2026-10-28), Burlingame, Cupertino $19.25 (city page, rule watch 2026-11-07), Half Moon Bay, Hayward, Los Altos $19.25, Novato, Palo Alto, Petaluma, Redwood City $19.30, San Diego, San Jose $19.00 (city's 2027 bulletin as quoted by Experian and RegWatch, rule watch 2026-11-11), San Mateo, San Mateo County, Santa Clara, Sunnyvale $20.05 (Experian's 2027 list and RegWatch, rule watch 2026-11-10), West Hollywood | ⚠️ the other cities announce in Nov and Dec; the daily rule watch adds them. Local rates below the 2027 state $17.40 (e.g. Oakland's 2026 rate) are ignored |
+| Announced for Jan 1, 2027 | Belmont $19.60 (city FAQ page, rule watch 2026-10-28), Burlingame, Cupertino $19.25 (city page, rule watch 2026-11-07), Half Moon Bay, Hayward, Los Altos $19.25, Mountain View $20.25 (city minimum wage page as quoted in search results, +2.8% CPI, rule watch 2026-11-12), Novato, Palo Alto, Petaluma, Redwood City $19.30, San Diego, San Jose $19.00 (city's 2027 bulletin as quoted by Experian and RegWatch, rule watch 2026-11-11), San Mateo, San Mateo County, Santa Clara, Sunnyvale $20.05 (Experian's 2027 list and RegWatch, rule watch 2026-11-10), West Hollywood | ⚠️ the other cities announce in Nov and Dec; the daily rule watch adds them. Local rates below the 2027 state $17.40 (e.g. Oakland's 2026 rate) are ignored |
 | Size tiers | Hayward (26+ employees), Novato (26 to 99, 100+) | ⚠️ counts employees on file in TrailBook, which may miss staff paid elsewhere |
 | Not covered | hotel and health-care worker rates, salaried non-exempt staff, local sick-leave rules | known gap |
 
@@ -74,7 +74,7 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | California minimum wage | $17.40 | final (certified Jul 31, 2026) |
 | Exempt salary floor | $72,384 | follows from the minimum wage |
 | UI and ETT wage base, ETT rate | $7,000; 0.1% | final (EDD) |
-| SDI rate | 1.4% forecast | final rate due in December |
+| SDI rate | 1.4%, no wage limit | final (EDD Rates and Withholding and Tax-Rated Employers pages, as quoted in search results; rule watch 2026-11-12). A 2027 CA pack still needs it |
 | Federal brackets and standard deductions | MFJ $33,200, HOH $24,925, single and MFS $16,600; brackets in `us-federal-2027.ts` | final (Rev. Proc. 2026-35, Nov 5, 2026); draft pack us-federal 2027.1 |
 | Pub 15-T, EDD Method B | not yet published | expected December 2026 |
 
@@ -109,7 +109,7 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | Nebraska | Minimum wage | $15.00 | $15.26 (then 1.75% a year) | Nebraska DOL wage schedule (Jul 31, 2026) under the law signed Feb 9, 2026 (Bloomberg Tax); rule watch 2026-11-08 |
 | South Dakota | Minimum wage | $11.85 (tipped $5.925) | $12.30 (tipped $6.15) | DLR minimum wage page (Bloomberg Tax, Oct 14, 2026); rule watch 2026-11-09 |
 
-Not yet final, so not listed: New Jersey's 2027 wage bases ($46,400 UI, $177,100 disability and family leave) are only a proposed rule (58 N.J.R. 1978(a)). Colorado's ($32,100) and Oklahoma's ($24,400) UI wage bases appear on one aggregator only. Cupertino's $19.25 (city page, rule watch 2026-11-07), Los Altos $19.25 and Redwood City $19.30 (ADP chart, RegWatch and Employment Law Aid, rule watch 2026-11-08) are added to `local-minimum-wage.ts`. Sunnyvale's $20.05 is added (Experian and RegWatch, rule watch 2026-11-10). San Jose's $19.00 is added (rule watch 2026-11-11). Mountain View, Oakland and Berkeley haven't posted. Seattle's $22.14 for 2027 is announced, but Washington local minimum wages aren't checked yet.
+Not yet final, so not listed: New Jersey's 2027 wage bases ($46,400 UI, $177,100 disability and family leave) are only a proposed rule (58 N.J.R. 1978(a)). Colorado's ($32,100) and Oklahoma's ($24,400) UI wage bases appear on one aggregator only. Cupertino's $19.25 (city page, rule watch 2026-11-07), Los Altos $19.25 and Redwood City $19.30 (ADP chart, RegWatch and Employment Law Aid, rule watch 2026-11-08) are added to `local-minimum-wage.ts`. Sunnyvale's $20.05 is added (Experian and RegWatch, rule watch 2026-11-10). San Jose's $19.00 is added (rule watch 2026-11-11). Mountain View's $20.25 is added (rule watch 2026-11-12). Oakland and Berkeley haven't posted. Seattle's $22.14 for 2027 is announced, but Washington local minimum wages aren't checked yet.
 
 ## us-ca-sales-tax 2026.1 (`src/rules/sales-tax/us-ca-2026.ts`), released 2026-10-27
 
