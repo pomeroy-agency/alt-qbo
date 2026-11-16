@@ -116,6 +116,8 @@ describe("local minimum wages", () => {
     expect(localMinimumWage("Mountain View", "2027-01-01", 3)?.rate).toBe("20.25");
     expect(localMinimumWage("Mountain View", "2026-12-31", 3)?.rate).toBe("19.70");
     expect(localMinimumWage("Menlo Park", "2027-01-01", 3)?.rate).toBe("18.05");
+    expect(localMinimumWage("Richmond", "2027-01-01", 3)?.rate).toBe("19.61");
+    expect(localMinimumWage("El Cerrito", "2027-01-01", 3)?.rate).toBe("19.36");
     // July cities aren't checked before their 2026 rate.
     expect(localMinimumWage("San Francisco", "2026-06-30", 3)).toBeNull();
     expect(localMinimumWage("San Francisco", "2026-07-01", 3)?.rate).toBe("19.61");
