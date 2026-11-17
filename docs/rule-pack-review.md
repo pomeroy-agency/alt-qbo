@@ -26,7 +26,7 @@ The pack stays `draft` until the 2027 Pub 15-T is out and its annual percentage 
 |---|---|---|---|
 | Social Security wage base | $184,500 | SSA, Oct 2025 | ✅ matches |
 | SS / Medicare rates | 6.2% / 1.45% each side; Additional Medicare 0.9% over $200,000 | IRC 3101, 3111, 3102(f) | ✅ matches |
-| FUTA | 0.6% net on first $7,000 | IRC 3301; Form 940 | ✅ matches. California is on the DOL's 2026 credit-reduction list (likely 1.5%); final figure after Nov 10, 2026, goes on Schedule A. `futa.creditReduction.CA` is blank until then, so Form 940 line 11 shows blank with a warning |
+| FUTA | 0.6% net on first $7,000 | IRC 3301; Form 940 | ✅ matches. California's 2026 credit reduction is final at 1.5% (DOL determination Nov 12, 2026, as reported by Payroll.org and Bloomberg Tax; BCR add-on waived). `futa.creditReduction.CA` is "0.015", so Form 940 line 11 shows 1.5% of California FUTA wages (up to $105 per employee), due Feb 1, 2027 (rule watch 2026-11-17) |
 | Supplemental rate | 22% (37% over $1 million) | Pub 15 (2026) | ✅ matches |
 | 2026 brackets, all statuses | as in file | Rev. Proc. 2025-32, Tables 1-4 | ✅ matches the IRS PDF, including head of household (17,700 / 67,450 / 105,700 / 201,750 / 256,200 / 640,600) |
 | Standard deductions | $16,100 / $32,200 / $24,150 | Rev. Proc. 2025-32 §3.14 | ✅ matches |

@@ -746,8 +746,10 @@ describe("prepared payroll forms", () => {
     expect(line(f940, "4")).toBe(20000n);
     expect(line(f940, "7")).toBe(580000n);
     expect(line(f940, "8")).toBe(3480n);
-    expect(line(f940, "11")).toBe(0n);
-    expect(f940.warnings.join(" ")).toMatch(/credit reduction/);
+    // California 2026 credit reduction: 1.5% of FUTA wages on line 11.
+    expect(line(f940, "11")).toBe(8700n);
+    expect(line(f940, "12")).toBe(3480n + 8700n);
+    expect(line(f940, "2")).toMatch(/Schedule A/);
 
     const de9 = (await call(`${base}/payroll-forms/prepared?form=de9&year=2026&quarter=2`, { cookie: s.cookie })).data;
     expect(line(de9, "C")).toBe(580000n);
