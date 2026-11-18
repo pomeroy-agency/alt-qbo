@@ -109,6 +109,7 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | Oklahoma | UI wage base | $25,000 | $24,400 (rates 0.1% to 5.5%, state experience factor 29%) | OESC contribution rates page (HR Morning); rule watch 2026-11-14 |
 | Vermont | UI wage base | $15,400 | $16,100 | Vermont Department of Labor announcement, Nov 9, 2026 (VermontBiz); rule watch 2026-11-14 |
 | Colorado | UI chargeable wage base | $30,600 | $32,100 | CDLE UI premium rates page; rule watch 2026-11-15 |
+| Oregon | UI wage base | $56,700 | $58,600 (tax schedule 3 to 2; new-employer rate 2.4% to 2.1%) | Oregon Employment Department 2027 rate announcement, as reported by KQEN, Nov 17, 2026; rule watch 2026-11-18 |
 | Michigan | Minimum wage | $13.73 | $15.00 (tipped cash wage $6.30, 42%; minors $12.75); indexed from 2028 | Michigan LEO minimum wage page and 2027 poster; rule watch 2026-11-08 |
 | Nebraska | Minimum wage | $15.00 | $15.26 (then 1.75% a year) | Nebraska DOL wage schedule (Jul 31, 2026) under the law signed Feb 9, 2026 (Bloomberg Tax); rule watch 2026-11-08 |
 | South Dakota | Minimum wage | $11.85 (tipped $5.925) | $12.30 (tipped $6.15) | DLR minimum wage page (Bloomberg Tax, Oct 14, 2026); rule watch 2026-11-09 |
