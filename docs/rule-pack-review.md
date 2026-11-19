@@ -26,7 +26,7 @@ The pack stays `draft` until the 2027 Pub 15-T is out and its annual percentage 
 |---|---|---|---|
 | Social Security wage base | $184,500 | SSA, Oct 2025 | ✅ matches |
 | SS / Medicare rates | 6.2% / 1.45% each side; Additional Medicare 0.9% over $200,000 | IRC 3101, 3111, 3102(f) | ✅ matches |
-| FUTA | 0.6% net on first $7,000 | IRC 3301; Form 940 | ✅ matches. California is on the DOL's 2026 credit-reduction list (likely 1.5%); final figure after Nov 10, 2026, goes on Schedule A. `futa.creditReduction.CA` is blank until then, so Form 940 line 11 shows blank with a warning |
+| FUTA | 0.6% net on first $7,000 | IRC 3301; Form 940 | ✅ matches. California's 2026 credit reduction is final at 1.5% (DOL determination Nov 12, 2026, as reported by Payroll.org and Bloomberg Tax; BCR add-on waived). `futa.creditReduction.CA` is "0.015", so Form 940 line 11 shows 1.5% of California FUTA wages (up to $105 per employee), due Feb 1, 2027 (rule watch 2026-11-17) |
 | Supplemental rate | 22% (37% over $1 million) | Pub 15 (2026) | ✅ matches |
 | 2026 brackets, all statuses | as in file | Rev. Proc. 2025-32, Tables 1-4 | ✅ matches the IRS PDF, including head of household (17,700 / 67,450 / 105,700 / 201,750 / 256,200 / 640,600) |
 | Standard deductions | $16,100 / $32,200 / $24,150 | Rev. Proc. 2025-32 §3.14 | ✅ matches |
@@ -109,6 +109,7 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | Oklahoma | UI wage base | $25,000 | $24,400 (rates 0.1% to 5.5%, state experience factor 29%) | OESC contribution rates page (HR Morning); rule watch 2026-11-14 |
 | Vermont | UI wage base | $15,400 | $16,100 | Vermont Department of Labor announcement, Nov 9, 2026 (VermontBiz); rule watch 2026-11-14 |
 | Colorado | UI chargeable wage base | $30,600 | $32,100 | CDLE UI premium rates page; rule watch 2026-11-15 |
+| Oregon | UI wage base | $56,700 | $58,600 (tax schedule 3 to 2; new-employer rate 2.4% to 2.1%) | Oregon Employment Department 2027 rate announcement, as reported by KQEN, Nov 17, 2026; rule watch 2026-11-18 |
 | Michigan | Minimum wage | $13.73 | $15.00 (tipped cash wage $6.30, 42%; minors $12.75); indexed from 2028 | Michigan LEO minimum wage page and 2027 poster; rule watch 2026-11-08 |
 | Nebraska | Minimum wage | $15.00 | $15.26 (then 1.75% a year) | Nebraska DOL wage schedule (Jul 31, 2026) under the law signed Feb 9, 2026 (Bloomberg Tax); rule watch 2026-11-08 |
 | South Dakota | Minimum wage | $11.85 (tipped $5.925) | $12.30 (tipped $6.15) | DLR minimum wage page (Bloomberg Tax, Oct 14, 2026); rule watch 2026-11-09 |

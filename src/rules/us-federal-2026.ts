@@ -13,17 +13,18 @@ export const usFederal2026: FederalRulePack = {
     { ref: "Rev. Proc. 2025-32, section 3.01 Tables 1-4 and 3.14", covers: "2026 brackets for every filing status; standard deductions $32,200 / $24,150 / $16,100", basis: "published" },
     { ref: "SSA announcement, October 2025", covers: "Social Security wage base $184,500", basis: "published" },
     { ref: "IRS Publication 15 (2026), section 11 and section 14 Table 4", covers: "deposit schedules: $50,000 lookback test, monthly by the 15th, semiweekly Wednesday/Friday with 3 business days after the period, $100,000 next-day rule, $2,500 payment with return, FUTA over $500 by the end of the month after the quarter; DC legal holidays", basis: "published" },
+    { ref: "U.S. Department of Labor, 2026 FUTA credit reduction determination (Nov 12, 2026), as reported by Payroll.org (Nov 13) and Bloomberg Tax", covers: "California credit reduction 1.5% for 2026, BCR add-on waived", basis: "published" },
     { ref: "IRC 3101, 3111, 3301, 3102(f); Pub 15 (2026)", covers: "FICA rates, Additional Medicare 0.9% over $200,000, FUTA 0.6% net on $7,000, 22% supplemental rate", basis: "published" },
   ],
   reviewNotes: [
     "Checked 2026-10-25 against the IRS PDFs of Pub 15-T (2026) and Rev. Proc. 2025-32: every bracket, standard deduction and withholding schedule matches. Step 2 schedules round halved thresholds to the whole dollar, as the published table does.",
-    "California is on the Department of Labor's list for a 2026 FUTA credit reduction (likely 1.5%, more if no benefit-cost-rate waiver). The final figure comes after November 10, 2026 and lands on Form 940 Schedule A, not on paychecks.",
+    "California 2026 FUTA credit reduction is final at 1.5% (Department of Labor determination announced November 12, 2026, as reported by Payroll.org and Bloomberg Tax; the benefit-cost-rate add-on was waived). It lands on Form 940 line 11 and Schedule A, due February 1, 2027, not on paychecks. The Virgin Islands repaid and is at 0.0%. Rule watch 2026-11-17.",
     "2027: the Social Security wage base rises to $192,300 (SSA, October 14, 2026). The 2027 brackets (Rev. Proc. expected October or November 2026) and the 2027 Pub 15-T (December) are not out yet; a 2027 pack is needed before the first 2027 pay date.",
   ],
   payroll: {
     socialSecurity: { employeeRate: "0.062", employerRate: "0.062", wageBase: "184500" },
     medicare: { employeeRate: "0.0145", employerRate: "0.0145", additionalRate: "0.009", additionalThreshold: "200000" },
-    futa: { rate: "0.006", wageBase: "7000", note: "net of the 5.4% state credit; credit reduction handled on Schedule A", creditReduction: { CA: null } },
+    futa: { rate: "0.006", wageBase: "7000", note: "net of the 5.4% state credit; credit reduction handled on Schedule A", creditReduction: { CA: "0.015" } },
     supplementalRate: "0.22",
     deposits: { semiweeklyLookbackOver: "50000", nextDayAtOrAbove: "100000", payWithReturnUnder: "2500", futaDepositOver: "500" },
     incomeTax: {
