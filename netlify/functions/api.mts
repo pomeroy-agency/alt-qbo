@@ -20,8 +20,12 @@ import { invoicePaymentsFromEnv } from "../../src/app/stripe-connect.js";
 const pool = new pg.Pool({ connectionString: strictSsl(getConnectionString()), max: 3 });
 
 const mailer = mailerFromEnv();
-// Links in emails use the site's configured address: APP_URL if set, else Netlify's own URL for this deploy.
-const appUrl = process.env.APP_URL || (process.env.CONTEXT === "production" ? process.env.URL : process.env.DEPLOY_PRIME_URL || process.env.URL);
+// Links in emails and the card page's return address use the site's configured address
+// (APP_URL, else Netlify's URL). A deploy preview or branch deploy uses its own address,
+// so a test there never sends anyone back to the live app.
+const appUrl = process.env.CONTEXT === "production"
+  ? process.env.APP_URL || process.env.URL
+  : process.env.DEPLOY_PRIME_URL || process.env.APP_URL || process.env.URL;
 
 // California sales tax rates come from the CDTFA's public rate lookup.
 const taxRates = cdtfaRateLookup();
