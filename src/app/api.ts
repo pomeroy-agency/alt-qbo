@@ -27,7 +27,7 @@ import {
 } from "../billing/billing.js";
 import { GatewayError } from "../billing/gateway.js";
 import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
-import { attributionFromRequest, recordSignup, type AdEventsConfig } from "./ad-events.js";
+import { attributionFromRequest, recordSignup, type AdEventsConfig, type Defer } from "./ad-events.js";
 import { clientOverview } from "../core/firm.js";
 import { accrueReferralFees, clientReferral, linkReferral, operatorOverview, partnerOverview, recordPayout, savePartner, setW9, unlinkReferral, voidFee } from "../billing/referrals.js";
 import { connectFeed, feedAccessToken, listFeeds, markReconnected, removeFeed, syncFeed } from "../core/bank-feeds.js";
@@ -88,6 +88,8 @@ export interface ApiOptions {
   billing?: BillingConfig;
   /** Reports sign-ups and first payments to Google and Meta (ad-events.ts). */
   adEvents?: AdEventsConfig;
+  /** Finishes work after the response is sent (Netlify's context.waitUntil). Without it, that work runs unawaited. */
+  defer?: Defer;
   /** Apps that may connect to a business with OAuth (MilePost). */
   oauthClients?: OAuthClient[];
   /** Where MilePost's REST API lives, for the MilePost tab. */
@@ -2813,7 +2815,8 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       return uid;
     });
     if (created) {
-      await recordSignup(pool, opts.adEvents, { ...attributionFromRequest(req, b.attribution, b.adOptOut, opts.adEvents?.ga4MeasurementId), userId, orgId: created });
+      await recordSignup(pool, opts.adEvents, { ...attributionFromRequest(req, b.attribution, b.adOptOut, opts.adEvents?.ga4MeasurementId), userId, orgId: created, email },
+        opts.defer ?? ((work) => void work));
     }
     if (opts.mailer) await sendEmailLink(req, pool, opts, email, "verify");
     // TrailBook News, only when they ticked the box; Brevo still asks them to confirm.

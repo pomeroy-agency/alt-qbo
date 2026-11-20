@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleApi } from "../src/app/api.js";
-import { gaClientId, gaSessionId, recordFirstPayment, type AdEventsConfig } from "../src/app/ad-events.js";
+import { adEventsFromEnv, gaClientId, gaSessionId, hashEmail, recordFirstPayment, type AdEventsConfig } from "../src/app/ad-events.js";
 import { pool } from "./helpers.js";
 
 function fakeAds() {
@@ -16,15 +16,17 @@ function fakeAds() {
 }
 
 let n = 0;
-async function signup(cfg: AdEventsConfig | undefined, extra: { headers?: Record<string, string>; body?: Record<string, unknown> } = {}) {
-  const email = `ads${Date.now()}${n++}@example.com`;
+async function signup(cfg: AdEventsConfig | undefined, extra: { headers?: Record<string, string>; body?: Record<string, unknown>; email?: string } = {}) {
+  const email = extra.email ?? `ads${Date.now()}${n++}@example.com`;
+  const deferred: Promise<unknown>[] = [];
   const res = await handleApi(new Request("https://alt-qbo.test/api/auth/signup", {
     method: "POST",
     headers: { "content-type": "application/json", ...extra.headers },
     body: JSON.stringify({ acceptTerms: true, name: "Ad Test", email, password: "long-enough-pw", orgName: "Ad Co", ...extra.body }),
-  }), pool, { adEvents: cfg });
+  }), pool, { adEvents: cfg, defer: (p) => { deferred.push(p); } });
   expect(res.status).toBe(201);
-  const user = (await pool.query("SELECT id FROM users WHERE email = $1", [email])).rows[0];
+  await Promise.all(deferred);
+  const user = (await pool.query("SELECT id FROM users WHERE email = $1", [email.trim().toLowerCase()])).rows[0];
   const org = (await pool.query("SELECT org_id FROM memberships WHERE user_id = $1", [user.id])).rows[0];
   return { userId: user.id as string, orgId: org.org_id as string };
 }
@@ -39,25 +41,41 @@ describe("ad events", () => {
     expect(gaSessionId("GS2.1.s1761700500$o2$g1$t1761700600")).toBe("1761700500");
   });
 
-  it("reports a new organisation's sign-up to Meta and GA4 with the site's IDs, and nothing personal", async () => {
+  it("reports a new account as one StartTrial to Meta and one trial_start to GA4, with the site's IDs and a hashed email", async () => {
     const { cfg, sent } = fakeAds();
+    const email = `  Trial${Date.now()}@Example.com `;
     const s = await signup(cfg, {
+      email,
       headers: { cookie: SITE_COOKIES, "user-agent": "TestBrowser/1", "x-nf-client-connection-ip": "203.0.113.9" },
       body: { attribution: { fbclid: "IwAR123", utm_source: "google", utm_campaign: "tb-bookkeeping", page: "https://app.pomeroyagency.com/" } },
     });
     expect(sent).toHaveLength(2);
     const meta = sent.find((x) => x.url.includes("graph.facebook.com"))!;
     const e = meta.body.data[0];
-    expect(e.event_name).toBe("CompleteRegistration");
-    expect(e.event_id).toBe(`signup:${s.orgId}`);
+    expect(e.event_name).toBe("StartTrial");
+    expect(e.event_id).toBe(s.orgId);
+    expect(e.action_source).toBe("website");
+    expect(e.event_source_url).toBe("https://app.pomeroyagency.com/");
+    expect(e.custom_data).toEqual({ product: "trailbook", value: 0, currency: "USD" });
+    expect(e.user_data.em).toEqual([hashEmail(email)]);
+    expect(e.user_data.em[0]).toMatch(/^[a-f0-9]{64}$/);
+    expect(hashEmail(email)).toBe(hashEmail(email.trim().toLowerCase()));
+    expect(e.user_data.client_user_agent).toBe("TestBrowser/1");
+    // The token travels in the body, never in the address.
+    expect(meta.url).toBe("https://graph.facebook.com/v21.0/909707683290018/events");
+    expect(meta.body.access_token).toBe("meta-test-token");
+    expect(meta.body.test_event_code).toBeUndefined();
     expect(e.user_data.fbp).toBe("fb.1.1761700000000.987654321");
     expect(e.user_data.fbc).toMatch(/^fb\.1\.\d+\.IwAR123$/);
     expect(e.user_data.client_ip_address).toBe("203.0.113.9");
-    expect(JSON.stringify(meta.body)).not.toContain("example.com");
+    expect(JSON.stringify(meta.body).toLowerCase()).not.toContain("example.com");
     expect(JSON.stringify(meta.body)).not.toContain("Ad Co");
     const ga = sent.find((x) => x.url.includes("google-analytics.com"))!;
     expect(ga.body.client_id).toBe("111222333.1761700000");
-    expect(ga.body.events[0]).toMatchObject({ name: "sign_up", params: { session_id: "1761700500", product: "books" } });
+    expect(ga.body.events).toHaveLength(1);
+    expect(ga.body.events[0]).toMatchObject({ name: "trial_start", params: { session_id: "1761700500", product: "trailbook" } });
+    expect(ga.body.events[0].params.debug_mode).toBeUndefined();
+    expect(JSON.stringify(ga.body).toLowerCase()).not.toContain("example.com");
     const row = (await pool.query("SELECT gclid, utm_source, utm_campaign FROM ad_attribution WHERE org_id = $1", [s.orgId])).rows[0];
     expect(row).toEqual({ gclid: "Cj0KCQtest", utm_source: "google", utm_campaign: "tb-bookkeeping" });
   });
@@ -70,7 +88,8 @@ describe("ad events", () => {
     await recordFirstPayment(pool, cfg, { orgId: s.orgId, valueMinor: 1500n, plan: "books", invoice: "INV-0002" });
     expect(sent).toHaveLength(2);
     const e = sent.find((x) => x.url.includes("graph.facebook.com"))!.body.data[0];
-    expect(e).toMatchObject({ event_name: "Subscribe", event_id: `purchase:${s.orgId}`, custom_data: { value: 15, currency: "USD" } });
+    expect(e).toMatchObject({ event_name: "Subscribe", event_id: `purchase:${s.orgId}`, custom_data: { product: "trailbook", value: 15, currency: "USD" } });
+    expect(e.user_data.em).toBeUndefined();
     const ga = sent.find((x) => x.url.includes("google-analytics.com"))!.body.events[0];
     expect(ga).toMatchObject({ name: "purchase", params: { transaction_id: "INV-0001", value: 15, currency: "USD" } });
     const row = (await pool.query("SELECT ip, fbp, purchase_sent_at FROM ad_attribution WHERE org_id = $1", [s.orgId])).rows[0];
@@ -90,6 +109,49 @@ describe("ad events", () => {
       expect((await pool.query("SELECT 1 FROM ad_attribution WHERE org_id = $1", [s.orgId])).rows).toHaveLength(0);
     }
     expect(sent).toHaveLength(0);
+  });
+
+  it("sends a sign-up only once per account, and test codes and debug mode when they're set", async () => {
+    const { cfg, sent } = fakeAds();
+    const s = await signup({ ...cfg, metaTestCode: "TEST123", ga4Debug: true }, { headers: { cookie: SITE_COOKIES } });
+    expect(sent.filter((x) => x.url.includes("graph.facebook.com"))).toHaveLength(1);
+    expect(sent.filter((x) => x.url.includes("google-analytics.com"))).toHaveLength(1);
+    expect(sent.find((x) => x.url.includes("graph.facebook.com"))!.body.test_event_code).toBe("TEST123");
+    expect(sent.find((x) => x.url.includes("google-analytics.com"))!.body.events[0].params.debug_mode).toBe(true);
+    // A repeat for the same account (a retry, say) sends nothing more.
+    const { recordSignup } = await import("../src/app/ad-events.js");
+    const later: Promise<unknown>[] = [];
+    await recordSignup(pool, cfg, { optedOut: false, userId: s.userId, orgId: s.orgId, email: "x@example.com" }, (p) => { later.push(p); });
+    await Promise.all(later);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("never holds up a sign-up while Meta or Google is slow or down", async () => {
+    let release!: () => void;
+    const hang = new Promise<void>((r) => { release = r; });
+    const cfg: AdEventsConfig = {
+      metaPixelId: "1", metaToken: "t", ga4MeasurementId: "G-X", ga4ApiSecret: "s",
+      fetch: (async () => { await hang; throw new Error("down"); }) as unknown as typeof fetch,
+    };
+    const deferred: Promise<unknown>[] = [];
+    const res = await handleApi(new Request("https://alt-qbo.test/api/auth/signup", {
+      method: "POST", headers: { "content-type": "application/json", cookie: SITE_COOKIES },
+      body: JSON.stringify({ acceptTerms: true, name: "Slow", email: `slow${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Slow Co" }),
+    }), pool, { adEvents: cfg, defer: (p) => { deferred.push(p); } });
+    expect(res.status).toBe(201);
+    expect(deferred).toHaveLength(1);
+    release();
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
+  it("reads the keys from the environment, with the older Meta names as fallbacks", () => {
+    expect(adEventsFromEnv({})).toMatchObject({ metaPixelId: "909707683290018", ga4MeasurementId: "G-CEMK8J8PTZ", ga4Debug: false });
+    expect(adEventsFromEnv({}).metaToken).toBeUndefined();
+    expect(adEventsFromEnv({ META_CAPI_TOKEN: "new", META_CAPI_ACCESS_TOKEN: "old" }).metaToken).toBe("new");
+    expect(adEventsFromEnv({ META_CAPI_ACCESS_TOKEN: "old" }).metaToken).toBe("old");
+    expect(adEventsFromEnv({ META_CAPI_TEST_CODE: "T1", META_TEST_EVENT_CODE: "T0" }).metaTestCode).toBe("T1");
+    expect(adEventsFromEnv({ META_TEST_EVENT_CODE: "T0" }).metaTestCode).toBe("T0");
+    expect(adEventsFromEnv({ GA4_DEBUG_MODE: "1", GA4_API_SECRET: " s " })).toMatchObject({ ga4Debug: true, ga4ApiSecret: "s" });
   });
 
   it("never reports someone who joins an existing business by invitation", async () => {
