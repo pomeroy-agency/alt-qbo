@@ -7,17 +7,19 @@ import { withSystem } from "../db/pool.js";
 // measured on real customers instead of button clicks. Sent from the server
 // only: the app itself loads no Google or Meta code.
 //
-// What goes out is the event (trial_start / StartTrial when an account is
-// created, purchase / Subscribe on its first payment), the IDs the marketing
+// What goes out is the event (trial_start / StartTrial when the owner saves
+// the card the free trial starts with, purchase / Subscribe on its first
+// payment), the IDs the marketing
 // site's own Google Analytics and Meta Pixel cookies already hold (they're set
 // on .pomeroyagency.com, so they reach app.pomeroyagency.com too), the ad
 // click ID, the IP address and browser, a hash of the user's ID and, to Meta
 // only, a SHA-256 hash of the email (lowercased, trimmed). Never the email
 // itself, a name, the business name or anything in the books.
 //
-// Sending never holds up a sign-up: the click IDs are saved with the new
-// account first, then the two requests go out in the background (Netlify's
-// waitUntil), with a 5 second limit, and a failure is only logged.
+// Sending never holds anyone up: the click IDs are saved with the new
+// account at sign-up, and when the trial starts the two requests go out in
+// the background (Netlify's waitUntil), with a 5 second limit, and a failure
+// is only logged. An account that never adds a card is never reported.
 //
 // Nobody is reported who opted out at sign-up or whose browser sends Global
 // Privacy Control, and only organisations created after this shipped are ever
@@ -190,38 +192,55 @@ async function send(cfg: AdEventsConfig, row: Row, e: AdEvent) {
 export type Defer = (work: Promise<unknown>) => void;
 
 /**
- * Keeps the sign-up's attribution for the organisation it created and, unless
- * the person opted out, reports the trial start: once per organisation, with
- * the organisation's ID as Meta's event_id. Only the database write is
- * awaited; the reports go to `defer`. Never throws: a failure here must not
- * stop anyone signing up.
+ * Keeps the sign-up's attribution for the organisation it created, unless
+ * the person opted out. Nothing is sent yet: the trial start is reported
+ * when the card is saved (recordTrialStart). Never throws: a failure here
+ * must not stop anyone signing up.
  */
 export async function recordSignup(
-  pool: pg.Pool, cfg: AdEventsConfig | undefined, a: Attribution & { userId: string; orgId: string; email: string }, defer: Defer = () => {},
+  pool: pg.Pool, cfg: AdEventsConfig | undefined, a: Attribution & { userId: string; orgId: string; email: string },
 ): Promise<void> {
   if (!on(cfg) || a.optedOut) return;
   try {
-    // A visitor who never touched the marketing site has no _ga cookie; GA4 still counts the sign-up under a new ID.
+    // A visitor who never touched the marketing site has no _ga cookie; GA4 still counts the trial under a new ID.
     const gaClient = a.gaClientId ?? `${randomInt(1e9)}.${Math.floor(Date.now() / 1000)}`;
-    const row = (await withSystem(pool, (tx) => tx.query(
+    await withSystem(pool, (tx) => tx.query(
       `INSERT INTO ad_attribution (user_id, org_id, ga_client_id, ga_session_id, fbp, fbc, gclid,
-         utm_source, utm_medium, utm_campaign, utm_term, utm_content, ip, user_agent, page_url, signup_sent_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
-       ON CONFLICT (org_id) DO NOTHING RETURNING *`,
+         utm_source, utm_medium, utm_campaign, utm_term, utm_content, ip, user_agent, page_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       ON CONFLICT (org_id) DO NOTHING`,
       [a.userId, a.orgId, gaClient, a.gaSessionId ?? null, a.fbp ?? null, a.fbc ?? null, a.gclid ?? null,
         a.utmSource ?? null, a.utmMedium ?? null, a.utmCampaign ?? null, a.utmTerm ?? null, a.utmContent ?? null,
         a.ip ?? null, a.userAgent ?? null, a.pageUrl ?? null],
-    ))).rows[0] as Row | undefined;
+    ));
     // Identifiers of sign-ups that never paid are cleared after 120 days.
     await pool.query("UPDATE ad_attribution SET ip = NULL, user_agent = NULL, fbp = NULL, fbc = NULL, ga_session_id = NULL WHERE purchase_sent_at IS NULL AND created_at < now() - interval '120 days' AND ip IS NOT NULL");
-    if (row) {
-      defer(send(cfg, row, {
-        meta: "StartTrial", ga4: "trial_start", id: a.orgId, emailHash: hashEmail(a.email),
-        custom: { value: 0, currency: "USD" },
-      }).catch((err) => console.error("ad events: trial_start not sent:", err)));
-    }
   } catch (err) {
     console.error("ad events: sign-up not recorded:", err);
+  }
+}
+
+/**
+ * Reports the trial start, once per organisation, with the organisation's
+ * ID as Meta's event_id: when the owner saves the card the trial starts
+ * with. Only organisations whose sign-up was recorded are reported. The
+ * database claim is awaited; the reports go to `defer`. Never throws.
+ */
+export async function recordTrialStart(
+  pool: pg.Pool, cfg: AdEventsConfig | undefined, t: { orgId: string; email: string }, defer: Defer = () => {},
+): Promise<void> {
+  if (!on(cfg)) return;
+  try {
+    const row = (await withSystem(pool, (tx) => tx.query(
+      "UPDATE ad_attribution SET signup_sent_at = now() WHERE org_id = $1 AND signup_sent_at IS NULL RETURNING *", [t.orgId],
+    ))).rows[0] as Row | undefined;
+    if (!row) return;
+    defer(send(cfg, row, {
+      meta: "StartTrial", ga4: "trial_start", id: t.orgId, emailHash: hashEmail(t.email),
+      custom: { value: 0, currency: "USD" },
+    }).catch((err) => console.error("ad events: trial_start not sent:", err)));
+  } catch (err) {
+    console.error("ad events: trial start not recorded:", err);
   }
 }
 

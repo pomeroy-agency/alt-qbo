@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleApi } from "../src/app/api.js";
-import { adEventsFromEnv, gaClientId, gaSessionId, hashEmail, recordFirstPayment, type AdEventsConfig } from "../src/app/ad-events.js";
+import { adEventsFromEnv, gaClientId, gaSessionId, hashEmail, recordFirstPayment, recordTrialStart, type AdEventsConfig } from "../src/app/ad-events.js";
 import { pool } from "./helpers.js";
 
 function fakeAds() {
@@ -34,7 +34,15 @@ async function signup(cfg: AdEventsConfig | undefined, extra: { headers?: Record
   await Promise.all(deferred);
   const user = (await pool.query("SELECT id FROM users WHERE email = $1", [email.trim().toLowerCase()])).rows[0];
   const org = (await pool.query("SELECT org_id FROM memberships WHERE user_id = $1", [user.id])).rows[0];
-  return { userId: user.id as string, orgId: org.org_id as string };
+  return { userId: user.id as string, orgId: org.org_id as string, email };
+}
+
+/** What saving the card does: the trial starts, and is reported once. */
+async function startTrial(cfg: AdEventsConfig | undefined, s: { orgId: string; email: string }) {
+  const deferred: Promise<unknown>[] = [];
+  await recordTrialStart(pool, cfg, { orgId: s.orgId, email: s.email }, (p) => { deferred.push(p); });
+  await Promise.all(deferred);
+  return deferred.length;
 }
 
 const SITE_COOKIES = "_ga=GA1.1.111222333.1761700000; _ga_CEMK8J8PTZ=GS2.1.s1761700500$o2$g1$t1761700600; _fbp=fb.1.1761700000000.987654321; _gcl_aw=GCL.1761700000.Cj0KCQtest";
@@ -47,7 +55,7 @@ describe("ad events", () => {
     expect(gaSessionId("GS2.1.s1761700500$o2$g1$t1761700600")).toBe("1761700500");
   });
 
-  it("reports a new account as one StartTrial to Meta and one trial_start to GA4, with the site's IDs and a hashed email", async () => {
+  it("sends nothing at sign-up, then reports the trial start (card saved) as one StartTrial to Meta and one trial_start to GA4, with the site's IDs and a hashed email", async () => {
     const { cfg, sent } = fakeAds();
     const email = `  Trial${Date.now()}@Example.com `;
     const s = await signup(cfg, {
@@ -55,6 +63,9 @@ describe("ad events", () => {
       headers: { cookie: SITE_COOKIES, "user-agent": "TestBrowser/1", "x-nf-client-connection-ip": "203.0.113.9" },
       body: { attribution: { fbclid: "IwAR123", utm_source: "google", utm_campaign: "tb-bookkeeping", page: "https://app.pomeroyagency.com/" } },
     });
+    // An account that never adds a card is never reported.
+    expect(sent).toHaveLength(0);
+    await startTrial(cfg, { orgId: s.orgId, email });
     expect(sent).toHaveLength(2);
     const meta = sent.find((x) => x.url.includes("graph.facebook.com"))!;
     const e = meta.body.data[0];
@@ -89,6 +100,7 @@ describe("ad events", () => {
   it("reports the first payment once, then forgets the identifiers", async () => {
     const { cfg, sent } = fakeAds();
     const s = await signup(cfg, { headers: { cookie: SITE_COOKIES, "x-nf-client-connection-ip": "203.0.113.9" } });
+    await startTrial(cfg, s);
     sent.length = 0;
     await recordFirstPayment(pool, cfg, { orgId: s.orgId, valueMinor: 1500n, plan: "books", invoice: "INV-0001" });
     await recordFirstPayment(pool, cfg, { orgId: s.orgId, valueMinor: 1500n, plan: "books", invoice: "INV-0002" });
@@ -109,6 +121,7 @@ describe("ad events", () => {
     const boxed = await signup(cfg, { headers: { cookie: SITE_COOKIES }, body: { adOptOut: true } });
     const gpc = await signup(cfg, { headers: { cookie: SITE_COOKIES, "sec-gpc": "1" } });
     const off = await signup(undefined, { headers: { cookie: SITE_COOKIES } });
+    for (const s of [boxed, gpc, off]) expect(await startTrial(cfg, s)).toBe(0);
     expect(sent).toHaveLength(0);
     for (const s of [boxed, gpc, off]) {
       await recordFirstPayment(pool, cfg, { orgId: s.orgId, valueMinor: 1500n, plan: "books", invoice: "INV-9" });
@@ -117,22 +130,24 @@ describe("ad events", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("sends a sign-up only once per account, and test codes and debug mode when they're set", async () => {
+  it("sends a trial start only once per account, and test codes and debug mode when they're set", async () => {
     const { cfg, sent } = fakeAds();
-    const s = await signup({ ...cfg, metaTestCode: "TEST123", ga4Debug: true }, { headers: { cookie: SITE_COOKIES } });
+    const debug = { ...cfg, metaTestCode: "TEST123", ga4Debug: true };
+    const s = await signup(debug, { headers: { cookie: SITE_COOKIES } });
+    await startTrial(debug, s);
     expect(sent.filter((x) => x.url.includes("graph.facebook.com"))).toHaveLength(1);
     expect(sent.filter((x) => x.url.includes("google-analytics.com"))).toHaveLength(1);
     expect(sent.find((x) => x.url.includes("graph.facebook.com"))!.body.test_event_code).toBe("TEST123");
     expect(sent.find((x) => x.url.includes("google-analytics.com"))!.body.events[0].params.debug_mode).toBe(true);
-    // A repeat for the same account (a retry, say) sends nothing more.
+    // A repeat for the same account (a card replaced, a retry) sends nothing more.
+    expect(await startTrial(cfg, s)).toBe(0);
     const { recordSignup } = await import("../src/app/ad-events.js");
-    const later: Promise<unknown>[] = [];
-    await recordSignup(pool, cfg, { optedOut: false, userId: s.userId, orgId: s.orgId, email: "x@example.com" }, (p) => { later.push(p); });
-    await Promise.all(later);
+    await recordSignup(pool, cfg, { optedOut: false, userId: s.userId, orgId: s.orgId, email: "x@example.com" });
+    expect(await startTrial(cfg, s)).toBe(0);
     expect(sent).toHaveLength(2);
   });
 
-  it("never holds up a sign-up while Meta or Google is slow or down", async () => {
+  it("never holds up a sign-up or the card step while Meta or Google is slow or down", async () => {
     let release!: () => void;
     const hang = new Promise<void>((r) => { release = r; });
     const cfg: AdEventsConfig = {
@@ -140,11 +155,15 @@ describe("ad events", () => {
       fetch: (async () => { await hang; throw new Error("down"); }) as unknown as typeof fetch,
     };
     const deferred: Promise<unknown>[] = [];
+    const email = `slow${Date.now()}@example.com`;
     const res = await handleApi(new Request("https://alt-qbo.test/api/auth/signup", {
       method: "POST", headers: { "content-type": "application/json", cookie: SITE_COOKIES },
-      body: JSON.stringify({ acceptTerms: true, name: "Slow", email: `slow${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Slow Co" }),
+      body: JSON.stringify({ acceptTerms: true, name: "Slow", email, password: "long-enough-pw", orgName: "Slow Co" }),
     }), pool, { adEvents: cfg, defer: (p) => { deferred.push(p); } });
     expect(res.status).toBe(201);
+    expect(deferred).toHaveLength(0);
+    const orgId = (await pool.query("SELECT m.org_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = $1", [email])).rows[0].org_id;
+    await recordTrialStart(pool, cfg, { orgId, email }, (p) => { deferred.push(p); });
     expect(deferred).toHaveLength(1);
     release();
     await expect(deferred[0]).resolves.toBeUndefined();

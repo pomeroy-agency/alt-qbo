@@ -256,7 +256,7 @@ async function authView(mode, error = "", notice = "") {
     return;
   }
   app.innerHTML = authPage(`
-        <p class="muted">${signup ? "Create your account and your first organisation." : "Sign in to your books."}</p>
+        <p class="muted">${signup ? "Create your account and your first organisation. Next you add a card to start your free trial: 30 days free. Cancel any time before day 30 and you pay nothing." : "Sign in to your books."}</p>
         ${alerts}
         <form data-form="${mode}">
           ${signup ? `<label>Your name<input name="name" required autocomplete="name"></label>` : ""}
@@ -3304,12 +3304,134 @@ async function billingView() {
     </div>` : ""}`);
 }
 
+// ------------------------------------------------------- starting the trial
+
+const trial = { interval: "month", plan: "books" };
+
+/** What the card will be charged after the trial, in the words the owner agrees to. */
+function trialTerms(b, plan, interval) {
+  const cad = b.currency === "CAD";
+  const amt = (minor) => (cad ? usd(minor).replace("$", "C$") : usd(minor));
+  const trialEnd = b.next ? addDaysIso(b.next.periodStart, -1) : null;
+  const price = `${amt(b.prices.plan[plan][interval])} ${interval === "month" ? "a month" : "a year"}`;
+  const tax = cad ? " (Canadian dollars)" : ", plus sales tax where it applies";
+  const people = plan === "books_payroll" ? `, plus ${amt(b.prices.perPersonMonth)} for each person paid in a month` : "";
+  return {
+    disclosure: `Nothing is charged today. Your free trial ends on ${longDate(trialEnd)}. Unless you cancel before then, on ${longDate(b.next.periodStart)} we charge your card ${price} for ${PLAN_LABEL[plan]}${people}${tax}, and again every ${interval} until you cancel. We email you 3 days before the trial ends, with a link that cancels in one click. You can also cancel any time on the Billing page, no phone call needed. If you cancel, your books stay readable and downloadable.`,
+    consent: `I agree that TrailBook will charge my card ${price} for ${PLAN_LABEL[plan]}${people}${tax}, starting ${longDate(b.next.periodStart)} and every ${interval} after that, until I cancel.`,
+  };
+}
+
+const addDaysIso = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+
+/** A new organisation adds a card before it reaches the books; the trial starts when the card is saved. */
+async function startTrialView(error = "") {
+  const canPay = ["owner", "admin"].includes(state.org.role);
+  if (!canPay) {
+    app.innerHTML = shell("", `<div class="head"><div><h1>Almost there</h1></div></div>
+      <div class="panel"><p>${esc(state.org.org.name)} starts its 30-day free trial when an owner or admin adds a card. Ask them to sign in and add one; then the books open for everyone.</p></div>`);
+    return;
+  }
+  const b = await api(orgPath("/billing"));
+  if (b.free || !b.cardRequired) { state.org.stale = true; location.hash = "#/"; return; }
+  const plan = trial.plan, interval = trial.interval;
+  const cad = b.currency === "CAD";
+  const price = (minor) => (cad ? usd(minor).replace("$", "C$") : usd(minor)).replace(/\.00$/, "");
+  const per = interval === "month" ? "a month" : "a year";
+  const t = trialTerms(b, plan, interval);
+  const addr = b.billing.address ?? {};
+  const country = addr.country ?? (cad ? "CA" : "US");
+  const planCard = (k, blurb) => `<label class="card plan ${plan === k ? "on" : ""}">
+      <input type="radio" name="plan" value="${k}" ${plan === k ? "checked" : ""} data-trial-plan>
+      <div class="muted">${PLAN_LABEL[k]}</div>
+      <div class="plan-price">${price(b.prices.plan[k][interval])} <span class="muted">${per}</span></div>
+      ${k === "books_payroll" ? `<div>plus ${price(b.prices.perPersonMonth)} for each person paid in a month</div>` : ""}
+      <div class="muted">${blurb}</div>
+    </label>`;
+  app.innerHTML = shell("", `
+    <div class="head"><div><h1>Start your free trial</h1>
+      <p class="lead"><strong>30 days free. Cancel any time before day 30 and you pay nothing.</strong></p>
+      <p class="muted">Add a card to open your books. Everything is included during the trial, payroll too.</p></div></div>
+    ${error ? `<div class="alert bad">${esc(error)}</div>` : ""}
+    <form data-form="start-trial">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between"><h2>1. Pick a plan for after the trial</h2>
+          <div class="row seg"><button type="button" class="${interval === "month" ? "" : "secondary"}" data-action="trial-interval" data-v="month">Monthly</button><button type="button" class="${interval === "year" ? "" : "secondary"}" data-action="trial-interval" data-v="year">Yearly, 2 months free</button></div></div>
+        <div class="grid plans">${planCard("books", "Invoices, bills, bank import and reconciliation, reports, sales tax, audit trail, backups.")}${planCard("books_payroll", "Everything in Books, plus payroll: pay stubs, direct-deposit file, prepared tax forms.")}</div>
+        <p class="muted">You can change plans any time on the Billing page. The price covers your first business; each extra business adds ${price(b.prices.extraBusiness[plan][interval])} ${per}.</p>
+      </div>
+      <div class="panel"><h2>2. Billing details</h2>
+        <p class="muted">The name and address on your invoices.</p>
+        <div class="grid two">
+          <label>Business name<input name="name" required value="${esc(b.billing.name ?? state.org.org.name)}"></label>
+          <label>Billing email<input name="email" type="email" required value="${esc(b.billing.email ?? state.me.user.email)}"></label>
+          ${b.canadaOpen ? `<label>Country<select name="country">
+            <option value="US" ${country === "US" ? "selected" : ""}>United States</option>
+            <option value="CA" ${country === "CA" ? "selected" : ""}>Canada</option></select></label><span></span>` : ""}
+          <label>Street address<input name="line1" required value="${esc(addr.line1 ?? "")}"></label>
+          <label>City<input name="city" required value="${esc(addr.city ?? "")}"></label>
+          <label>${b.canadaOpen ? "State, province or territory" : "State"}<input name="state" required maxlength="2" placeholder="${b.canadaOpen ? "CA, BC, ON" : "CA"}" value="${esc(addr.state ?? "")}"></label>
+          <label>${b.canadaOpen ? "ZIP or postal code" : "ZIP code"}<input name="zip" required value="${esc(addr.zip ?? "")}"></label>
+        </div>
+      </div>
+      <div class="panel"><h2>3. Add a card</h2>
+        <p data-trial-disclosure>${esc(t.disclosure)}</p>
+        <label class="check multi"><input type="checkbox" name="autoRenewConsent" required><span data-trial-consent>${esc(t.consent)}</span></label>
+        <p><button type="submit">Continue to add a card</button></p>
+        <p class="muted">You type the card on our payment processor's secure page (Stripe). TrailBook never sees or stores the card number. See the <a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a>, section 4.</p>
+      </div>
+    </form>`);
+  startTrialView.billing = b;
+}
+
+/** Keeps the trial terms in step with the plan picked, before the owner agrees to them. */
+function updateTrialTerms(form) {
+  const b = startTrialView.billing;
+  if (!b) return;
+  trial.plan = form.elements.namedItem("plan").value || trial.plan;
+  form.querySelectorAll("label.plan").forEach((l) => l.classList.toggle("on", l.querySelector("input").checked));
+  const t = trialTerms(b, trial.plan, trial.interval);
+  form.querySelector("[data-trial-disclosure]").textContent = t.disclosure;
+  form.querySelector("[data-trial-consent]").textContent = t.consent;
+  // Agreeing again is needed after the terms change.
+  form.elements.namedItem("autoRenewConsent").checked = false;
+}
+
+/** The one-click cancel link from the trial emails. Works without signing in. */
+async function cancelTrialView(token, done = null) {
+  const page = (inner) => { app.innerHTML = authPage(inner); };
+  if (done) {
+    page(`<h2>Your trial is cancelled</h2><p>${esc(done.orgName)} won't be charged. Your books stay readable and downloadable. To start again, sign in and restart on the Billing page.</p><p><a href="#/login">Sign in</a></p>`);
+    return;
+  }
+  let v;
+  try {
+    v = await api("/api/cancel-trial", { body: { token } });
+  } catch (err) {
+    page(`<div class="alert bad">${esc(err.message)}</div><p><a href="#/login">Sign in</a> to manage billing.</p>`);
+    return;
+  }
+  if (v.state === "canceled") { page(`<h2>Already cancelled</h2><p>The trial for ${esc(v.orgName)} is cancelled. Nothing will be charged.</p><p><a href="#/login">Sign in</a></p>`); return; }
+  if (v.state === "ended") { page(`<h2>This trial has ended</h2><p>The free trial for ${esc(v.orgName)} is over, so this link no longer works. Sign in and cancel on the Billing page; no phone call needed.</p><p><a href="#/login">Sign in</a></p>`); return; }
+  const amount = v.charge.currency === "CAD" ? usd(v.charge.amountMinor).replace("$", "C$") : usd(v.charge.amountMinor);
+  page(`<h2>Cancel your free trial?</h2>
+    <p>The free trial of TrailBook for <strong>${esc(v.orgName)}</strong> ends on ${longDate(v.trialEndsOn)}. If you keep it, ${amount}${v.charge.currency === "CAD" ? " (Canadian dollars)" : " plus any sales tax"} is charged on ${longDate(v.charge.chargeOn)}.</p>
+    <p>If you cancel, nothing is charged, the trial ends now, and your books stay readable and downloadable.</p>
+    <p><button data-action="cancel-trial-link" data-token="${esc(token)}">Cancel my trial</button></p>
+    <p class="muted">Changed your mind? Just close this page; your trial carries on.</p>`);
+}
+
 /** Where the card processor sends people back after saving a card. */
 async function cardReturnView(sessionId) {
   app.innerHTML = shell("billing", `<div class="panel"><p>Saving your card…</p></div>`);
   try {
     const r = await api(orgPath("/billing/card/confirm"), { body: { sessionId } });
     state.org.stale = true;
+    if (r.trialStarted) {
+      toast(`Your free trial has started. Nothing is charged until ${longDate(addDaysIso(r.trialEndsOn, 1))}`);
+      location.hash = "#/";
+      return;
+    }
     toast(r.charged ? `Card saved and charged. Thank you!` : r.failed ? "Card saved, but the payment didn't go through" : `Card ending ${r.card.last4} saved`);
   } catch (err) {
     toast(err.message);
@@ -3650,6 +3772,7 @@ async function route() {
     if (parts[0] === "join" && parts[1]) return await joinView(parts[1]);
     if (parts[0] === "hub" && parts[1]) return await hubView(parts[1], parts[2]);
     if (parts[0] === "hub-link" && parts[1]) return await hubLinkView(parts[1]);
+    if (parts[0] === "cancel-trial" && parts[1]) return await cancelTrialView(parts[1]);
     if (!state.me) {
       try { state.me = await api("/api/me"); } catch {
         // An app sent someone here to connect: come back to the consent page after signing in.
@@ -3667,6 +3790,11 @@ async function route() {
     // Before the organisation loads: one that requires two-factor refuses everything until it's on.
     if (parts[0] === "account") return await accountView();
     if (!state.org || state.org.org.id !== state.orgId || state.org.stale) state.org = await api(orgPath());
+    // A new organisation adds its card first; the trial, and the books, start when it's saved.
+    if (state.org.cardRequired) {
+      if (parts[0] === "billing" && parts[1] === "card" && parts[2]) return await cardReturnView(parts[2]);
+      if (!["team", "referrals"].includes(parts[0])) return await startTrialView();
+    }
     if (parts[0] === "e" && parts[1]) {
       if (parts[2] === "reports" && REPORTS.some(([k]) => k === parts[3])) rep.tab = parts[3];
       if (parts[2] === "payroll" && parts[3] === "run" && parts[4]) return await payRunView(parts[1], parts[4]);
@@ -3710,6 +3838,7 @@ document.addEventListener("input", (ev) => {
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.dataset.trialPlan !== undefined && t.form) updateTrialTerms(t.form);
   if (t.dataset.upload) uploadFile(t).catch((err) => { t.disabled = false; toast(err.message); });
   if (t.name === "country" && t.closest("form[data-form=entity]")) {
     t.form.elements.namedItem("region").innerHTML = regionOptions(t.value);
@@ -3960,6 +4089,24 @@ document.addEventListener("click", async (ev) => {
     } else if (a === "bill-interval") {
       bill.interval = b.dataset.v;
       await billingView();
+    } else if (a === "trial-interval") {
+      const form = b.closest("form");
+      // Keep what's been typed while the prices switch.
+      const typed = form ? formData(form) : {};
+      trial.interval = b.dataset.v;
+      if (typed.plan) trial.plan = typed.plan;
+      await startTrialView();
+      const nf = document.querySelector("form[data-form=start-trial]");
+      if (nf) for (const k of ["name", "email", "line1", "city", "state", "zip", "country"]) if (typed[k] && nf.elements.namedItem(k)) nf.elements.namedItem(k).value = typed[k];
+    } else if (a === "cancel-trial-link") {
+      b.disabled = true;
+      try {
+        const r = await api("/api/cancel-trial/confirm", { body: { token: b.dataset.token } });
+        await cancelTrialView(b.dataset.token, r);
+      } catch (err) {
+        b.disabled = false;
+        toast(err.message);
+      }
     } else if (a === "bill-card") {
       b.disabled = true;
       const r = await api(orgPath("/billing/card"), { body: {} });
@@ -4210,6 +4357,19 @@ document.addEventListener("submit", async (ev) => {
       state.me = null; state.org = null; state.orgId = null;
       location.hash = afterLogin();
       await route();
+    } else if (kind === "start-trial") {
+      const btn = f.querySelector("button[type=submit]");
+      btn.disabled = true;
+      try {
+        await api(orgPath("/billing/details"), { body: { name: d.name, email: d.email, address: { line1: d.line1, city: d.city, state: d.state, zip: d.zip, country: d.country || "US" } } });
+        await api(orgPath("/billing/plan"), { body: { plan: trial.plan, interval: trial.interval } });
+        const consentText = f.querySelector("[data-trial-consent]").textContent;
+        const r = await api(orgPath("/billing/card"), { body: { autoRenewConsent: d.autoRenewConsent === "on", consentText } });
+        location.href = r.url;
+      } catch (err) {
+        btn.disabled = false;
+        toast(err.message);
+      }
     } else if (kind === "bill-plan") {
       await api(orgPath("/billing/plan"), { body: { plan: d.plan, interval: f.dataset.interval } });
       bill.interval = null;

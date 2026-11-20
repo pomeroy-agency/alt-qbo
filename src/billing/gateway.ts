@@ -32,6 +32,8 @@ export interface PaymentGateway {
     orgId: string; customerId: string | null; email: string; name: string; successUrl: string; cancelUrl: string;
     /** The currency the card will be charged in; US dollars when left out. */
     currency?: string;
+    /** Shown beside the button on the processor's page: what the card will be charged, and when. */
+    notice?: string;
   }): Promise<{ url: string; customerId: string }>;
   /** The card saved on that page, once the customer finished it. */
   finishCardSetup(sessionId: string): Promise<SavedCard>;
@@ -83,6 +85,7 @@ export function stripeGateway(secretKey: string, fetchImpl: Fetch = fetch): Paym
         mode: "setup", currency: (input.currency ?? "usd").toLowerCase(), customer: customerId, payment_method_types: ["card"],
         client_reference_id: input.orgId, metadata: { org_id: input.orgId },
         success_url: input.successUrl, cancel_url: input.cancelUrl,
+        ...(input.notice && { custom_text: { submit: { message: input.notice.slice(0, 1200) } } }),
       });
       if (!s.ok) throw new GatewayError(s.data?.error?.message ?? "the card processor didn't respond");
       return { url: s.data.url as string, customerId: customerId! };

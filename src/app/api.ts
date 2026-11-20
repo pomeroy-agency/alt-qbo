@@ -22,12 +22,13 @@ import { balanceSheet, balanceSheetCsv, booksHealth, generalLedger, generalLedge
 import { backupEntity } from "../core/backup.js";
 import { listRestorePoints, readRestorePoint, type BackupStore } from "../core/nightly-backups.js";
 import {
-  BillingError, billingSummary, cancel as cancelSubscription, checkAccess, choosePlan, ensureSubscription, resume as resumeSubscription,
-  runBilling, saveBillingDetails, saveCard, type BillingConfig,
+  BillingError, CARD_REQUIRED_REASON, awaitingCard, billingSummary, cancel as cancelSubscription, cardGateClosed, checkAccess, choosePlan, ensureSubscription,
+  previewCancelLink, requireCard, resume as resumeSubscription, runBilling, saveBillingDetails, saveCard, sendTrialStarted, useCancelLink, type BillingConfig,
 } from "../billing/billing.js";
+import { PLAN_NAMES, TRIAL_DAYS, addDays, formatMoney } from "../billing/plans.js";
 import { GatewayError } from "../billing/gateway.js";
 import { handleHub, pushStatusQuietly, type HubOptions } from "./hub.js";
-import { attributionFromRequest, recordSignup, type AdEventsConfig, type Defer } from "./ad-events.js";
+import { attributionFromRequest, recordSignup, recordTrialStart, type AdEventsConfig, type Defer } from "./ad-events.js";
 import { clientOverview } from "../core/firm.js";
 import { accrueReferralFees, clientReferral, linkReferral, operatorOverview, partnerOverview, recordPayout, savePartner, setW9, unlinkReferral, voidFee } from "../billing/referrals.js";
 import { connectFeed, feedAccessToken, listFeeds, markReconnected, removeFeed, syncFeed } from "../core/bank-feeds.js";
@@ -352,6 +353,8 @@ route("POST", "/api/orgs/:org/newsletter/notes/:note/remove", async (_req, p, ct
 route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
   // Whether changes are paused for an unpaid subscription, so every page can say so.
   const access = ctx.opts.billing?.enforce ? await checkAccess(ctx.pool, ctx.orgId, ctx.opts.billing, pacificToday()) : { level: "full" };
+  // A new organisation adds its card before it reaches the books.
+  const cardRequired = Boolean(ctx.opts.billing?.gateway) && await cardGateClosed(ctx.pool, ctx.orgId);
   return tenant(ctx, async (tx) => {
     const org = (await tx.query("SELECT id, name, kind FROM organizations WHERE id = $1", [ctx.orgId])).rows[0];
     const entities = (await tx.query(
@@ -360,7 +363,7 @@ route("GET", "/api/orgs/:org", async (_req, _p, ctx) => {
     )).rows;
     // Countries and their states or provinces, for the place-of-business picker.
     return json({
-      org, role: ctx.role, entities, access, countries: COUNTRIES, newsletter: Boolean(newsletterFor(ctx, false)),
+      org, role: ctx.role, entities, access, cardRequired, countries: COUNTRIES, newsletter: Boolean(newsletterFor(ctx, false)),
       // Whether to show the Referrals page (a firm in the program) and the Referral fees page (the operator).
       referrals: Boolean((await ctx.pool.query("SELECT 1 FROM referral_partners WHERE org_id = $1", [ctx.orgId])).rows[0]),
       referralFees: Boolean(ctx.opts.billing?.seller?.orgId === ctx.orgId && ["owner", "admin"].includes(ctx.role)),
@@ -515,12 +518,29 @@ route("POST", "/api/orgs/:org/billing/card", async (req, _p, ctx) => {
   requireRole(ctx, ["owner", "admin"]);
   const gateway = ctx.opts.billing?.gateway;
   if (!gateway || !ctx.opts.billing?.seller) throw new HttpError(503, "card payments aren't switched on yet");
-  const sub = await withSystem(ctx.pool, (tx) => ensureSubscription(tx, ctx.orgId, pacificToday()));
+  const b = await body(req);
+  const today = pacificToday();
+  const sub = await withSystem(ctx.pool, (tx) => ensureSubscription(tx, ctx.orgId, today));
   if (!sub.address_line1) throw new HttpError(400, "add the billing name, email and address first");
+  // The card that starts a trial: the owner agrees to the automatic renewal first, and Stripe's page says it again.
+  let notice: string | undefined;
+  if (awaitingCard(sub)) {
+    if (b.autoRenewConsent !== true) throw new HttpError(400, "tick the box to agree to the charge after the free trial");
+    const plan = sub.plan, interval = sub.interval;
+    const chargeOn = addDays(today, TRIAL_DAYS + 1);
+    const price = `${formatMoney(sub.prices.plan[plan][interval], sub.currency)} ${interval === "month" ? "a month" : "a year"}`;
+    notice = `Nothing is charged today. Your 30-day free trial ends on ${addDays(today, TRIAL_DAYS)}. Unless you cancel before then, on ${chargeOn} `
+      + `TrailBook charges this card ${price} for ${PLAN_NAMES[plan]}${sub.currency === "CAD" ? " (Canadian dollars)" : ", plus sales tax where it applies"}, `
+      + `and again every ${interval} until you cancel. Cancel any time on the Billing page.`;
+    await withSystem(ctx.pool, (tx) => appendAudit(tx, {
+      orgId: ctx.orgId, actor: ctx.actor.id, action: "billing.auto_renew_consent", objectType: "organization", objectId: ctx.orgId,
+      after: { plan, interval, price, currency: sub.currency, chargeOn, wording: String(b.consentText ?? "").slice(0, 1000) || notice }, context: { role: ctx.role },
+    }));
+  }
   const base = appUrl(req, ctx.opts);
   const out = await gateway.startCardSetup({
     orgId: ctx.orgId, customerId: sub.processor_customer, email: sub.billing_email!, name: sub.billing_name!, currency: sub.currency,
-    successUrl: `${base}/#/billing/card/{CHECKOUT_SESSION_ID}`, cancelUrl: `${base}/#/billing`,
+    successUrl: `${base}/#/billing/card/{CHECKOUT_SESSION_ID}`, cancelUrl: `${base}/#/billing`, notice,
   });
   if (!sub.processor_customer) await ctx.pool.query("UPDATE subscriptions SET processor_customer = $2 WHERE org_id = $1", [ctx.orgId, out.customerId]);
   return json({ url: out.url });
@@ -533,17 +553,23 @@ route("POST", "/api/orgs/:org/billing/card/confirm", async (req, _p, ctx) => {
   const b = await body(req);
   const card = await gateway.finishCardSetup(str(b.sessionId, "card setup", 300));
   const today = pacificToday();
-  await withSystem(ctx.pool, async (tx) => {
-    await saveCard(tx, ctx.orgId, card, today);
+  const saved = await withSystem(ctx.pool, async (tx) => {
+    const out = await saveCard(tx, ctx.orgId, card, today);
     await appendAudit(tx, {
-      orgId: ctx.orgId, actor: ctx.actor.id, action: "billing.card_saved", objectType: "organization", objectId: ctx.orgId,
-      after: { brand: card.brand, last4: card.last4 }, context: { role: ctx.role },
+      orgId: ctx.orgId, actor: ctx.actor.id, action: out.trialStarted ? "billing.trial_started" : "billing.card_saved", objectType: "organization", objectId: ctx.orgId,
+      after: { brand: card.brand, last4: card.last4, ...(out.trialStarted && { trialEndsOn: out.trialEndsOn }) }, context: { role: ctx.role },
     });
+    return out;
   });
+  if (saved.trialStarted) {
+    // The trial starts now: confirm its terms by email, and tell the ads it started.
+    await sendTrialStarted(ctx.pool, billingCfg(ctx), ctx.orgId, today).catch((err) => console.error("trial started email failed", err));
+    await recordTrialStart(ctx.pool, ctx.opts.adEvents, { orgId: ctx.orgId, email: ctx.user.email }, ctx.opts.defer ?? ((work) => void work));
+  }
   // Anything due (a trial that already ended, a failed payment) is charged to the new card straight away.
   const run = await runBilling(ctx.pool, billingCfg(ctx), today, ctx.orgId);
   await pushStatusQuietly(ctx.pool, ctx.opts.hub, billingCfg(ctx), ctx.orgId);
-  return json({ ok: true, card: { brand: card.brand, last4: card.last4 }, charged: run.charged, failed: run.failed });
+  return json({ ok: true, card: { brand: card.brand, last4: card.last4 }, charged: run.charged, failed: run.failed, trialStarted: saved.trialStarted, trialEndsOn: saved.trialEndsOn });
 });
 
 route("GET", "/api/orgs/:org/audit", async (_req, _p, ctx) =>
@@ -2463,6 +2489,13 @@ route("POST", "/api/orgs/:org/entities/:entity/pay-runs/:run/approve", async (_r
 /** Still allowed when unpaid books are read-only: paying, leaving, security (removing people), and taking the books away. */
 const ALWAYS_ALLOWED = /\/(billing(\/.*)?|leave|security|backup|backups\/[^/]+\/download|members\/[^/]+\/remove|invitations\/[^/]+\/revoke|integrations\/milepost\/key\/remove|integrations\/apps\/[^/]+\/revoke)$/;
 
+/**
+ * What an organisation can reach before it adds the card its trial starts
+ * with: billing, its team, and the referral program (a firm can join it
+ * without a trial of its own). Not the books.
+ */
+const CARD_GATE_OPEN = /^\/api\/orgs\/[0-9a-f-]{36}(\/(billing(\/.*)?|referrals(\/.*)?|leave|security|members|invitations))?$/;
+
 const ROLE_NAMES: Record<string, string> = { admin: "an admin", bookkeeper: "a bookkeeper", approver: "an approver", accountant: "an accountant", read_only: "a viewer" };
 
 const EMAIL_ROUTE: Record<string, EmailPurpose> = { "email-link": "sign_in", reset: "reset", verify: "verify" };
@@ -2806,6 +2839,8 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
         const org = await createOrganization(tx, { name: orgName!, actor: { id: `user:${email}`, role: "owner" } });
         await tx.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [uid, org.id]);
         await acceptTerms(tx, org.id, uid);
+        // With card payments on, the owner adds a card to start the 30-day trial before reaching the books.
+        if (opts.billing?.gateway && opts.billing.seller) await requireCard(tx, org.id, pacificToday());
         // A firm's referral code, from its sign-up link or typed in.
         if (typeof b.referralCode === "string" && b.referralCode.trim()) {
           await linkReferral(tx, org.id, pacificToday(), b.referralCode, { id: `user:${email}`, role: "owner" });
@@ -2815,8 +2850,7 @@ async function authRoutes(req: Request, path: string, pool: pg.Pool, opts: ApiOp
       return uid;
     });
     if (created) {
-      await recordSignup(pool, opts.adEvents, { ...attributionFromRequest(req, b.attribution, b.adOptOut, opts.adEvents?.ga4MeasurementId), userId, orgId: created, email },
-        opts.defer ?? ((work) => void work));
+      await recordSignup(pool, opts.adEvents, { ...attributionFromRequest(req, b.attribution, b.adOptOut, opts.adEvents?.ga4MeasurementId), userId, orgId: created, email });
     }
     if (opts.mailer) await sendEmailLink(req, pool, opts, email, "verify");
     // TrailBook News, only when they ticked the box; Brevo still asks them to confirm.
@@ -2966,6 +3000,15 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       if (path.endsWith("/confirm")) return json(await confirmFromView(pool, opts.invoicePayments, { token, sessionId: typeof b.session === "string" ? b.session : "" }));
       return json(await startCheckout(pool, opts.invoicePayments, { token, appUrl: appUrl(req, opts) }));
     }
+    // The one-click cancel link in the trial emails. No sign-in: the token, in the body, is the key.
+    if (req.method === "POST" && (path === "/api/cancel-trial" || path === "/api/cancel-trial/confirm")) {
+      const b = await body(req);
+      const today = pacificToday();
+      if (path === "/api/cancel-trial") return json(await previewCancelLink(pool, b.token, today));
+      const out = await useCancelLink(pool, { ...opts.billing, mailer: opts.mailer, appUrl: opts.appUrl }, b.token, today);
+      if (!out.already) await pushStatusQuietly(pool, opts.hub, { ...opts.billing, mailer: opts.mailer, appUrl: opts.appUrl }, out.orgId);
+      return json({ ok: true, orgName: out.orgName, already: out.already });
+    }
     const open = await authRoutes(req, path, pool, opts);
     if (open) return open;
 
@@ -2981,9 +3024,16 @@ export async function handleApi(req: Request, pool: pg.Pool, opts: ApiOptions = 
       if (!role) throw new HttpError(404, "organisation not found");
       if (!path.endsWith("/leave")) await requireMfaIfOrgDoes(pool, params.org!, user.id);
       if (needsSecondFactor(req.method, path)) await requireSecondFactor(pool, params.org!, user);
+      // Until the card that starts the trial is saved, only billing (and leaving) is open.
+      if (opts.billing?.gateway && !CARD_GATE_OPEN.test(path) && await cardGateClosed(pool, params.org!)) {
+        throw new HttpError(402, CARD_REQUIRED_REASON, "card_required");
+      }
       if (req.method !== "GET" && opts.billing?.enforce && !ALWAYS_ALLOWED.test(path)) {
         const access = await checkAccess(pool, params.org!, opts.billing, pacificToday(), path);
-        if (access.level === "read_only") throw new HttpError(402, access.reason!);
+        // Before the trial's card, the parts that aren't the books stay open.
+        if (access.level === "read_only" && !(access.cardRequired && CARD_GATE_OPEN.test(path))) {
+          throw new HttpError(402, access.reason!, access.cardRequired ? "card_required" : undefined);
+        }
       }
       if (req.method !== "GET" && role === "read_only") throw new HttpError(403, "read-only users cannot make changes");
       const ctx: Ctx = { pool, opts, user, orgId: params.org!, role, actor: { id: `user:${user.email}`, role } };

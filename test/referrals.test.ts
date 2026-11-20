@@ -128,7 +128,7 @@ describe("firm referrals", () => {
     expect(page.data.clients).toEqual([expect.objectContaining({ name: "Fee client", reward: "firm_fee", owedMinor: "600", paidMinor: "0", feeUntil: addMonths(first, 12) })]);
 
     // Only the operator sees the Referral fees page.
-    expect((await call(f.o("/referral-fees"), { cookie: f.cookie })).status).toBe(404);
+    expect((await call(f.o("/referral-fees"), { cookie: f.cookie })).status).not.toBe(200); // 402 until the firm adds a card, 404 after: never the operator's page
     const ops = await call(operator.o("/referral-fees"), { cookie: operator.cookie });
     expect(ops.status).toBe(200);
     const row = ops.data.partners.find((p: { orgId: string }) => p.orgId === f.orgId);
