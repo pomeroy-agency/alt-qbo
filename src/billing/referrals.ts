@@ -213,7 +213,9 @@ export async function accrueReferralFees(pool: pg.Pool): Promise<number> {
        )
        INSERT INTO referral_fees (partner_org_id, client_org_id, charge_id, currency, base_minor, rate_pct, fee_minor, earned_on)
        SELECT s.partner_org_id, c.org_id, c.id, coalesce(to_jsonb(c)->>'currency', 'USD'), c.subtotal_minor, $1::int,
-              (c.subtotal_minor * $1::int + 50) / 100, coalesce(c.paid_at, c.updated_at)::date
+              (c.subtotal_minor * $1::int + 50) / 100,
+              -- The Pacific date, matching the payout form's "paid on" (pacificToday); a UTC date runs a day ahead every evening.
+              (coalesce(c.paid_at, c.updated_at) AT TIME ZONE 'America/Los_Angeles')::date
          FROM billing_charges c
          JOIN subscriptions s ON s.org_id = c.org_id
          JOIN referral_partners p ON p.org_id = s.partner_org_id

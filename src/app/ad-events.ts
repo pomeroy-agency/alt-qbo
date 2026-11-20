@@ -7,11 +7,17 @@ import { withSystem } from "../db/pool.js";
 // measured on real customers instead of button clicks. Sent from the server
 // only: the app itself loads no Google or Meta code.
 //
-// What goes out is the event (sign_up / CompleteRegistration, purchase /
-// Subscribe), the IDs the marketing site's own Google Analytics and Meta Pixel
-// cookies already hold (they're set on .pomeroyagency.com, so they reach
-// app.pomeroyagency.com too), the ad click ID, the IP address and browser,
-// and a hash of the user's ID. No name, email, business name or books.
+// What goes out is the event (trial_start / StartTrial when an account is
+// created, purchase / Subscribe on its first payment), the IDs the marketing
+// site's own Google Analytics and Meta Pixel cookies already hold (they're set
+// on .pomeroyagency.com, so they reach app.pomeroyagency.com too), the ad
+// click ID, the IP address and browser, a hash of the user's ID and, to Meta
+// only, a SHA-256 hash of the email (lowercased, trimmed). Never the email
+// itself, a name, the business name or anything in the books.
+//
+// Sending never holds up a sign-up: the click IDs are saved with the new
+// account first, then the two requests go out in the background (Netlify's
+// waitUntil), with a 5 second limit, and a failure is only logged.
 //
 // Nobody is reported who opted out at sign-up or whose browser sends Global
 // Privacy Control, and only organisations created after this shipped are ever
@@ -24,20 +30,30 @@ export interface AdEventsConfig {
   metaTestCode?: string;
   ga4MeasurementId: string;
   ga4ApiSecret?: string;
+  /** Marks GA4 events debug_mode, so they show in GA4 DebugView. */
+  ga4Debug?: boolean;
   fetch?: typeof fetch;
 }
 
+const envVal = (env: Record<string, string | undefined>, ...keys: string[]) => {
+  for (const k of keys) { const v = env[k]?.trim(); if (v) return v; }
+  return undefined;
+};
+
 /**
- * META_CAPI_ACCESS_TOKEN and GA4_API_SECRET switch each half on; the pixel and
- * measurement IDs default to pomeroyagency.com's own.
+ * META_CAPI_TOKEN and GA4_API_SECRET switch each half on (META_CAPI_ACCESS_TOKEN,
+ * the name first used, still works). META_CAPI_TEST_CODE sends Meta events as
+ * Test Events and GA4_DEBUG_MODE=1 sends GA4 events to DebugView; remove both
+ * after testing. The pixel and measurement IDs default to pomeroyagency.com's own.
  */
 export function adEventsFromEnv(env: Record<string, string | undefined> = process.env): AdEventsConfig {
   return {
-    metaPixelId: env.META_PIXEL_ID || "909707683290018",
-    metaToken: env.META_CAPI_ACCESS_TOKEN || undefined,
-    metaTestCode: env.META_TEST_EVENT_CODE || undefined,
-    ga4MeasurementId: env.GA4_MEASUREMENT_ID || "G-CEMK8J8PTZ",
-    ga4ApiSecret: env.GA4_API_SECRET || undefined,
+    metaPixelId: envVal(env, "META_PIXEL_ID") ?? "909707683290018",
+    metaToken: envVal(env, "META_CAPI_TOKEN", "META_CAPI_ACCESS_TOKEN"),
+    metaTestCode: envVal(env, "META_CAPI_TEST_CODE", "META_TEST_EVENT_CODE"),
+    ga4MeasurementId: envVal(env, "GA4_MEASUREMENT_ID") ?? "G-CEMK8J8PTZ",
+    ga4ApiSecret: envVal(env, "GA4_API_SECRET"),
+    ga4Debug: /^(1|true|on)$/i.test(envVal(env, "GA4_DEBUG_MODE") ?? ""),
   };
 }
 
@@ -100,13 +116,25 @@ export function attributionFromRequest(req: Request, sent: unknown, optOutBox: u
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+/** Meta's normalisation for an email before hashing: trimmed, lowercased. */
+export const hashEmail = (email: string) => sha256(email.trim().toLowerCase());
+const TIMEOUT_MS = 5000;
 
 interface Row {
   user_id: string; org_id: string; ga_client_id: string | null; ga_session_id: string | null; fbp: string | null; fbc: string | null;
   ip: string | null; user_agent: string | null; page_url: string | null;
 }
 
-async function send(cfg: AdEventsConfig, row: Row, e: { meta: string; ga4: string; id: string; value?: number; params?: Record<string, unknown> }) {
+interface AdEvent {
+  meta: string; ga4: string; id: string;
+  /** Meta custom_data beyond product. */
+  custom?: Record<string, unknown>;
+  /** GA4 params beyond product. */
+  params?: Record<string, unknown>;
+  emailHash?: string;
+}
+
+async function send(cfg: AdEventsConfig, row: Row, e: AdEvent) {
   const f = cfg.fetch ?? fetch;
   const now = Math.floor(Date.now() / 1000);
   const jobs: Promise<unknown>[] = [];
@@ -115,35 +143,50 @@ async function send(cfg: AdEventsConfig, row: Row, e: { meta: string; ga4: strin
       event_name: e.meta, event_time: now, event_id: e.id, action_source: "website",
       event_source_url: row.page_url ?? "https://app.pomeroyagency.com/",
       user_data: {
+        ...(e.emailHash && { em: [e.emailHash] }),
         external_id: [sha256(row.user_id)],
         ...(row.ip && { client_ip_address: row.ip }), ...(row.user_agent && { client_user_agent: row.user_agent }),
         ...(row.fbp && { fbp: row.fbp }), ...(row.fbc && { fbc: row.fbc }),
       },
-      custom_data: { content_name: "TrailBook", ...(e.value !== undefined && { value: e.value, currency: "USD" }) },
+      custom_data: { product: "trailbook", ...e.custom },
     };
-    jobs.push(f(`https://graph.facebook.com/v21.0/${cfg.metaPixelId}/events?access_token=${encodeURIComponent(cfg.metaToken)}`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ data: [event], ...(cfg.metaTestCode && { test_event_code: cfg.metaTestCode }) }),
-    }).then(async (r) => { if (!r.ok) throw new Error(`Meta ${r.status}: ${(await r.text()).slice(0, 300)}`); }));
+    // The token goes in the body, not the address, so it stays out of logs.
+    jobs.push(f(`https://graph.facebook.com/v21.0/${encodeURIComponent(cfg.metaPixelId)}/events`, {
+      method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(TIMEOUT_MS),
+      body: JSON.stringify({ data: [event], access_token: cfg.metaToken, ...(cfg.metaTestCode && { test_event_code: cfg.metaTestCode }) }),
+    }).then(async (r) => {
+      // Logged, never shown: Meta's error bodies can echo the request.
+      if (!r.ok) throw new Error(`Meta ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    }));
   }
   if (cfg.ga4ApiSecret && row.ga_client_id) {
-    jobs.push(f(`https://www.google-analytics.com/mp/collect?measurement_id=${cfg.ga4MeasurementId}&api_secret=${encodeURIComponent(cfg.ga4ApiSecret)}`, {
-      method: "POST", headers: { "content-type": "application/json" },
+    jobs.push(f(`https://www.google-analytics.com/mp/collect?measurement_id=${encodeURIComponent(cfg.ga4MeasurementId)}&api_secret=${encodeURIComponent(cfg.ga4ApiSecret)}`, {
+      method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(TIMEOUT_MS),
       body: JSON.stringify({
         client_id: row.ga_client_id,
-        events: [{ name: e.ga4, params: { ...(row.ga_session_id && { session_id: row.ga_session_id }), engagement_time_msec: 1, product: "books", ...e.params } }],
+        events: [{ name: e.ga4, params: {
+          ...(row.ga_session_id && { session_id: row.ga_session_id }), engagement_time_msec: 1, product: "trailbook", ...e.params,
+          ...(cfg.ga4Debug && { debug_mode: true }),
+        } }],
       }),
     }).then((r) => { if (!r.ok) throw new Error(`GA4 ${r.status}`); }));
   }
-  for (const r of await Promise.allSettled(jobs)) if (r.status === "rejected") console.error(`ad events: ${e.ga4} not sent:`, r.reason);
+  for (const r of await Promise.allSettled(jobs)) if (r.status === "rejected") console.error(`ad events: ${e.ga4} not sent:`, String(r.reason).slice(0, 400));
 }
+
+/** Runs work after the response has gone (Netlify's context.waitUntil); tests pass a collector. */
+export type Defer = (work: Promise<unknown>) => void;
 
 /**
  * Keeps the sign-up's attribution for the organisation it created and, unless
- * the person opted out, reports the sign-up. Never throws: a failure here
- * must not stop anyone signing up.
+ * the person opted out, reports the trial start: once per organisation, with
+ * the organisation's ID as Meta's event_id. Only the database write is
+ * awaited; the reports go to `defer`. Never throws: a failure here must not
+ * stop anyone signing up.
  */
-export async function recordSignup(pool: pg.Pool, cfg: AdEventsConfig | undefined, a: Attribution & { userId: string; orgId: string }): Promise<void> {
+export async function recordSignup(
+  pool: pg.Pool, cfg: AdEventsConfig | undefined, a: Attribution & { userId: string; orgId: string; email: string }, defer: Defer = () => {},
+): Promise<void> {
   if (!on(cfg) || a.optedOut) return;
   try {
     // A visitor who never touched the marketing site has no _ga cookie; GA4 still counts the sign-up under a new ID.
@@ -159,7 +202,12 @@ export async function recordSignup(pool: pg.Pool, cfg: AdEventsConfig | undefine
     ))).rows[0] as Row | undefined;
     // Identifiers of sign-ups that never paid are cleared after 120 days.
     await pool.query("UPDATE ad_attribution SET ip = NULL, user_agent = NULL, fbp = NULL, fbc = NULL, ga_session_id = NULL WHERE purchase_sent_at IS NULL AND created_at < now() - interval '120 days' AND ip IS NOT NULL");
-    if (row) await send(cfg, row, { meta: "CompleteRegistration", ga4: "sign_up", id: `signup:${a.orgId}`, params: { method: "email" } });
+    if (row) {
+      defer(send(cfg, row, {
+        meta: "StartTrial", ga4: "trial_start", id: a.orgId, emailHash: hashEmail(a.email),
+        custom: { value: 0, currency: "USD" },
+      }).catch((err) => console.error("ad events: trial_start not sent:", err)));
+    }
   } catch (err) {
     console.error("ad events: sign-up not recorded:", err);
   }
@@ -179,7 +227,7 @@ export async function recordFirstPayment(pool: pg.Pool, cfg: AdEventsConfig | un
     if (!row) return;
     const value = Number(p.valueMinor) / 100;
     await send(cfg, row, {
-      meta: "Subscribe", ga4: "purchase", id: `purchase:${p.orgId}`, value,
+      meta: "Subscribe", ga4: "purchase", id: `purchase:${p.orgId}`, custom: { value, currency: "USD" },
       params: { transaction_id: p.invoice, value, currency: "USD", items: [{ item_id: p.plan, item_name: `TrailBook ${p.plan}`, price: value, quantity: 1 }] },
     });
     await pool.query("UPDATE ad_attribution SET ip = NULL, user_agent = NULL, fbp = NULL, fbc = NULL, ga_session_id = NULL WHERE org_id = $1", [p.orgId]);

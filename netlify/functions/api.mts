@@ -1,5 +1,5 @@
 import { getConnectionString } from "@netlify/database";
-import type { Config } from "@netlify/functions";
+import type { Config, Context } from "@netlify/functions";
 import pg from "pg";
 import { handleApi } from "../../src/app/api.js";
 import { mailerFromEnv } from "../../src/app/mail.js";
@@ -58,8 +58,10 @@ const plaid = plaidFromEnv();
 // Card and bank payments on invoices: off until STRIPE_CONNECT_CLIENT_ID and INVOICE_PAYMENTS=on are set.
 const invoicePayments = invoicePaymentsFromEnv();
 
-export default async (req: Request) => handleApi(req, pool, {
+export default async (req: Request, context: Context) => handleApi(req, pool, {
   files, plaid, invoicePayments,
+  // Ad events (sign-up reports to Meta and Google) finish after the response, so they never slow a sign-up.
+  defer: (work) => context.waitUntil(work),
   signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing, adEvents: billing.adEvents, oauthClients, milepost,
   hub, newsletter, startNewsletterJob: workerUrl ? (task) => startNewsletterJob(workerUrl, task) : undefined,
   backups: backupKey ? { store: netlifyBackupStore(getStore({ name: "backups", consistency: "strong" })), key: backupKey } : undefined,
