@@ -4,13 +4,14 @@ import pg from "pg";
 import { billingFromEnv } from "../../src/app/billing-config.js";
 import { cdtfaRateLookup } from "../../src/app/cdtfa.js";
 import { mailerFromEnv } from "../../src/app/mail.js";
-import { heldCharges, runBilling, unbookedCharges } from "../../src/billing/billing.js";
+import { heldCharges, runBilling, sendTrialReminders, unbookedCharges } from "../../src/billing/billing.js";
 import { accrueReferralFees, owedSummary } from "../../src/billing/referrals.js";
 import { hubFromEnv, pushChanged } from "../../src/app/hub.js";
 import { pacificToday } from "../../src/payroll/business-days.js";
 import { strictSsl } from "../../src/db/pool.js";
 
-// Every morning: renew subscriptions that are due, bill people paid on yearly
+// Every morning: email owners whose free trial ends in 3 days (the amount,
+// the date and a one-click cancel link), renew subscriptions that are due, bill people paid on yearly
 // payroll plans, and retry failed payments. Charges needing a person are
 // emailed to OPS_EMAIL. Then, when ACCOUNT_HUB_URL and ACCOUNT_HUB_SECRET are
 // set, tell the Pomeroy account hub about every organisation whose status
@@ -30,6 +31,8 @@ export default async () => {
   try {
     const today = pacificToday();
     if (cfg.gateway && cfg.seller) {
+      const reminded = await sendTrialReminders(pool, cfg, today);
+      if (reminded) console.log(`billing: ${reminded} trial-ending reminders sent`);
       const r = await runBilling(pool, cfg, today);
       console.log(`billing: ${r.created} charges created, ${r.charged} paid, ${r.failed} failed`);
       const fees = await accrueReferralFees(pool);

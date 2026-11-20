@@ -1,6 +1,8 @@
+import { createHash, randomBytes } from "node:crypto";
 import type pg from "pg";
 import { COUNTRIES, isLive } from "../rules/jurisdictions.js";
 import { withSystem, withTenant, type Tx } from "../db/pool.js";
+import { appendAudit } from "../core/audit.js";
 import { createContact, recordPayment, updateContact, type ContactAddress } from "../core/documents.js";
 import { CANADIAN_PROVINCES, issueInvoice, type RateLookup } from "../core/sales-tax.js";
 import type { Mailer } from "../app/mail.js";
@@ -62,6 +64,7 @@ interface Sub {
   seller_contact_id: string | null; partner_discount_pct: number;
   comp_until: string | null; comp_reason: string | null; canceled_at: Date | null;
   currency: BillingCurrency; address_country: "US" | "CA"; activated_at: Date | null;
+  card_required: boolean; trial_started_at: Date | null; trial_reminder_for: string | null;
 }
 
 export interface ChargeLine { description: string; quantity: number; unitMinor: number; periodStart: string; periodEnd: string }
@@ -83,9 +86,25 @@ export async function ensureSubscription(tx: Tx, orgId: string, today: string): 
 
 // --------------------------------------------------------------- access
 
-export interface Access { level: "full" | "read_only"; reason?: string; warning?: string }
+export interface Access {
+  level: "full" | "read_only"; reason?: string; warning?: string;
+  /** A new organisation that hasn't added the card its trial starts with. */
+  cardRequired?: boolean;
+}
+
+/**
+ * Whether this organisation still has to add a card to start its trial:
+ * one that signed up after cards became required, hasn't saved one, and
+ * isn't on a complimentary period.
+ */
+export function awaitingCard(sub: Pick<Sub, "card_required" | "trial_started_at" | "status" | "comp_reason">): boolean {
+  return sub.card_required && !sub.trial_started_at && sub.status === "trialing" && !sub.comp_reason;
+}
+
+export const CARD_REQUIRED_REASON = "add a card to start your 30-day free trial; nothing is charged until the trial ends";
 
 export function accessFor(sub: Sub, today: string): Access {
+  if (awaitingCard(sub)) return { level: "read_only", reason: CARD_REQUIRED_REASON, cardRequired: true };
   if (sub.status === "trialing") {
     if (today <= sub.trial_ends_on) return { level: "full" };
     if (sub.comp_reason) return { level: "read_only", reason: "your complimentary period has ended; add a card under Billing to keep making changes (your books stay readable and downloadable)" };
@@ -328,9 +347,22 @@ export async function resume(tx: Tx, orgId: string, today: string): Promise<void
   await tx.query("UPDATE subscriptions SET cancel_at_period_end = false, canceled_at = NULL, updated_at = now() WHERE org_id = $1", [orgId]);
 }
 
-/** Records the card saved on the processor's page, and makes failed charges due again. */
-export async function saveCard(tx: Tx, orgId: string, card: SavedCard, today: string): Promise<void> {
+/**
+ * Records the card saved on the processor's page, and makes failed charges
+ * due again. For an organisation that had to add a card first, this starts
+ * its 30-day trial today; `trialStarted` says so, for the welcome email and
+ * the ad report.
+ */
+export async function saveCard(tx: Tx, orgId: string, card: SavedCard, today: string): Promise<{ trialStarted: boolean; trialEndsOn: string }> {
   if (card.orgId !== orgId) throw new BillingError("that card setup belongs to another organisation", 403);
+  const sub = (await tx.query("SELECT * FROM subscriptions WHERE org_id = $1 FOR UPDATE", [orgId])).rows[0] as Sub;
+  const trialStarted = awaitingCard(sub);
+  if (trialStarted) {
+    await tx.query(
+      "UPDATE subscriptions SET trial_ends_on = $2, trial_started_at = now(), trial_reminder_for = NULL WHERE org_id = $1",
+      [orgId, addDays(today, TRIAL_DAYS)],
+    );
+  }
   await tx.query(
     `UPDATE subscriptions SET processor_customer = $2, processor_card = $3, card_brand = $4, card_last4 = $5, card_exp = $6, updated_at = now()
       WHERE org_id = $1`,
@@ -338,6 +370,21 @@ export async function saveCard(tx: Tx, orgId: string, card: SavedCard, today: st
   );
   // Attempts keep counting, so each try reaches the processor with a new idempotency key.
   await tx.query("UPDATE billing_charges SET next_attempt_on = $2, updated_at = now() WHERE org_id = $1 AND status = 'failed'", [orgId, today]);
+  return { trialStarted, trialEndsOn: trialStarted ? addDays(today, TRIAL_DAYS) : sub.trial_ends_on };
+}
+
+/** Makes a new organisation add a card before it reaches its books (sign-up, when card payments are on). */
+export async function requireCard(tx: Tx, orgId: string, today: string): Promise<void> {
+  await ensureSubscription(tx, orgId, today);
+  await tx.query("UPDATE subscriptions SET card_required = true WHERE org_id = $1", [orgId]);
+}
+
+/** Whether this organisation's books are closed until a card is added. Cheap enough to ask on every request. */
+export async function cardGateClosed(pool: pg.Pool, orgId: string): Promise<boolean> {
+  const row = (await pool.query(
+    "SELECT card_required, trial_started_at, status, comp_reason FROM subscriptions WHERE org_id = $1", [orgId],
+  )).rows[0];
+  return Boolean(row && awaitingCard(row));
 }
 
 // ------------------------------------------------------- complimentary
@@ -418,10 +465,14 @@ export async function billingSummary(tx: Tx, orgId: string, today: string, cfg: 
     billing: { name: sub.billing_name, email: sub.billing_email, address: sub.address_line1 ? { line1: sub.address_line1, city: sub.address_city, state: sub.address_state, zip: sub.address_zip, country: sub.address_country } : null },
     card: sub.card_last4 ? { brand: sub.card_brand, last4: sub.card_last4, exp: sub.card_exp } : null,
     access: accessFor(sub, today),
-    next: sub.status === "canceled" || sub.cancel_at_period_end || (compActive(sub, today) && !sub.comp_until) ? null : await estimateRenewal(tx, sub, today),
+    next: sub.status === "canceled" || sub.cancel_at_period_end || (compActive(sub, today) && !sub.comp_until) ? null
+      // Before the card is added, as if the trial started today.
+      : await estimateRenewal(tx, awaitingCard(sub) ? { ...sub, trial_ends_on: addDays(today, TRIAL_DAYS) } : sub, today),
     businesses: await businessCount(tx, orgId),
     charges,
     cardPayments: Boolean(cfg.gateway && cfg.seller),
+    cardRequired: awaitingCard(sub),
+    trialDays: TRIAL_DAYS,
   };
 }
 
@@ -800,4 +851,150 @@ export async function heldCharges(pool: pg.Pool): Promise<{ id: string; orgId: s
       WHERE status = 'held' OR (status = 'processing' AND updated_at < now() - interval '1 hour') ORDER BY created_at`,
   );
   return rows.map((r) => ({ id: r.id, orgId: r.org_id, failure: r.failure }));
+}
+
+// ------------------------------------------------- trial emails and links
+
+/** "Monday, December 21, 2026", for an email. */
+export function longDay(date: string): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
+
+/**
+ * A link that cancels this organisation's trial in one click, without
+ * signing in, through the last day of the trial. Only the token's hash is
+ * kept; the link is in the hash part of the address, so it never reaches a
+ * server log.
+ */
+export async function createCancelLink(pool: pg.Pool, cfg: BillingConfig, orgId: string, validUntil: string): Promise<string> {
+  const token = randomBytes(24).toString("base64url");
+  await pool.query("INSERT INTO billing_cancel_links (token_hash, org_id, valid_until) VALUES ($1, $2, $3)", [hashToken(token), orgId, validUntil]);
+  return `${cfg.appUrl ?? ""}/#/cancel-trial/${token}`;
+}
+
+/** What the first charge after the trial will be, in words for an email or page. */
+async function firstCharge(tx: Tx, sub: Sub, today: string) {
+  const est = await estimateRenewal(tx, sub, today);
+  const plan = sub.next_plan ?? sub.plan;
+  const interval = sub.next_interval ?? sub.interval;
+  const amount = formatMoney(est.subtotalMinor, sub.currency);
+  const extras = sub.currency === "CAD" ? " (Canadian dollars)" : ", plus sales tax where it applies";
+  return {
+    chargeOn: est.periodStart, plan, interval, amountMinor: est.subtotalMinor, currency: sub.currency,
+    words: `${amount}${extras} for TrailBook ${PLAN_NAMES[plan]}, ${intervalWord(interval)}`,
+    renews: interval === "month" ? "every month" : "every year",
+    people: plan === "books_payroll" ? ` Books + Payroll also charges ${formatMoney(sub.prices.perPersonMonth, sub.currency)} for each person paid in a month, billed after the month.` : "",
+  };
+}
+
+/** The email that confirms a trial started with a card: the terms of the renewal, and how to cancel. */
+export async function sendTrialStarted(pool: pg.Pool, cfg: BillingConfig, orgId: string, today: string): Promise<void> {
+  if (!cfg.mailer) return;
+  const { sub, charge } = await withSystem(pool, async (tx) => {
+    const sub = (await tx.query("SELECT * FROM subscriptions WHERE org_id = $1", [orgId])).rows[0] as Sub;
+    return { sub, charge: await firstCharge(tx, sub, today) };
+  });
+  const link = await createCancelLink(pool, cfg, orgId, sub.trial_ends_on);
+  await notifyOwners(pool, cfg, orgId, (name) => ({
+    subject: "Your TrailBook free trial has started",
+    text: `Your 30-day free trial of TrailBook for ${name} has started. Nothing has been charged.\n\n`
+      + `Your trial ends on ${longDay(sub.trial_ends_on)}. If you don't cancel before then, on ${longDay(charge.chargeOn)} we'll charge `
+      + `${charge.words} to the card ending ${sub.card_last4}, and it renews automatically ${charge.renews} until you cancel.${charge.people}\n\n`
+      + `Cancel any time before day 30 and you pay nothing. Cancel on the Billing page${cfg.appUrl ? ` (${cfg.appUrl}/#/billing)` : ""}, no phone call needed, or with this link:\n${link}\n\n`
+      + `We'll email you again 3 days before the trial ends.\n`,
+  }));
+}
+
+/**
+ * Three days before a card trial ends: the amount, the date, and a link that
+ * cancels in one click. Sent once per trial, by the morning billing run; a
+ * run that missed the day sends it on the next one, up to the last day.
+ */
+export async function sendTrialReminders(pool: pg.Pool, cfg: BillingConfig, today: string): Promise<number> {
+  if (!cfg.mailer) return 0;
+  const due = (await pool.query(
+    `SELECT org_id FROM subscriptions
+      WHERE status = 'trialing' AND processor_card IS NOT NULL AND comp_reason IS NULL
+        AND trial_ends_on BETWEEN $1::date AND $1::date + 3 AND trial_reminder_for IS DISTINCT FROM trial_ends_on`,
+    [today],
+  )).rows.map((r) => r.org_id as string);
+  let sent = 0;
+  for (const orgId of due) {
+    const claimed = await withSystem(pool, async (tx) => {
+      if (await isFree(tx, orgId, cfg)) return null;
+      // Claim it first, so two runs on the same day send it once.
+      const sub = (await tx.query(
+        "UPDATE subscriptions SET trial_reminder_for = trial_ends_on WHERE org_id = $1 AND trial_reminder_for IS DISTINCT FROM trial_ends_on RETURNING *", [orgId],
+      )).rows[0] as Sub | undefined;
+      return sub ? { sub, charge: await firstCharge(tx, sub, today) } : null;
+    });
+    if (!claimed) continue;
+    const { sub, charge } = claimed;
+    const link = await createCancelLink(pool, cfg, orgId, sub.trial_ends_on);
+    await notifyOwners(pool, cfg, orgId, (name) => ({
+      subject: `Your TrailBook trial ends on ${longDay(sub.trial_ends_on)}`,
+      text: `Your free trial of TrailBook for ${name} ends on ${longDay(sub.trial_ends_on)}.\n\n`
+        + `On ${longDay(charge.chargeOn)} we'll charge ${charge.words} to the card ending ${sub.card_last4}. It renews automatically ${charge.renews} until you cancel.${charge.people}\n\n`
+        + `To cancel and pay nothing, use this link before the trial ends (one click, no sign-in):\n${link}\n\n`
+        + `You can also cancel on the Billing page${cfg.appUrl ? ` (${cfg.appUrl}/#/billing)` : ""}. If you cancel, your books stay readable and downloadable.\n`,
+    }));
+    sent++;
+  }
+  return sent;
+}
+
+export class CancelLinkError extends BillingError {}
+
+async function findCancelLink(tx: Tx, token: unknown, today: string) {
+  if (typeof token !== "string" || !/^[\w-]{20,64}$/.test(token)) throw new CancelLinkError("this cancel link isn't valid", 404);
+  const link = (await tx.query("SELECT * FROM billing_cancel_links WHERE token_hash = $1 FOR UPDATE", [hashToken(token)])).rows[0];
+  if (!link) throw new CancelLinkError("this cancel link isn't valid", 404);
+  const sub = (await tx.query("SELECT * FROM subscriptions WHERE org_id = $1 FOR UPDATE", [link.org_id])).rows[0] as Sub;
+  const org = (await tx.query("SELECT name FROM organizations WHERE id = $1", [link.org_id])).rows[0];
+  return { link, sub, orgName: org?.name as string };
+}
+
+/** What a cancel link would cancel, for the page it opens. */
+export async function previewCancelLink(pool: pg.Pool, token: unknown, today: string) {
+  return withSystem(pool, async (tx) => {
+    const { sub, orgName } = await findCancelLink(tx, token, today);
+    const state = sub.status === "canceled" ? "canceled" : sub.status !== "trialing" || today > sub.trial_ends_on ? "ended" : "open";
+    return {
+      orgName, state, trialEndsOn: sub.trial_ends_on,
+      charge: state === "open" ? await firstCharge(tx, sub, today) : null,
+    };
+  });
+}
+
+/**
+ * Cancels the trial a link was sent for, the same way as Cancel on the
+ * Billing page: the trial ends now and nothing is charged. Works only
+ * while that trial is still running; after that, cancelling is on the
+ * Billing page.
+ */
+export async function useCancelLink(pool: pg.Pool, cfg: BillingConfig, token: unknown, today: string): Promise<{ orgId: string; orgName: string; already: boolean }> {
+  const out = await withSystem(pool, async (tx) => {
+    const { link, sub, orgName } = await findCancelLink(tx, token, today);
+    if (sub.status === "canceled") return { orgId: sub.org_id, orgName, already: true };
+    if (sub.status !== "trialing" || today > sub.trial_ends_on) {
+      throw new CancelLinkError("this trial has already ended, so this link no longer works; sign in and cancel on the Billing page", 410);
+    }
+    await cancel(tx, sub.org_id, today);
+    await tx.query("UPDATE billing_cancel_links SET used_at = now() WHERE token_hash = $1", [link.token_hash]);
+    await appendAudit(tx, {
+      orgId: sub.org_id, actor: "system:cancel-link", action: "billing.trial_canceled_by_link", objectType: "organization", objectId: sub.org_id,
+      after: { status: "canceled" }, context: { via: "email link" },
+    });
+    return { orgId: sub.org_id, orgName, already: false };
+  });
+  if (!out.already) {
+    await notifyOwners(pool, cfg, out.orgId, (name) => ({
+      subject: "Your TrailBook trial is cancelled",
+      text: `The free trial of TrailBook for ${name} was cancelled with the link in our email. Nothing will be charged.\n\n`
+        + `Your books stay readable and downloadable. To start again, sign in and restart the subscription on the Billing page${cfg.appUrl ? ` (${cfg.appUrl}/#/billing)` : ""}.\n`,
+    }));
+  }
+  return out;
 }

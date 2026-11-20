@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleApi } from "../src/app/api.js";
-import { runBilling, splitInProportion, unbookedCharges, type BillingConfig } from "../src/billing/billing.js";
+import { runBilling, sendTrialReminders, splitInProportion, unbookedCharges, type BillingConfig } from "../src/billing/billing.js";
+import type { AdEventsConfig } from "../src/app/ad-events.js";
 import { formEncode, stripeGateway, type ChargeResult, type PaymentGateway } from "../src/billing/gateway.js";
 import { addDays } from "../src/billing/plans.js";
 import { pacificToday } from "../src/payroll/business-days.js";
@@ -47,13 +48,13 @@ beforeAll(async () => {
   billing.seller = seller;
 });
 
-async function call(path: string, init: { body?: unknown; cookie?: string } = {}) {
-  const headers: Record<string, string> = {};
+async function call(path: string, init: { body?: unknown; cookie?: string; headers?: Record<string, string> } = {}, withOpts: Record<string, unknown> = opts) {
+  const headers: Record<string, string> = { ...init.headers };
   if (init.body !== undefined) headers["content-type"] = "application/json";
   if (init.cookie) headers.cookie = init.cookie;
   const res = await handleApi(
     new Request(BASE + path, { method: init.body !== undefined ? "POST" : "GET", headers, body: init.body !== undefined ? JSON.stringify(init.body) : undefined }),
-    pool, opts,
+    pool, withOpts,
   );
   return { status: res.status, data: await res.json().catch(() => null), cookie: res.headers.get("set-cookie")?.split(";")[0] };
 }
@@ -69,7 +70,7 @@ async function customer(plan: "books" | "books_payroll" = "books", interval: "mo
   const o = (p: string) => `/api/orgs/${orgId}${p}`;
   expect((await call(o("/billing/details"), { cookie, body: { name: `Billed ${n} LLC`, email, address } })).status).toBe(200);
   expect((await call(o("/billing/plan"), { cookie, body: { plan, interval } })).status).toBe(200);
-  const card = await call(o("/billing/card"), { cookie, body: {} });
+  const card = await call(o("/billing/card"), { cookie, body: { autoRenewConsent: true } });
   expect(card.data.url).toContain("checkout.example");
   expect((await call(o("/billing/card/confirm"), { cookie, body: { sessionId: `cs:${orgId}:4242` } })).status).toBe(200);
   return { cookie, orgId, o, email };
@@ -81,15 +82,43 @@ const endTrial = (orgId: string, daysAgo: number) =>
   pool.query("UPDATE subscriptions SET trial_ends_on = $2 WHERE org_id = $1", [orgId, addDays(pacificToday(), -daysAgo)]);
 
 describe("billing", () => {
-  it("starts with a 30-day trial of everything and the approved prices", async () => {
+  it("asks for a card before the books, then starts a 30-day trial of everything at the approved prices", async () => {
     const su = await call("/api/auth/signup", { body: { acceptTerms: true, name: "T", email: `trial${Date.now()}@example.com`, password: "long-enough-pw", orgName: "Trial Co", inviteCode: "c" } });
-    const orgId = (await call("/api/me", { cookie: su.cookie })).data.orgs[0].id;
-    const b = await call(`/api/orgs/${orgId}/billing`, { cookie: su.cookie });
-    expect(b.data).toMatchObject({ status: "trialing", plan: "books", trialEndsOn: addDays(pacificToday(), 30), access: { level: "full" } });
+    const cookie = await passSecondFactor(su.cookie!);
+    const orgId = (await call("/api/me", { cookie })).data.orgs[0].id;
+    const o = (p: string) => `/api/orgs/${orgId}${p}`;
+    // Before the card: billing is open, the books aren't.
+    expect((await call(o(""), { cookie })).data.cardRequired).toBe(true);
+    let b = await call(o("/billing"), { cookie });
+    expect(b.data).toMatchObject({ status: "trialing", cardRequired: true, access: { level: "read_only", cardRequired: true } });
+    // The first charge shown is as if the trial started today.
+    expect(b.data.next.periodStart).toBe(addDays(pacificToday(), 31));
+    const gated = await call(o("/entities"), { cookie, body: { legalName: "X LLC", entityType: "llc_single", country: "US", region: "CA" } });
+    expect(gated.status).toBe(402);
+    expect(gated.data.code).toBe("card_required");
+    expect((await call(o("/audit"), { cookie })).status).toBe(402);
+    // The card step needs the owner's agreement to the charge after the trial.
+    expect((await call(o("/billing/details"), { cookie, body: { name: "Trial Co", email: "t@example.com", address: LA } })).status).toBe(200);
+    expect((await call(o("/billing/card"), { cookie, body: {} })).status).toBe(400);
+    expect((await call(o("/billing/card"), { cookie, body: { autoRenewConsent: true } })).status).toBe(200);
+    const before = sent.length;
+    const confirm = await call(o("/billing/card/confirm"), { cookie, body: { sessionId: `cs:${orgId}:4242` } });
+    expect(confirm.data).toMatchObject({ trialStarted: true, trialEndsOn: addDays(pacificToday(), 30), charged: 0 });
+    // The welcome email confirms the terms and carries a cancel link.
+    const welcome = sent.slice(before).find((m) => m.subject === "Your TrailBook free trial has started")!;
+    expect(welcome.text).toContain("$15.00, plus sales tax where it applies for TrailBook Books, monthly");
+    expect(welcome.text).toMatch(/#\/cancel-trial\/[\w-]{20,}/);
+    expect((await call(o(""), { cookie })).data.cardRequired).toBe(false);
+    expect((await call(o("/audit"), { cookie })).status).toBe(200);
+    b = await call(o("/billing"), { cookie });
+    expect(b.data).toMatchObject({ status: "trialing", plan: "books", trialEndsOn: addDays(pacificToday(), 30), access: { level: "full" }, cardRequired: false });
+    // Replacing the card later doesn't restart the trial.
+    await pool.query("UPDATE subscriptions SET trial_ends_on = $2 WHERE org_id = $1", [orgId, addDays(pacificToday(), 10)]);
+    expect((await call(o("/billing/card/confirm"), { cookie, body: { sessionId: `cs:${orgId}:1111` } })).data).toMatchObject({ trialStarted: false, trialEndsOn: addDays(pacificToday(), 10) });
     expect(b.data.prices.plan).toEqual({ books: { month: 1500, year: 15000 }, books_payroll: { month: 3500, year: 35000 } });
     expect(b.data.prices.perPersonMonth).toBe(400);
     // Launched states only, for now.
-    const out = await call(`/api/orgs/${orgId}/billing/details`, { cookie: su.cookie, body: { name: "X", email: "x@example.com", address: { line1: "1 Calle Luna", city: "San Juan", state: "PR", zip: "00901" } } });
+    const out = await call(`/api/orgs/${orgId}/billing/details`, { cookie, body: { name: "X", email: "x@example.com", address: { line1: "1 Calle Luna", city: "San Juan", state: "PR", zip: "00901" } } });
     expect(out.status).toBe(400);
   });
 
@@ -340,5 +369,94 @@ describe("Canadian billing", () => {
     expect(splitInProportion([4900n, 3600n], 6120n)).toEqual([3528n, 2592n]);
     expect(splitInProportion([100n, 100n, 100n], 100n)).toEqual([33n, 33n, 34n]);
     expect(splitInProportion([0n], 0n)).toEqual([0n]);
+  });
+});
+
+describe("card at the start of the trial", () => {
+  const linkIn = (text: string) => /#\/cancel-trial\/([\w-]+)/.exec(text)![1]!;
+
+  it("emails the owner 3 days before the trial ends, once, with the amount, the date and a cancel link", async () => {
+    const c = await customer("books_payroll", "year");
+    const ends = addDays(pacificToday(), 3);
+    await pool.query("UPDATE subscriptions SET trial_ends_on = $2 WHERE org_id = $1", [c.orgId, ends]);
+    const before = sent.length;
+    expect(await sendTrialReminders(pool, cfg(), pacificToday())).toBeGreaterThanOrEqual(1);
+    const mine = sent.slice(before).filter((m) => m.to === c.email);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.subject).toMatch(/^Your TrailBook trial ends on /);
+    expect(mine[0]!.text).toContain("$350.00, plus sales tax where it applies for TrailBook Books + Payroll, yearly");
+    expect(mine[0]!.text).toContain(new Date(`${addDays(ends, 1)}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }));
+    expect(mine[0]!.text).toContain("card ending 4242");
+    expect(linkIn(mine[0]!.text).length).toBeGreaterThanOrEqual(20);
+    // Not twice, and not for trials further out.
+    const again = sent.length;
+    await sendTrialReminders(pool, cfg(), pacificToday());
+    expect(sent.slice(again).filter((m) => m.to === c.email)).toHaveLength(0);
+  });
+
+  it("cancels in one click from the email link, without signing in, and nothing is charged", async () => {
+    const c = await customer();
+    await pool.query("UPDATE subscriptions SET trial_ends_on = $2 WHERE org_id = $1", [c.orgId, addDays(pacificToday(), 2)]);
+    const before = sent.length;
+    await sendTrialReminders(pool, cfg(), pacificToday());
+    const token = linkIn(sent.slice(before).find((m) => m.to === c.email)!.text);
+    expect((await call("/api/cancel-trial", { body: { token: "nope-nope-nope-nope-nope" } })).status).toBe(404);
+    const preview = await call("/api/cancel-trial", { body: { token } });
+    expect(preview.data).toMatchObject({ state: "open", charge: { amountMinor: 1500, chargeOn: addDays(pacificToday(), 3) } });
+    const done = await call("/api/cancel-trial/confirm", { body: { token } });
+    expect(done.data).toMatchObject({ ok: true, already: false });
+    expect(await sub(c.orgId)).toMatchObject({ status: "canceled" });
+    expect(sent.at(-1)!.subject).toBe("Your TrailBook trial is cancelled");
+    expect((await call("/api/cancel-trial/confirm", { body: { token } })).data).toMatchObject({ already: true });
+    // After the trial would have ended, the billing run charges nothing.
+    await endTrial(c.orgId, 1);
+    const charged = charges.length;
+    expect(await runBilling(pool, cfg(), pacificToday(), c.orgId)).toMatchObject({ charged: 0, created: 0 });
+    expect(charges.length).toBe(charged);
+    // The books stay readable.
+    expect((await call(`/api/orgs/${c.orgId}`, { cookie: c.cookie })).status).toBe(200);
+  });
+
+  it("stops working once the trial has ended", async () => {
+    const c = await customer();
+    await pool.query("UPDATE subscriptions SET trial_ends_on = $2 WHERE org_id = $1", [c.orgId, addDays(pacificToday(), 1)]);
+    const before = sent.length;
+    await sendTrialReminders(pool, cfg(), pacificToday());
+    const token = linkIn(sent.slice(before).find((m) => m.to === c.email)!.text);
+    await endTrial(c.orgId, 1);
+    expect((await call("/api/cancel-trial", { body: { token } })).data).toMatchObject({ state: "ended" });
+    expect((await call("/api/cancel-trial/confirm", { body: { token } })).status).toBe(410);
+  });
+
+  it("reports StartTrial when the card is saved, not at sign-up, and Subscribe when the trial ends and the card is charged", async () => {
+    const events: { name: string; url: string }[] = [];
+    const adEvents: AdEventsConfig = {
+      metaPixelId: "1", metaToken: "t", ga4MeasurementId: "G-X", ga4ApiSecret: "s",
+      fetch: (async (url: string, init: RequestInit) => {
+        const raw = String(init.body);
+        const name = raw.startsWith("{") ? JSON.parse(raw).events[0].name : JSON.parse(new URLSearchParams(raw).get("data")!)[0].event_name;
+        events.push({ name, url });
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof fetch,
+    };
+    const deferred: Promise<unknown>[] = [];
+    const withAds = { ...opts, adEvents, billing: { ...billing, adEvents }, defer: (p: Promise<unknown>) => { deferred.push(p); } };
+    const email = `ads-trial${Date.now()}@example.com`;
+    const headers = { cookie: "_ga=GA1.1.111222333.1761700000; _fbp=fb.1.1761700000000.987654321" };
+    const su = await call("/api/auth/signup", { headers, body: { acceptTerms: true, name: "Owner", email, password: "long-enough-pw", orgName: "Ad Trial Co", inviteCode: "c", attribution: { fbclid: "IwAR9", gclid: "Cj0Test" } } }, withAds);
+    expect(su.status).toBe(201);
+    await Promise.all(deferred);
+    expect(events).toHaveLength(0);
+    const cookie = await passSecondFactor(su.cookie!);
+    const orgId = (await call("/api/me", { cookie }, withAds)).data.orgs[0].id as string;
+    const o = (p: string) => `/api/orgs/${orgId}${p}`;
+    await call(o("/billing/details"), { cookie, body: { name: "Ad Trial Co", email, address: LA } }, withAds);
+    await call(o("/billing/card"), { cookie, body: { autoRenewConsent: true } }, withAds);
+    await call(o("/billing/card/confirm"), { cookie, body: { sessionId: `cs:${orgId}:4242` } }, withAds);
+    await Promise.all(deferred);
+    expect(events.map((e) => e.name).sort()).toEqual(["StartTrial", "trial_start"]);
+    await endTrial(orgId, 1);
+    expect(await runBilling(pool, { ...cfg(), adEvents }, pacificToday(), orgId)).toMatchObject({ charged: 1 });
+    expect(events.map((e) => e.name).sort()).toEqual(["StartTrial", "Subscribe", "purchase", "trial_start"]);
   });
 });
