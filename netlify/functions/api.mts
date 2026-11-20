@@ -21,11 +21,11 @@ const pool = new pg.Pool({ connectionString: strictSsl(getConnectionString()), m
 
 const mailer = mailerFromEnv();
 // Links in emails and the card page's return address use the site's configured address
-// (APP_URL, else Netlify's URL). A deploy preview or branch deploy uses its own address,
-// so a test there never sends anyone back to the live app.
-const appUrl = process.env.CONTEXT === "production"
-  ? process.env.APP_URL || process.env.URL
-  : process.env.DEPLOY_PRIME_URL || process.env.APP_URL || process.env.URL;
+// (APP_URL, else Netlify's URL). A deploy preview or branch deploy uses the address it was
+// opened at, so a test there never sends anyone back to the live app.
+const appUrl = process.env.APP_URL || process.env.URL;
+const appUrlFor = (req: Request, context: Context) =>
+  context.deploy?.context === "production" || !context.deploy?.context ? appUrl : new URL(req.url).origin;
 
 // California sales tax rates come from the CDTFA's public rate lookup.
 const taxRates = cdtfaRateLookup();
@@ -66,7 +66,7 @@ export default async (req: Request, context: Context) => handleApi(req, pool, {
   files, plaid, invoicePayments,
   // Ad events (sign-up reports to Meta and Google) finish after the response, so they never slow a sign-up.
   defer: (work) => context.waitUntil(work),
-  signupCode: process.env.SIGNUP_CODE, mailer, appUrl, taxRates, billing, adEvents: billing.adEvents, oauthClients, milepost,
+  signupCode: process.env.SIGNUP_CODE, mailer, appUrl: appUrlFor(req, context), taxRates, billing, adEvents: billing.adEvents, oauthClients, milepost,
   hub, newsletter, startNewsletterJob: workerUrl ? (task) => startNewsletterJob(workerUrl, task) : undefined,
   backups: backupKey ? { store: netlifyBackupStore(getStore({ name: "backups", consistency: "strong" })), key: backupKey } : undefined,
 });
