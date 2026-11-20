@@ -8,7 +8,13 @@ function fakeAds() {
   const cfg: AdEventsConfig = {
     metaPixelId: "909707683290018", metaToken: "meta-test-token", ga4MeasurementId: "G-CEMK8J8PTZ", ga4ApiSecret: "ga-test-secret",
     fetch: (async (url: string, init: RequestInit) => {
-      sent.push({ url, body: JSON.parse(String(init.body)) });
+      const raw = String(init.body);
+      // Meta gets a form (data, access_token, test_event_code); GA4 gets JSON.
+      const body = raw.startsWith("{") ? JSON.parse(raw) : (() => {
+        const f = new URLSearchParams(raw);
+        return { data: JSON.parse(f.get("data")!), access_token: f.get("access_token"), test_event_code: f.get("test_event_code") ?? undefined };
+      })();
+      sent.push({ url, body });
       return new Response("{}", { status: 200 });
     }) as unknown as typeof fetch,
   };
