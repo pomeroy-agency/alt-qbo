@@ -37,8 +37,14 @@ Until these are set, nothing changes for anyone: every organisation keeps full u
 | Function | When (UTC) | What it does |
 | --- | --- | --- |
 | `nightly-backups` | 10:00 (2 to 3 a.m. Pacific) | Encrypted copy of every business except practice examples, stored in Netlify Blobs (store `backups`), read back and checked, kept 30 days |
-| `billing-run` | 16:00 (8 to 9 a.m. Pacific) | Renewals, people billed monthly on yearly payroll plans, retries every 3 days, receipts and failure emails. Then, with the account hub set up, sends the hub every organisation whose status changed |
+| `billing-run` | 16:00 (8 to 9 a.m. Pacific) | Trial-ending reminders (3 days before, with the amount, the date and a one-click cancel link), renewals, people billed monthly on yearly payroll plans, retries every 3 days, receipts and failure emails. Then, with the account hub set up, sends the hub every organisation whose status changed |
 | `deposit-reminders` | 15:00 | Unchanged |
+
+## Card at the start of the trial (from 2026-11-20)
+
+New sign-ups add a card before they reach their books; the 30-day trial starts when it's saved. This is on whenever `STRIPE_SECRET_KEY`, `BILLING_SELLER_ORG_ID` and `BILLING_SELLER_ENTITY_ID` are set. Organisations from before keep the trial they had; comped organisations never see the card step.
+
+Testing on a pull request's deploy preview: the preview gets its own copy of the database, so set these in the **Deploy Previews** context only: `STRIPE_SECRET_KEY` (a test-mode restricted key: Customers, Payment Intents and Checkout Sessions write; Payment Methods, Setup Intents, Charges and Balance read), `BILLING_SELLER_ORG_ID`, `BILLING_SELLER_ENTITY_ID`, `BILLING_ENFORCE=true`, `META_CAPI_TEST_CODE` and `GA4_DEBUG_MODE=1` (so preview sign-ups reach Meta and GA4 only as test events). To see a trial end without waiting, cancel it on the Billing page, restart it (which ends the trial today), then replace the card: the card is charged straight away.
 
 ## Things done by hand for now
 
