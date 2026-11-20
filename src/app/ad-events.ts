@@ -151,12 +151,21 @@ async function send(cfg: AdEventsConfig, row: Row, e: AdEvent) {
       custom_data: { product: "trailbook", ...e.custom },
     };
     // The token goes in the body, not the address, so it stays out of logs.
+    // Form-encoded, as Meta's own examples and the website's relay send it; the token stays in the body, out of logs.
+    const form = new URLSearchParams();
+    form.set("data", JSON.stringify([event]));
+    form.set("access_token", cfg.metaToken);
+    if (cfg.metaTestCode) form.set("test_event_code", cfg.metaTestCode);
     jobs.push(f(`https://graph.facebook.com/v21.0/${encodeURIComponent(cfg.metaPixelId)}/events`, {
-      method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(TIMEOUT_MS),
-      body: JSON.stringify({ data: [event], access_token: cfg.metaToken, ...(cfg.metaTestCode && { test_event_code: cfg.metaTestCode }) }),
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, signal: AbortSignal.timeout(TIMEOUT_MS),
+      body: form.toString(),
     }).then(async (r) => {
+      const text = await r.text().catch(() => "");
       // Logged, never shown: Meta's error bodies can echo the request.
-      if (!r.ok) throw new Error(`Meta ${r.status}: ${(await r.text()).slice(0, 300)}`);
+      if (!r.ok) throw new Error(`Meta ${r.status}: ${text.slice(0, 300)}`);
+      let received: unknown = null;
+      try { received = JSON.parse(text).events_received ?? null; } catch { /* not JSON */ }
+      console.log(`ad events: Meta ${e.meta} accepted (events_received ${received}${cfg.metaTestCode ? ", test" : ""})`);
     }));
   }
   if (cfg.ga4ApiSecret && row.ga_client_id) {
@@ -169,7 +178,10 @@ async function send(cfg: AdEventsConfig, row: Row, e: AdEvent) {
           ...(cfg.ga4Debug && { debug_mode: true }),
         } }],
       }),
-    }).then((r) => { if (!r.ok) throw new Error(`GA4 ${r.status}`); }));
+    }).then((r) => {
+      if (!r.ok) throw new Error(`GA4 ${r.status}`);
+      console.log(`ad events: GA4 ${e.ga4} sent${cfg.ga4Debug ? " (debug)" : ""}`);
+    }));
   }
   for (const r of await Promise.allSettled(jobs)) if (r.status === "rejected") console.error(`ad events: ${e.ga4} not sent:`, String(r.reason).slice(0, 400));
 }
