@@ -9,6 +9,8 @@ import { usFederal2027 } from "../src/rules/us-federal-2027.js";
 import { usCalifornia2027 } from "../src/rules/us-ca-2027.js";
 import { usCalifornia2026 } from "../src/rules/us-ca-2026.js";
 import { federalSchedule } from "../src/payroll/federal.js";
+import { californiaWithholding } from "../src/payroll/california.js";
+import { Decimal } from "decimal.js";
 import { splitWorkweek } from "../src/payroll/hours.js";
 import { calculatePaycheck, type EmployeePayInput } from "../src/payroll/gross-to-net.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove, localMinimumWage, localWagePlace } from "../src/rules/local-minimum-wage.js";
@@ -78,6 +80,10 @@ describe("rule packs", () => {
     // EDD 2027 Method B: standard deductions and the allowance credit.
     expect(pit.tables.standardDeduction).toEqual({ single: "5900", marriedLow: "5900", marriedHigh: "11800", hoh: "11800" });
     expect(pit.tables.exemptionCreditPerAllowance).toBe("173.80");
+    expect(pit.tables.lowIncomeExemption).toEqual({ single: "19528", marriedLow: "19528", marriedHigh: "39056", hoh: "39056" });
+    expect(pit.tables.estimatedDeductionPerAllowance).toBe("1000");
+    // 27methb.pdf Example F, worked on the annual table: $57,000, married, 4 allowances: $742.37 less $695.20.
+    expect(californiaWithholding(pit.tables, { filingStatus: "married", regularAllowances: 4 }, new Decimal(57000), 1).toFixed(2)).toBe("47.17");
     expect(usCalifornia2027.payroll.taxes.find((t) => t.code === "CA_SDI")).toMatchObject({ rate: "0.014", wageBase: null });
     expect(usCalifornia2027.wageHour).toMatchObject({ minimumWage: "17.40", exemptAnnualSalaryMinimum: "72384" });
     const rules = resolveRules(CA, "2027-03-15");
