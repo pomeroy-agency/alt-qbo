@@ -1,0 +1,127 @@
+import type { StateRulePack } from "./types.js";
+
+export const usCalifornia2027: StateRulePack = {
+  kind: "state",
+  name: "California",
+  calendar: "california",
+  id: "us-ca",
+  version: "2027.1",
+  place: { country: "US", region: "CA" },
+  effectiveFrom: "2027-01-01",
+  effectiveTo: "2027-12-31",
+  status: "draft",
+  sources: [
+    { ref: "EDD, 2027 California Withholding Schedules, Method B (27methb.pdf), as quoted in search results and reported by Bloomberg Tax (California Updates Withholding Methods for 2027, Nov 2026)", covers: "standard deduction $5,900 (single, married with 0 or 1 allowance) and $11,800 (married with 2 or more, head of household); exemption allowance credit $173.80; rates still 1.1% to 14.63%", basis: "published" },
+    { ref: "EDD, Contribution Rates, Withholding Schedules, and Meals and Lodging Values (2027), as quoted in search results and reported by Bloomberg Tax (Nov 13, 2026) and NFP", covers: "SDI 1.4% with no wage limit; UI and ETT wage base $7,000; ETT 0.1%", basis: "published" },
+    { ref: "Labor Code 1182.12 and Department of Finance certification, July 31, 2026 (DIR news release 2026-66); Labor Code 515(a)", covers: "statewide minimum wage $17.40; exempt salary of twice the minimum wage for full-time work ($72,384)", basis: "published" },
+    { ref: "us-ca 2026.2, carried over", covers: "Method B low-income exemption (Table 1), estimated deduction allowance (Table 3), tax brackets (Table 5), supplemental rates, deposit thresholds, UI new-employer rate, overtime, sick leave, franchise tax", basis: "working-knowledge" },
+  ],
+  reviewNotes: [
+    "Draft, made by the rule watch on 2026-11-21 after the EDD published its 2027 Method B schedules. Final for 2027: standard deductions $5,900 / $11,800, the $173.80 allowance credit, SDI 1.4%, minimum wage $17.40 and the $72,384 exempt salary floor, UI and ETT at $7,000 and 0.1%.",
+    "Carried over from 2026 and still to check against 27methb.pdf before release: the low-income exemption amounts (Table 1), the $1,000 estimated deduction per allowance (Table 3), and every bracket threshold and base amount (Table 5, indexed each year). The EDD site is blocked from TrailBook's build machines, so these need reading off the PDF once (an upload works).",
+    "Also carried over: supplemental rates 6.6% and 10.23%, deposit thresholds ($350 / $400), the 3.4% UI new-employer rate (each employer enters its DE 2088 rate for 2027).",
+    "City and county minimum wages for 2027 are in local-minimum-wage.ts; they are warnings only.",
+  ],
+  payroll: {
+    incomeTax: {
+      method: "ca_method_b",
+      certificate: "DE 4",
+      tables: {
+        lowIncomeExemption: { single: "18896", marriedLow: "18896", marriedHigh: "37791", hoh: "37791" },
+        standardDeduction: { single: "5900", marriedLow: "5900", marriedHigh: "11800", hoh: "11800" },
+        estimatedDeductionPerAllowance: "1000",
+        exemptionCreditPerAllowance: "173.80",
+        brackets: {
+          single: [
+            { over: "0", rate: "0.011", base: "0" },
+            { over: "11079", rate: "0.022", base: "121.87" },
+            { over: "26264", rate: "0.044", base: "455.94" },
+            { over: "41452", rate: "0.066", base: "1124.21" },
+            { over: "57542", rate: "0.088", base: "2186.15" },
+            { over: "72724", rate: "0.1023", base: "3522.17" },
+            { over: "371479", rate: "0.1133", base: "34084.81" },
+            { over: "445771", rate: "0.1243", base: "42502.09" },
+            { over: "742953", rate: "0.1353", base: "79441.81" },
+            { over: "1000000", rate: "0.1463", base: "114220.27" },
+          ],
+          married: [
+            { over: "0", rate: "0.011", base: "0" },
+            { over: "22158", rate: "0.022", base: "243.74" },
+            { over: "52528", rate: "0.044", base: "911.88" },
+            { over: "82904", rate: "0.066", base: "2248.42" },
+            { over: "115084", rate: "0.088", base: "4372.30" },
+            { over: "145448", rate: "0.1023", base: "7044.33" },
+            { over: "742958", rate: "0.1133", base: "68169.60" },
+            { over: "891542", rate: "0.1243", base: "85004.17" },
+            { over: "1000000", rate: "0.1353", base: "98485.50" },
+            { over: "1485906", rate: "0.1463", base: "164228.58" },
+          ],
+          hoh: [
+            { over: "0", rate: "0.011", base: "0" },
+            { over: "22173", rate: "0.022", base: "243.90" },
+            { over: "52530", rate: "0.044", base: "911.75" },
+            { over: "67716", rate: "0.066", base: "1579.93" },
+            { over: "83805", rate: "0.088", base: "2641.80" },
+            { over: "98990", rate: "0.1023", base: "3978.08" },
+            { over: "505208", rate: "0.1133", base: "45534.18" },
+            { over: "606251", rate: "0.1243", base: "56982.35" },
+            { over: "1000000", rate: "0.1353", base: "105925.35" },
+            { over: "1010417", rate: "0.1463", base: "107334.77" },
+          ],
+        },
+        supplementalRate: "0.066",
+        bonusSupplementalRate: "0.1023",
+      },
+    },
+    incomeTaxAgency: { agency: "EDD", code: "CA_PIT", label: "California income tax", account: "ca_pit_payable" },
+    taxes: [
+      { code: "CA_SDI", label: "California SDI", agency: "EDD", paidBy: "employee", rate: "0.014", wageBase: null, account: "ca_sdi_payable" },
+      {
+        code: "CA_UI", label: "California UI", agency: "EDD", paidBy: "employer", rate: "0.034", wageBase: "7000", account: "ca_ui_payable",
+        assignedRate: { label: "Your California UI rate (%)", hint: "It's on the rate notice the EDD mails each December. New employers pay 3.4%." },
+      },
+      { code: "CA_ETT", label: "California ETT", agency: "EDD", paidBy: "employer", rate: "0.001", wageBase: "7000", account: "ca_ett_payable" },
+    ],
+    deposits: [
+      {
+        kind: "ca_pit_sdi", codes: ["CA_PIT", "CA_SDI"], agency: "EDD", what: "California income tax and SDI withheld", where: "EDD e-Services for Business",
+        schedule: "ca_edd", monthlyAtOrAbove: "350", federalTimingOver: "400",
+      },
+      { kind: "ca_ui_ett", codes: ["CA_UI", "CA_ETT"], agency: "EDD", what: "California UI and ETT", where: "EDD e-Services for Business", schedule: "quarterly", report: "DE 9" },
+    ],
+    employerAccount: {
+      label: "EDD employer payroll tax account number",
+      hint: "The 8-digit number the EDD gave you when you registered as an employer. It goes on the DE 9, DE 9C and W-2s.",
+      pattern: "^\\d{8}$",
+      format: "###-####-#",
+    },
+    accounts: [
+      { code: "2340", name: "California PIT withheld", systemKey: "ca_pit_payable" },
+      { code: "2350", name: "California SDI withheld", systemKey: "ca_sdi_payable" },
+      { code: "2360", name: "California UI payable", systemKey: "ca_ui_payable" },
+      { code: "2370", name: "California ETT payable", systemKey: "ca_ett_payable" },
+    ],
+  },
+  forms: {
+    quarterly: [
+      {
+        form: "DE 9", slug: "de9", title: "DE 9, Quarterly Contribution Return and Report of Wages, with DE 9C", kind: "ca_de9",
+        codes: ["CA_PIT", "CA_SDI", "CA_UI", "CA_ETT"], fileAt: "File through EDD e-Services for Business (required online)",
+      },
+    ],
+    w2Box14: [{ code: "CA_SDI", label: "CASDI" }],
+  },
+  wageHour: {
+    minimumWage: "17.40",
+    exemptAnnualSalaryMinimum: "72384",
+    overtime: { weeklyAfter: "40", dailyAfter: "8", dailyDoubleTimeAfter: "12", seventhDayDoubleTimeAfter: "8" },
+    sickLeave: { law: "Labor Code 245-249", hoursWorkedPerHourAccrued: "30", annualUseCapHours: "40", accrualCapHours: "80" },
+    newHireReportDays: 20,
+    newHireReportTo: "EDD (DE 34)",
+  },
+  business: {
+    salesTax: { servicesTaxableByDefault: false, remoteSellerNexusThreshold: "500000" },
+    franchiseTax: { annualMinimum: "800", appliesTo: ["llc_single", "llc_partnership", "llc_s_corp", "s_corp", "c_corp"] },
+    payDataReportEmployeeThreshold: 100,
+  },
+};
