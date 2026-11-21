@@ -74,9 +74,10 @@ Each employee can have a city where they work. When it has its own minimum wage 
 | California minimum wage | $17.40 | final (certified Jul 31, 2026) |
 | Exempt salary floor | $72,384 | follows from the minimum wage |
 | UI and ETT wage base, ETT rate | $7,000; 0.1% | final (EDD) |
-| SDI rate | 1.4%, no wage limit | final (EDD Rates and Withholding and Tax-Rated Employers pages, as quoted in search results; rule watch 2026-11-12). A 2027 CA pack still needs it |
+| SDI rate | 1.4%, no wage limit | final (EDD Rates and Withholding and Tax-Rated Employers pages, as quoted in search results; rule watch 2026-11-12). In draft pack us-ca 2027.1 |
 | Federal brackets and standard deductions | MFJ $33,200, HOH $24,925, single and MFS $16,600; brackets in `us-federal-2027.ts` | final (Rev. Proc. 2026-35, Nov 5, 2026); draft pack us-federal 2027.1 |
-| Pub 15-T, EDD Method B | not yet published | expected December 2026 |
+| EDD Method B | low-income exemption $19,528 / $39,056; estimated deduction $1,000 per allowance; standard deduction $5,900 / $11,800 (from $5,706 / $11,412); allowance credit $173.80 (from $168.30); annual brackets in `us-ca-2027.ts`; rates 1.1% to 14.63% | final (EDD 27methb.pdf, read from the PDF Greg uploaded 2026-11-21; Example F checked in tests); draft pack us-ca 2027.1. Supplemental rates (6.6%, 10.23%) are not in the PDF and are carried over |
+| Pub 15-T | draft posted Nov 12, 2026 | final expected December 2026 |
 
 ### Other states: announced for 2027 (rule watch 2026-10-29 and later; each 2027 state pack needs these)
 

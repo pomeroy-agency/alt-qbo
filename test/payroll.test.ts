@@ -6,8 +6,11 @@ import { verifyAuditChain } from "../src/core/audit.js";
 import { allRulePacks, JurisdictionError, resolveRules, rulePackHash } from "../src/rules/index.js";
 import { usFederal2026 } from "../src/rules/us-federal-2026.js";
 import { usFederal2027 } from "../src/rules/us-federal-2027.js";
+import { usCalifornia2027 } from "../src/rules/us-ca-2027.js";
 import { usCalifornia2026 } from "../src/rules/us-ca-2026.js";
 import { federalSchedule } from "../src/payroll/federal.js";
+import { californiaWithholding } from "../src/payroll/california.js";
+import { Decimal } from "decimal.js";
 import { splitWorkweek } from "../src/payroll/hours.js";
 import { calculatePaycheck, type EmployeePayInput } from "../src/payroll/gross-to-net.js";
 import { LOCAL_MINIMUM_WAGE_PLACES, localMinimumAbove, localMinimumWage, localWagePlace } from "../src/rules/local-minimum-wage.js";
@@ -44,11 +47,13 @@ describe("rule packs", () => {
       `us-federal@2026.1#${rulePackHash(usFederal2026).slice(0, 12)}`,
       `us-ca@2026.2#${rulePackHash(usCalifornia2026).slice(0, 12)}`,
     ]);
-    expect(() => resolveRules(CA, "2027-01-01")).toThrow(JurisdictionError);
+    // 2027 resolves only to drafts, which a live pay run refuses.
+    expect(resolveRules(CA, "2027-01-01").state.status).toBe("draft");
+    expect(() => resolveRules(CA, "2027-01-01", { requireReleased: true })).toThrow(JurisdictionError);
     // Greg signed off the 2026 packs on 2026-10-27.
     expect(resolveRules(CA, "2026-06-15", { requireReleased: true }).federal.status).toBe("released");
     // Packs added since then stay drafts until Greg signs them off.
-    const drafts = ["us-federal@2027.1"];
+    const drafts = ["us-federal@2027.1", "us-ca@2027.1"];
     for (const p of allRulePacks()) {
       expect(p.sources.length).toBeGreaterThan(0);
       expect(p.status).toBe(drafts.includes(`${p.id}@${p.version}`) ? "draft" : "released");
@@ -64,8 +69,26 @@ describe("rule packs", () => {
     expect(fit.brackets.hoh.map((b) => b.over)).toEqual(["0", "18250", "69650", "109100", "208300", "264550", "661350"]);
     expect(fit.brackets.single_or_mfs.map((b) => b.over)).toEqual(["0", "12800", "52025", "109125", "208325", "264550", "661375"]);
     expect(usFederal2027.payroll.socialSecurity.wageBase).toBe("192300");
-    // A draft never reaches a live pay run, and 2027 still has no state packs.
-    expect(() => resolveRules(CA, "2027-01-15")).toThrow(JurisdictionError);
+    // A draft never reaches a live pay run.
+    expect(() => resolveRules(CA, "2027-01-15", { requireReleased: true })).toThrow(JurisdictionError);
+  });
+
+  it("holds the 2027 California figures from the EDD's 2027 schedules as a draft", () => {
+    expect(usCalifornia2027).toMatchObject({ status: "draft", version: "2027.1", effectiveFrom: "2027-01-01", effectiveTo: "2027-12-31" });
+    const pit = usCalifornia2027.payroll.incomeTax;
+    if (pit?.method !== "ca_method_b") throw new Error("expected Method B");
+    // EDD 2027 Method B: standard deductions and the allowance credit.
+    expect(pit.tables.standardDeduction).toEqual({ single: "5900", marriedLow: "5900", marriedHigh: "11800", hoh: "11800" });
+    expect(pit.tables.exemptionCreditPerAllowance).toBe("173.80");
+    expect(pit.tables.lowIncomeExemption).toEqual({ single: "19528", marriedLow: "19528", marriedHigh: "39056", hoh: "39056" });
+    expect(pit.tables.estimatedDeductionPerAllowance).toBe("1000");
+    // 27methb.pdf Example F, worked on the annual table: $57,000, married, 4 allowances: $742.37 less $695.20.
+    expect(californiaWithholding(pit.tables, { filingStatus: "married", regularAllowances: 4 }, new Decimal(57000), 1).toFixed(2)).toBe("47.17");
+    expect(usCalifornia2027.payroll.taxes.find((t) => t.code === "CA_SDI")).toMatchObject({ rate: "0.014", wageBase: null });
+    expect(usCalifornia2027.wageHour).toMatchObject({ minimumWage: "17.40", exemptAnnualSalaryMinimum: "72384" });
+    const rules = resolveRules(CA, "2027-03-15");
+    expect(rules.state.version).toBe("2027.1");
+    expect(rules.federal.version).toBe("2027.1");
   });
 
   it("derives the Pub 15-T 2026 MFJ schedules exactly as published", () => {
