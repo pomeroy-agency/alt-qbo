@@ -138,6 +138,8 @@ describe("local minimum wages", () => {
     expect(localMinimumWage("Belmont", "2027-01-01", 3)?.rate).toBe("19.60");
     expect(localMinimumWage("Mountain View", "2027-01-01", 3)?.rate).toBe("20.25");
     expect(localMinimumWage("Mountain View", "2026-12-31", 3)?.rate).toBe("19.70");
+    expect(localMinimumWage("Santa Rosa", "2027-01-01", 3)?.rate).toBe("18.83");
+    expect(localMinimumWage("Santa Rosa", "2026-12-31", 3)?.rate).toBe("18.21");
     expect(localMinimumWage("Menlo Park", "2027-01-01", 3)?.rate).toBe("18.05");
     expect(localMinimumWage("Richmond", "2027-01-01", 3)?.rate).toBe("19.61");
     expect(localMinimumWage("El Cerrito", "2027-01-01", 3)?.rate).toBe("19.36");
