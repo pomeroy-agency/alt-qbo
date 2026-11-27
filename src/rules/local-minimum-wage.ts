@@ -83,6 +83,7 @@ const ROWS: readonly LocalMinimumWageRow[] = Object.freeze([
   { place: "San Mateo", from: "2027-01-01", rate: "19.25" },
   { place: "San Mateo County (unincorporated)", from: "2027-01-01", rate: "18.58" },
   { place: "Santa Clara", from: "2027-01-01", rate: "19.25" },
+  { place: "Santa Rosa", from: "2027-01-01", rate: "18.83" },
   { place: "Sunnyvale", from: "2027-01-01", rate: "20.05" },
   { place: "West Hollywood", from: "2027-01-01", rate: "20.94" },
 ].map((r) => Object.freeze(r)));
